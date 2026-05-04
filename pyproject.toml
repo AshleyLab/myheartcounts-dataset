@@ -1,0 +1,64 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openmhc"
+version = "0.1.0"
+description = "OpenMHC: evaluation API for the MyHeartCounts wearable benchmark"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+  { name = "MyHeartCounts Datasets & Benchmarks team" },
+]
+dependencies = [
+  "datasets",
+  "h5py",
+  "joblib",
+  "matplotlib",
+  "mord",
+  "numpy",
+  "pandas",
+  "pyarrow",
+  "scikit-learn",
+  "scipy",
+  "statsmodels",
+  "torch",
+  "tqdm",
+  "xgboost",
+]
+
+[project.optional-dependencies]
+dev = [
+  "jupyterlab",
+  "ipywidgets",
+  "pytest",
+  "ruff",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = [
+  "openmhc*",
+  "data*",
+  "downstream_evaluation*",
+  "imputation_evaluation*",
+  "labels*",
+  "utils*",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["src"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "D"]
+ignore = ["E501"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"

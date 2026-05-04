@@ -1,0 +1,48 @@
+{
+  "age": null,
+  "BiologicalSex": null,
+
+  "Diabetes": 365,
+  "Hypertension": 365,
+  "cardiovascular_disease": 365,
+  "Heart Failure or CHF": 365,
+  "Atrial fibrillation (Afib)": 365,
+  "PH": 365,
+  "CAD": 365,
+  "Congenital Heart": 365,
+  "Peripheral/Systemic Vascular Disease": 365,
+  "Cerebrovascular Disease": 365,
+  "sleep_diagnosis1": 365,
+
+  "Hdl": 91,
+  "Ldl": 91,
+  "TotalCholesterol": 91,
+  "WeightKilograms": 91,
+  "BMI_values": 91,
+  "SystolicBloodPressure": 91,
+  "BMI_categories": 91,
+  "blood_pressure_categories": 91,
+  "framingham_risk": 91,
+
+  "happiness": 7,
+  "happiness_categories": 14,
+  "feel_worthwhile1": 14,
+  "feel_worthwhile2": 14,
+  "feel_worthwhile3": 14,
+  "feel_worthwhile4": 14,
+  "satisfiedwith_life": 14,
+
+  "vigorous_act": 91,
+  "work": 91,
+  "WakeUpTime_categories": 91,
+  "GoSleepTime_categories": 91,
+  "sleep_time_categories": 91,
+
+  "Watch_RestingHeartRate": 7,
+  "Watch_VO2Max": 7,
+  "Watch_HeartRateVariabilitySDNN": 7,
+  "Watch_WalkingHeartRateAverage": 7,
+  "Watch_StandTime": 7,
+  "Watch_BasalEnergyBurned": 7,
+  "Watch_RespiratoryRate": 7
+}

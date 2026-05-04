@@ -1,0 +1,694 @@
+{
+  "age": {
+    "type": "continuous",
+    "target": true
+  },
+  "BiologicalSex": {
+    "type": "binary",
+    "target": true
+  },
+  "Diabetes": {
+    "type": "binary",
+    "target": true
+  },
+  "Hdl": {
+    "type": "continuous",
+    "target": true
+  },
+  "WeightKilograms": {
+    "type": "continuous",
+    "target": true
+  },
+  "Hypertension": {
+    "type": "binary",
+    "target": true
+  },
+  "Ldl": {
+    "type": "continuous",
+    "target": true
+  },
+  "TotalCholesterol": {
+    "type": "continuous",
+    "target": true
+  },
+  "WakeUpTime_categories": {
+    "type": "ordinal",
+    "target": true
+  },
+  "BMI_categories": {
+    "type": "ordinal",
+    "target": true
+  },
+  "BMI_values": {
+    "type": "continuous",
+    "target": true
+  },
+  "SystolicBloodPressure": {
+    "type": "continuous",
+    "target": true
+  },
+  "feel_worthwhile1": {
+    "type": "ordinal",
+    "target": true
+  },
+  "feel_worthwhile2": {
+    "type": "ordinal",
+    "target": true
+  },
+  "feel_worthwhile3": {
+    "type": "ordinal",
+    "target": true
+  },
+  "feel_worthwhile4": {
+    "type": "ordinal",
+    "target": true
+  },
+  "happiness_categories": {
+    "type": "ordinal",
+    "target": true
+  },
+  "happiness": {
+    "type": "continuous",
+    "target": true
+  },
+  "cardiovascular_disease": {
+    "type": "binary",
+    "target": true
+  },
+  "Heart Failure or CHF": {
+    "type": "binary",
+    "target": true
+  },
+  "Atrial fibrillation (Afib)": {
+    "type": "binary",
+    "target": true
+  },
+  "PH": {
+    "type": "binary",
+    "target": true
+  },
+  "CAD": {
+    "type": "binary",
+    "target": true
+  },
+  "Congenital Heart": {
+    "type": "binary",
+    "target": true
+  },
+  "Peripheral/Systemic Vascular Disease": {
+    "type": "binary",
+    "target": true
+  },
+  "Cerebrovascular Disease": {
+    "type": "binary",
+    "target": true
+  },
+  "satisfiedwith_life": {
+    "type": "ordinal",
+    "target": true
+  },
+  "sleep_diagnosis1": {
+    "type": "binary",
+    "target": true
+  },
+  "GoSleepTime_categories": {
+    "type": "ordinal",
+    "target": true
+  },
+  "vigorous_act": {
+    "type": "continuous",
+    "target": true
+  },
+  "work": {
+    "type": "binary",
+    "target": true
+  },
+  "blood_pressure_categories": {
+    "type": "ordinal",
+    "target": true
+  },
+  "sleep_time_categories": {
+    "type": "ordinal",
+    "target": true
+  },
+  "Watch_RestingHeartRate": {
+    "type": "continuous",
+    "target": true
+  },
+  "Watch_VO2Max": {
+    "type": "continuous",
+    "target": true
+  },
+  "Watch_HeartRateVariabilitySDNN": {
+    "type": "continuous",
+    "target": true
+  },
+  "Watch_WalkingHeartRateAverage": {
+    "type": "continuous",
+    "target": true
+  },
+  "Watch_StandTime": {
+    "type": "continuous",
+    "target": true
+  },
+  "Watch_BasalEnergyBurned": {
+    "type": "continuous",
+    "target": true
+  },
+  "Watch_RespiratoryRate": {
+    "type": "continuous",
+    "target": true
+  },
+  "framingham_risk": {
+    "type": "continuous",
+    "target": true
+  },
+  "field_BloodGlucose": {
+    "type": "continuous",
+    "target": false
+  },
+  "field_DiastolicBloodPressure": {
+    "type": "continuous",
+    "target": false
+  },
+  "field_smokingHistory": {
+    "type": "binary",
+    "target": false
+  },
+  "field_Gender": {
+    "type": "categorical",
+    "target": false
+  },
+  "field_Ethnicity_heartage": {
+    "type": "categorical",
+    "target": false
+  },
+  "field_Age_heartage": {
+    "type": "continuous",
+    "target": false
+  },
+  "field_family_history": {
+    "type": "categorical",
+    "target": false
+  },
+  "field_heart_disease": {
+    "type": "categorical",
+    "target": false
+  },
+  "field_medications_to_treat": {
+    "type": "categorical",
+    "target": false
+  },
+  "field_vascular": {
+    "type": "categorical",
+    "target": false
+  },
+  "field_ethnicity": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_race": {
+    "type": "categorical",
+    "target": false
+  },
+  "field_education": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_riskfactors1": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_riskfactors2": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_riskfactors3": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_riskfactors4": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_zip": {
+    "type": "categorical",
+    "target": false
+  },
+  "field_country": {
+    "type": "categorical",
+    "target": false
+  },
+  "field_atwork": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_moderate_act": {
+    "type": "continuous",
+    "target": false
+  },
+  "field_phys_activity": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_sleep_time": {
+    "type": "continuous",
+    "target": false
+  },
+  "field_sleep_time1": {
+    "type": "continuous",
+    "target": false
+  },
+  "field_sleep_diagnosis2": {
+    "type": "categorical",
+    "target": false
+  },
+  "field_CurrentAge": {
+    "type": "continuous",
+    "target": false
+  },
+  "field_GoSleepTime": {
+    "type": "continuous",
+    "target": false
+  },
+  "field_WakeUpTime": {
+    "type": "continuous",
+    "target": false
+  },
+  "field_HeightCentimeters": {
+    "type": "continuous",
+    "target": false
+  },
+  "field_BloodType": {
+    "type": "categorical",
+    "target": false
+  },
+  "field_FitzpatrickSkinType": {
+    "type": "categorical",
+    "target": false
+  },
+  "field_fish": {
+    "type": "continuous",
+    "target": false
+  },
+  "field_fruit": {
+    "type": "continuous",
+    "target": false
+  },
+  "field_grains": {
+    "type": "continuous",
+    "target": false
+  },
+  "field_sodium": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_sugar_drinks": {
+    "type": "continuous",
+    "target": false
+  },
+  "field_vegetable": {
+    "type": "continuous",
+    "target": false
+  },
+  "field_alcohol": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_currentVaping": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_readinessQuitVaping": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_pastVaping": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_onsetVaping": {
+    "type": "continuous",
+    "target": false
+  },
+  "field_everQuitVaping": {
+    "type": "binary",
+    "target": false
+  },
+  "field_currentSmoking": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_readinessQuitSmoking": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_onsetSmoking": {
+    "type": "continuous",
+    "target": false
+  },
+  "field_everQuitSmoking": {
+    "type": "binary",
+    "target": false
+  },
+  "field_currentSmokeless": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_onsetSmokeless": {
+    "type": "continuous",
+    "target": false
+  },
+  "field_pastSmokeless": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_readinessQuitSmokeless": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_pastSmoking": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_cannabisSmoking": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_currentCannabisSmoking": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_pastCannabisSmoking": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_lastCannabisSmoking": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_cannabisVaping": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_currentCannabisVaping": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_pastCannabisVaping": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_lastCannabisVaping": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_tobaccoProducts": {
+    "type": "categorical",
+    "target": false
+  },
+  "field_tobaccoProductsEver": {
+    "type": "categorical",
+    "target": false
+  },
+  "field_labwork": {
+    "type": "binary",
+    "target": false
+  },
+  "field_device_iphone": {
+    "type": "binary",
+    "target": false
+  },
+  "field_device_smartwatch": {
+    "type": "binary",
+    "target": false
+  },
+  "field_device_activity_band": {
+    "type": "binary",
+    "target": false
+  },
+  "field_device_other": {
+    "type": "binary",
+    "target": false
+  },
+  "field_chestPain": {
+    "type": "binary",
+    "target": false
+  },
+  "field_chestPainInLastMonth": {
+    "type": "binary",
+    "target": false
+  },
+  "field_dizziness": {
+    "type": "binary",
+    "target": false
+  },
+  "field_heartCondition": {
+    "type": "binary",
+    "target": false
+  },
+  "field_jointProblem": {
+    "type": "binary",
+    "target": false
+  },
+  "field_physicallyCapable": {
+    "type": "binary",
+    "target": false
+  },
+  "field_prescriptionDrugs": {
+    "type": "binary",
+    "target": false
+  },
+  "field_body_self_healing_in_many_different_circumstances": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_chronic_illness_impact": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_chronic_illness_body_meaning": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_chronic_illness_body_coping": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_chronic_illness_positive_opportunity": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_chronic_illness_management": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_chronic_illness_body_betrayal": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_chronic_illness_more_meaning_in_life": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_chronic_illness_handling": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_body_remarkable_self_healing": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_chronic_illness_spoil": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_chronic_illness_challenge": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_chronic_illness_body_handling": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_chronic_illness_runing_life": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_chronic_illness_body_management": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_chronic_illness_relatively_normal_life": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_chronic_illness_body_failure": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_chronic_illness_empowering": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_body_self_healing_from_most_conditions_and_diseases": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_chronic_illness_body_blame": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_easy": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_pleasurable": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_relaxing": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_convenient": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_fun": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_social": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_indulgent": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_unhealthy": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_weight": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_beneficial": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_disease": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_muscles": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_covid": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_covid_serologic": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_most_intense_care": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_daily_activities": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_severity_covid": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_severity": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_healthcare_worker": {
+    "type": "categorical",
+    "target": false
+  },
+  "field_blood_type_covid": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_exposure": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_building": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_self_isolating": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_face_covering": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_covid_relatives": {
+    "type": "binary",
+    "target": false
+  },
+  "field_icu_treated": {
+    "type": "binary",
+    "target": false
+  },
+  "field_ventilator": {
+    "type": "binary",
+    "target": false
+  },
+  "field_days_admitted": {
+    "type": "continuous",
+    "target": false
+  },
+  "field_activity1_intensity": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_activity1_option": {
+    "type": "binary",
+    "target": false
+  },
+  "field_activity1_time": {
+    "type": "continuous",
+    "target": false
+  },
+  "field_activity1_type": {
+    "type": "categorical",
+    "target": false
+  },
+  "field_activity2_intensity": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_activity2_option": {
+    "type": "binary",
+    "target": false
+  },
+  "field_activity2_time": {
+    "type": "continuous",
+    "target": false
+  },
+  "field_activity2_type": {
+    "type": "categorical",
+    "target": false
+  },
+  "field_phone_on_user": {
+    "type": "ordinal",
+    "target": false
+  },
+  "field_sleep_time_daily": {
+    "type": "continuous",
+    "target": false
+  }
+}

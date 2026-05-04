@@ -1,0 +1,215 @@
+name: Leaderboard Submission
+description: Submit a new method to the MyHeartCounts Datasets & Benchmarks (MHC D&B) leaderboard
+title: "[Submission] <method name>"
+labels: ["leaderboard-submission"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for submitting to MyHeartCounts Datasets & Benchmarks (MHC D&B).
+        Required fields are marked.
+        Incomplete submissions will be closed without review.
+
+        Metric definitions follow the paper (Section 4.4 / Appendix A):
+        - **Skill Score (S)** = relative error reduction over the track
+          baseline (Track 1: LINEAR; Track 2: LOCF; Track 3: Seasonal
+          Naive). Reported as a **percentage**, e.g. `12.5` means +12.5 %
+          (not `0.125`).
+        - **Fairness-adjusted Skill Score** = `S − λ·D̄`, where `D̄` is the
+          mean of per-attribute disparities (one per sensitive attribute:
+          age and sex), and each attribute's disparity is the max−min
+          skill score across that attribute's groups (λ = 0.5).
+        - **Average Rank** = mean rank across sub-tasks (1 = best).
+
+  - type: input
+    id: method_name
+    attributes:
+      label: Method name
+      description: Short, citation-ready name.
+      placeholder: e.g. MAE-LSM2, XGBoost-HandFE, Chronos-2 (FT)
+    validations:
+      required: true
+
+  - type: input
+    id: submitter_team
+    attributes:
+      label: Submitter / team affiliation
+      description: |
+        Lab, company, or "Independent." Displayed on the leaderboard next to your
+        method name for attribution. Use the form your group is cited as in
+        publications.
+      placeholder: e.g. Stanford CS, Apple ML, Allen AI, Independent
+    validations:
+      required: true
+
+  - type: dropdown
+    id: track
+    attributes:
+      label: Evaluation track
+      description: Which benchmark track / sub-track did you evaluate against?
+      options:
+        - Track 1 — Health & Behavior Outcome Prediction (Static)
+        - Track 1 — Health & Behavior Outcome Prediction (Longitudinal)
+        - Track 2 — Imputation (Daily, single-day context)
+        - Track 2 — Imputation (Long-context / personalized)
+        - Track 3 — Forecasting
+    validations:
+      required: true
+
+  - type: dropdown
+    id: method_category
+    attributes:
+      label: Method category
+      options:
+        - Statistical / Classical baseline
+        - Tree boosting (handcrafted features)
+        - Supervised neural (sequence model)
+        - Self-supervised wearable foundation model
+        - Time-series foundation model (general-purpose)
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: foundation_variant
+    attributes:
+      label: Foundation-model variant
+      description: If applicable, select the variant for forecasting submissions
+        that use a foundation model. For non-forecasting submissions or methods
+        that are not foundation models, select `N/A (not a foundation model)`.
+      options:
+        - N/A (not a foundation model)
+        - Zero-shot
+        - Fine-tuned
+
+  - type: input
+    id: feature_dim
+    attributes:
+      label: Feature / embedding dimension
+      description: For encoder methods, the latent dim. Use "—" if not applicable.
+      placeholder: e.g. 256
+
+  - type: textarea
+    id: aggregate_metrics
+    attributes:
+      label: Aggregate metrics (required)
+      description: |
+        Use the exact field names below. Skill scores are percentages (e.g.
+        `12.5` means +12.5 %, not `0.125`). Leave any not applicable as `—`.
+      render: yaml
+      placeholder: |
+        skill_score: 12.5
+        fair_skill_score: 3.5
+        avg_rank: 3.15
+    validations:
+      required: true
+
+  - type: textarea
+    id: subgroup_metrics
+    attributes:
+      label: Subgroup skill scores (required)
+      description: |
+        Per-subgroup skill scores. Use the field-name set that matches your
+        track:
+
+        **Track 1 (Health Prediction):** `demographics`, `medical_conditions`,
+        `body_biomarkers`, `mental_wellbeing`, `sleep_lifestyle`
+
+        **Track 2 (Imputation):** `activity`, `physiology`, `sleep`,
+        `workouts`, `semantic`
+
+        **Track 3 (Forecasting):** `step`, `flights`, `hr`, `energy`,
+        `sleep`, `workouts`
+      render: yaml
+      placeholder: |
+        demographics: 46.8
+        medical_conditions: 1.0
+        body_biomarkers: 13.0
+        mental_wellbeing: -8.6
+        sleep_lifestyle: 10.3
+    validations:
+      required: true
+
+  - type: textarea
+    id: raw_metrics
+    attributes:
+      label: Raw per-sub-task metrics (optional)
+      description: |
+        Paste raw metric values per sub-task if available. Field names per
+        track (from paper Section 4.4):
+
+        **Track 1:** AUPRC for binary outcomes, Spearman ρ for ordinal,
+        R² for real-valued
+
+        **Track 2:** RMSE per continuous channel, ROC AUC per binary channel
+
+        **Track 3:** MAE, MASE, QL, sQL for continuous channels;
+        AUPRC, AUROC for binary channels
+
+        Optional but strongly preferred — enables apples-to-apples comparison.
+      render: yaml
+
+  - type: input
+    id: paper_url
+    attributes:
+      label: Paper / preprint URL (optional)
+      description: arXiv, OpenReview, journal, technical report, blog post, or
+        slide deck. Leave blank if you don't have one — independent teams are
+        welcome.
+      placeholder: https://arxiv.org/abs/...
+
+  - type: input
+    id: code_url
+    attributes:
+      label: Code URL
+      description: Public repo with a reproducible eval script. Required —
+        without it we can't verify the result.
+      placeholder: https://github.com/...
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: How to reproduce
+      description: |
+        Exact commands or commit/branch used to produce the reported
+        numbers. Include the dataset split file you evaluated against.
+      render: bash
+      placeholder: |
+        git clone https://github.com/your/repo && cd repo
+        git checkout <commit-sha>
+        python scripts/eval.py --split <split-file>.json
+    validations:
+      required: true
+
+  - type: dropdown
+    id: hardware
+    attributes:
+      label: Compute used
+      options:
+        - Single GPU
+        - Multi-GPU (single node)
+        - Multi-node
+        - CPU only
+        - N/A
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes (optional)
+      description: |
+        Caveats, deviations from the standard eval protocol (split, masking
+        config, label validity criterion), or context for reviewers.
+
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: Confirmation
+      options:
+        - label: I followed the standard evaluation protocol — same split file, masking config, and label validity criterion as the benchmark paper.
+          required: true
+        - label: The code linked above reproduces the reported numbers from a clean clone.
+          required: true
+        - label: I agree to my submission being added to a public, version-controlled leaderboard file in this repository.
+          required: true

@@ -1,0 +1,71 @@
+{
+  "BMI_categories": {
+    "Underweight": 0,
+    "Normal weight": 1,
+    "Overweight": 2,
+    "Obesity": 3,
+    "Morbid Obesity": 4
+  },
+  "GoSleepTime_categories": {
+    "Early Sleeper": 1,
+    "Normal Sleeper": 0,
+    "Late Sleeper": 2,
+    "Very Late Sleeper": 3,
+    "Shift Worker": 4
+  },
+  "WakeUpTime_categories": {
+    "Early Riser": 1,
+    "Normal Riser": 0,
+    "Late Riser": 2,
+    "Very Late Riser": 3
+  },
+  "blood_pressure_categories": {
+    "Normal": 0,
+    "Elevated": 1,
+    "Hypertension_Stage_1": 2,
+    "Hypertension_Stage_2": 3,
+    "Hypertensive_Crisis": 4
+  },
+  "feel_worthwhile1": {
+    "Low": 3,
+    "Medium": 2,
+    "High": 1,
+    "Very High": 0
+  },
+  "feel_worthwhile2": {
+    "Low": 3,
+    "Medium": 2,
+    "High": 1,
+    "Very High": 0
+  },
+  "feel_worthwhile3": {
+    "Low": 3,
+    "Medium": 2,
+    "High": 1,
+    "Very High": 0
+  },
+  "feel_worthwhile4": {
+    "Low": 3,
+    "Medium": 2,
+    "High": 1,
+    "Very High": 0
+  },
+  "happiness_categories": {
+    "Low": 3,
+    "Medium": 2,
+    "High": 1,
+    "Very High": 0
+  },
+  "satisfiedwith_life": {
+    "Low": 3,
+    "Medium": 2,
+    "High": 1,
+    "Very High": 0
+  },
+  "sleep_time_categories": {
+    "Insufficient": 3,
+    "Short": 1,
+    "Normal": 0,
+    "Too Long": 2
+  }
+}
