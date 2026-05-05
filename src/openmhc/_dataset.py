@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import tarfile
 import tempfile
 import urllib.request
 import zipfile
@@ -98,20 +99,69 @@ def download_dataset(
 
     print(f"Downloading {version!r} dataset ({doi}) → {target}")
     req = urllib.request.Request(url, headers=headers)
-    with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tmp:
-        zip_path = tmp.name
+    with tempfile.NamedTemporaryFile(suffix=".bin", delete=False) as tmp:
+        archive_path = tmp.name
         try:
             with urllib.request.urlopen(req) as resp:
                 shutil.copyfileobj(resp, tmp)
         except Exception:
-            os.unlink(zip_path)
+            os.unlink(archive_path)
             raise
 
     try:
-        with zipfile.ZipFile(zip_path) as zf:
-            zf.extractall(target)
+        _extract_archive_recursive(Path(archive_path), target)
     finally:
-        os.unlink(zip_path)
+        os.unlink(archive_path)
 
     print(f"Done. Set MHC_DATA_DIR={target} to skip the lookup next time.")
     return target
+
+
+def _extract_archive_recursive(archive: Path, dest: Path) -> None:
+    """Extract ``archive`` into ``dest``, recursively unpacking nested archives.
+
+    Dataverse's dataset-access endpoint always wraps files in an outer zip,
+    so a tar.gz upload comes back as zip-of-tarball. After extracting the
+    outer archive, any inner ``.tar``, ``.tar.gz``, ``.tgz``, or ``.zip``
+    files are unpacked in place and removed.
+    """
+    _extract_one(archive, dest)
+    # Walk dest and unpack any nested archives the outer extract produced.
+    for path in list(dest.rglob("*")):
+        if not path.is_file():
+            continue
+        if _looks_like_archive(path):
+            _extract_one(path, path.parent)
+            path.unlink(missing_ok=True)
+
+
+def _looks_like_archive(path: Path) -> bool:
+    """Detect by suffix; falls through ``.bin`` / ``.zip`` / ``.tar*``."""
+    name = path.name.lower()
+    return (
+        name.endswith(".tar.gz")
+        or name.endswith(".tgz")
+        or name.endswith(".tar")
+        or name.endswith(".zip")
+    )
+
+
+def _extract_one(archive: Path, dest: Path) -> None:
+    """Extract a single archive (zip / tar / tar.gz) into ``dest``.
+
+    Detects format via the magic-byte sniffers in :mod:`zipfile` and
+    :mod:`tarfile` so the file extension doesn't matter — handy for the
+    Dataverse download which we save as ``.bin``.
+    """
+    if zipfile.is_zipfile(archive):
+        with zipfile.ZipFile(archive) as zf:
+            zf.extractall(dest)
+        return
+    if tarfile.is_tarfile(archive):
+        with tarfile.open(archive) as tf:
+            tf.extractall(dest)
+        return
+    raise ValueError(
+        f"could not detect archive format for {archive!r}; "
+        "expected zip or tar/tar.gz"
+    )

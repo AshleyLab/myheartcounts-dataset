@@ -88,14 +88,17 @@ def _imputation_log_ratios(
 ) -> list[tuple[str, str, float]]:
     """Compute per-(scenario, channel) log error ratios vs the baseline.
 
-    Returns a list of (scenario, channel, log_ratio) tuples for finite,
-    in-bounds entries only.
+    Channel type is inferred from which metrics the runtime actually
+    emitted: ``normalized_rmse`` ⇒ continuous, ``roc_auc`` ⇒ binary.
+    Method-side error reads ``normalized_rmse`` / ``roc_auc`` from the
+    runtime; baseline-side reads ``nRMSE`` / ``roc_auc`` from the frozen
+    LOCF JSON (column names differ because the baseline was extracted
+    from the paper-results parquet).
     """
     out: list[tuple[str, str, float]] = []
     bl_scenarios = baseline.get("scenarios", {})
     for scenario, splits in results.scenarios.items():
         bl_channels = bl_scenarios.get(scenario, {})
-        # Pull the test-split per-channel metrics from results.
         test = splits.get("test", {}) if isinstance(splits, dict) else {}
         per_channel = test.get("per_channel") if isinstance(test, dict) else None
         if not isinstance(per_channel, dict):
@@ -103,19 +106,27 @@ def _imputation_log_ratios(
         for channel, m in per_channel.items():
             if not isinstance(m, dict):
                 continue
-            ch_type = m.get("channel_type")
-            if ch_type == "binary" and scenario in _EXCLUDE_BINARY_SCENARIOS:
-                continue
-            if ch_type == "continuous":
-                e_method = m.get("nRMSE")
-                e_baseline = bl_channels.get(channel, {}).get("nRMSE")
-            elif ch_type == "binary":
-                auc_method = m.get("roc_auc")
-                auc_baseline = bl_channels.get(channel, {}).get("roc_auc")
-                e_method = (1.0 - auc_method) if auc_method is not None else None
-                e_baseline = (1.0 - auc_baseline) if auc_baseline is not None else None
+            bl_entry = bl_channels.get(channel, {})
+
+            if "normalized_rmse" in m:
+                ch_type = "continuous"
+            elif "roc_auc" in m:
+                ch_type = "binary"
             else:
                 continue
+
+            if ch_type == "binary" and scenario in _EXCLUDE_BINARY_SCENARIOS:
+                continue
+
+            if ch_type == "continuous":
+                e_method = m.get("normalized_rmse")
+                e_baseline = bl_entry.get("nRMSE")
+            else:  # binary
+                auc_method = m.get("roc_auc")
+                auc_baseline = bl_entry.get("roc_auc")
+                e_method = (1.0 - auc_method) if auc_method is not None else None
+                e_baseline = (1.0 - auc_baseline) if auc_baseline is not None else None
+
             if e_method is None or e_baseline is None:
                 continue
             if not (np.isfinite(e_method) and np.isfinite(e_baseline)) or e_baseline <= 0:

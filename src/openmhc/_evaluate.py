@@ -489,9 +489,7 @@ def evaluate_imputation(
 
     paths = _DatasetPaths.resolve(data_dir)
     _ensure_labels_env(paths.labels_dir)
-    daily_hf_dir = paths.daily_hf
 
-    # Build a minimal config.
     from imputation_evaluation.config import (
         DataConfig,
         EvalConfig,
@@ -503,7 +501,7 @@ def evaluate_imputation(
         VisualizationConfig,
         WandbConfig,
     )
-    from imputation_evaluation.data.data_loader import ImputationDataLoader
+    from imputation_evaluation.runner import run_eval
 
     masking_cfg = MaskingConfig(mask_seed=seed)
     masking_cfg.random_noise.enabled = "random_noise" in scenario_list
@@ -514,7 +512,7 @@ def evaluate_imputation(
     masking_cfg.intensity_failure.enabled = "intensity_failure" in scenario_list
 
     data_cfg = DataConfig(
-        daily_hf_dir=str(daily_hf_dir),
+        daily_hf_dir=str(paths.daily_hf),
         split_file=str(paths.splits_file),
         split_seed=seed,
         batch_size=5000,
@@ -533,7 +531,7 @@ def evaluate_imputation(
         seed=seed,
         data=data_cfg,
         masking=masking_cfg,
-        method=MethodConfig(type="mean"),
+        method=MethodConfig(type="mean"),  # placeholder; not used (custom adapter below)
         output=OutputConfig(),
         evaluation=eval_cfg,
         visualization=VisualizationConfig(),
@@ -541,46 +539,9 @@ def evaluate_imputation(
         wandb=WandbConfig(),
     )
 
-    # Load data.
-    loader = ImputationDataLoader(cfg.data)
-    loaded = loader.load()
-
-    # Generate masks.
-    from imputation_evaluation.masking import MaskCacheGenerator, create_mask_generators
-
-    generators = create_mask_generators(cfg.masking)
-    mask_gen = MaskCacheGenerator(
-        generators=generators,
-        seed=cfg.masking.mask_seed,
-    )
-    mask_cache = mask_gen.generate(loaded.val_loader, loaded.test_loader)
-
-    # Wrap the user's imputer in our internal method interface.
     adapter = _ImputerMethodAdapter(imputer)
-
-    logger.info("Fitting imputer on training data...")
-    adapter.fit(loaded.train_loader)
-
-    # Run evaluation.
-    from imputation_evaluation.evaluation.evaluator import ImputationEvaluator
-
-    evaluator = ImputationEvaluator(
-        scenarios=[g.name for g in generators],
-        num_eval_workers=cfg.data.num_eval_workers,
-        include_ks=cfg.evaluation.include_ks,
-        include_wasserstein=cfg.evaluation.include_wasserstein,
-        compute_metrics=True,
-        save_pairs=False,
-    )
-
-    results = evaluator.run(
-        val_loader=loaded.val_loader,
-        test_loader=loaded.test_loader,
-        mask_cache=mask_cache,
-        method=adapter,
-        channel_stds=loaded.channel_stds,
-    )
-
+    logger.info("Running imputation eval with custom imputer...")
+    results = run_eval(cfg, method=adapter)
     return ImputationResults(scenarios=results.get("scenarios", results))
 
 
@@ -649,19 +610,14 @@ class _ImputerMethodAdapter:
         data: np.ndarray,
         original_masks: np.ndarray,
         artificial_masks: np.ndarray,
+        **kwargs,
     ) -> np.ndarray:
         """Delegate to the user's impute, translating argument names.
 
-        Args:
-            data: Sensor values of shape (N, 19, 1440) with NaN at masked
-                positions.
-            original_masks: Binary mask of shape (N, 19, 1440) where
-                1 = originally observed.
-            artificial_masks: Binary mask of shape (N, 19, 1440) where
-                1 = positions to impute.
-
-        Returns:
-            Array of shape (N, 19, 1440) with imputed values.
+        Internal callers may pass extra kwargs (``sample_indices``,
+        ``day_offsets``) used by personalized / RoPE-aware methods. The
+        public ``Imputer`` protocol doesn't expose those, so we discard
+        them silently.
         """
         return self._imputer.impute(
             data=data,
