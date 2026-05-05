@@ -236,14 +236,20 @@ def evaluate_downstream(
             clip = all_clip_dates.get(task_name)
 
             for clf_type in classifiers:
+                if task_name not in labels_df.columns:
+                    logger.warning(
+                        "Task %s missing from labels lookup, skipping", task_name
+                    )
+                    break
+                task_labels = labels_df[task_name].values
                 try:
                     splits = store.aggregate_for_task(
-                        labels_df=labels_df,
-                        task_name=task_name,
-                        clip_dates=clip,
-                        time_window=tw,
-                        split_users=split_users,
-                        method="mean",
+                        task_labels,
+                        task_type,
+                        clip,
+                        tw,
+                        split_users,
+                        pooling_method="mean",
                     )
                 except Exception as e:
                     logger.warning(
@@ -251,9 +257,11 @@ def evaluate_downstream(
                     )
                     continue
 
-                X_train, y_train, _ = splits["train"]
-                X_val, y_val, _ = splits["validation"]
-                X_test, y_test, _ = splits["test"]
+                # Current signature returns 4-tuple (X, y, user_ids, n_weeks)
+                # under "train"/"val"/"test" keys (split file used "validation").
+                X_train, y_train, *_ = splits["train"]
+                X_val, y_val, *_ = splits["val"]
+                X_test, y_test, *_ = splits["test"]
 
                 if len(X_train) == 0 or len(X_test) == 0:
                     logger.warning("Task %s: empty split, skipping", task_name)
