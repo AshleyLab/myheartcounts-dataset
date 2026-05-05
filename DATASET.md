@@ -60,7 +60,8 @@ $MHC_DATA_DIR/
 │   ├── last_labels.json          # participant-level outcome labels
 │   ├── context_labels.json       # participant-level covariates
 │   ├── healthkit_daily.json      # daily-resolution HealthKit metrics
-│   └── label_validity.json       # which (user, label) pairs pass validity
+│   ├── label_validity.json       # which (user, label) pairs pass validity
+│   └── clip_dates.json           # per-task date clipping (longitudinal labels)
 ├── splits/
 │   └── sharable_users_seed42_2026.json   # canonical user-level splits
 └── processed/
@@ -70,6 +71,8 @@ $MHC_DATA_DIR/
     ├── weekly_labels_lookup_stride7.parquet  # weekly labels lookup
     └── normalization_stats_hourly.json   # global z-score statistics
 ```
+
+The eval API resolves these paths through ``openmhc._evaluate._DatasetPaths`` — every entry above is derived from a single root (``MHC_DATA_DIR`` / explicit ``data_dir=`` arg / ``~/.cache/openmhc/data``). If your dataset uses a different layout, the simplest fix is to symlink or rearrange the unpacked files to match.
 
 The schema-only registry files (`label_types.json`, `ordinal_dictionary.json`, `validity_config.json`) ship with this code repo at `data/labels/` and don't need to be downloaded.
 

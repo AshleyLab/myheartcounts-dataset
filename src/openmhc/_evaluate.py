@@ -1,4 +1,4 @@
-"""Public evaluation functions for MHC-Benchmark.
+"""Public evaluation functions for OpenMHC.
 
 These functions provide a simple interface to the benchmark's evaluation
 pipelines. They accept duck-typed Encoder/Imputer objects and return
@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import warnings
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -18,40 +20,65 @@ import numpy as np
 if TYPE_CHECKING:
     from openmhc._protocols import Encoder, Imputer
 
+from openmhc._dataset import data_dir as _resolve_default_data_dir
 from openmhc._results import DownstreamResults, ImputationResults
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Default paths (relative to repo root)
-# ---------------------------------------------------------------------------
-_REPO_ROOT = Path(__file__).resolve().parents[2]
-_DEFAULT_DAILY_HOURLY_HF_DIR = _REPO_ROOT / "data" / "processed" / "daily_hourly_hf"
-_DEFAULT_WINDOW_INDEX_PATH = (
-    _REPO_ROOT / "data" / "processed" / "window_index_w7_s7_d5.parquet"
-)
-_DEFAULT_SPLIT_FILE = _REPO_ROOT / "data" / "splits" / "sharable_users_seed42_2026.json"
-_DEFAULT_WEEKLY_LABELS_LOOKUP = (
-    _REPO_ROOT / "data" / "processed" / "weekly_labels_lookup_stride7.parquet"
-)
-_DEFAULT_CLIP_DATES = _REPO_ROOT / "data" / "labels" / "clip_dates.json"
-_DEFAULT_DAILY_HF_DIR = _REPO_ROOT / "data" / "processed" / "daily_hf"
-_DEFAULT_NORM_STATS = _REPO_ROOT / "data" / "processed" / "normalization_stats_hourly.json"
 
+@dataclass
+class _DatasetPaths:
+    """Resolved paths into the dataset directory.
 
-def _resolve_data_dir(data_dir: str | Path | None, default: Path) -> Path:
-    """Resolve a user-provided data directory or fall back to the default.
-
-    Args:
-        data_dir: User-provided path, or None for the default.
-        default: Default path to use when data_dir is None.
-
-    Returns:
-        Resolved Path object.
+    All paths are derived from a single ``root`` so the API stays consistent
+    with what :func:`openmhc.download_dataset` produces. The expected layout
+    matches DATASET.md.
     """
-    if data_dir is not None:
-        return Path(data_dir)
-    return default
+
+    root: Path
+    daily_hourly_hf: Path
+    daily_hf: Path
+    window_index: Path
+    weekly_labels_lookup: Path
+    splits_file: Path
+    norm_stats: Path
+    clip_dates: Path
+    labels_dir: Path
+
+    @classmethod
+    def resolve(cls, override: str | Path | None = None) -> "_DatasetPaths":
+        """Build the paths bundle from an explicit override or the default.
+
+        Resolution order matches :func:`openmhc.data_dir`:
+
+        1. ``override`` argument (if provided)
+        2. ``MHC_DATA_DIR`` env var
+        3. ``~/.cache/openmhc/data``
+        """
+        root = _resolve_default_data_dir(override)
+        return cls(
+            root=root,
+            daily_hourly_hf=root / "processed" / "daily_hourly_hf",
+            daily_hf=root / "processed" / "daily_hf",
+            window_index=root / "processed" / "window_index_w7_s7_d5.parquet",
+            weekly_labels_lookup=root / "processed" / "weekly_labels_lookup_stride7.parquet",
+            splits_file=root / "splits" / "sharable_users_seed42_2026.json",
+            norm_stats=root / "processed" / "normalization_stats_hourly.json",
+            clip_dates=root / "labels" / "clip_dates.json",
+            labels_dir=root / "labels",
+        )
+
+
+def _ensure_labels_env(labels_dir: Path) -> None:
+    """Point the bundled `labels.api` module at the downloaded labels dir.
+
+    `labels.api` reads `LABELS_DATA_PATH` / `CONTEXT_LABELS_PATH` env vars
+    at import time. Set them to the dataset paths if the user hasn't.
+    """
+    if not os.getenv("LABELS_DATA_PATH"):
+        os.environ["LABELS_DATA_PATH"] = str(labels_dir / "last_labels.json")
+    if not os.getenv("CONTEXT_LABELS_PATH"):
+        os.environ["CONTEXT_LABELS_PATH"] = str(labels_dir / "context_labels.json")
 
 
 # ---------------------------------------------------------------------------
@@ -86,6 +113,9 @@ def evaluate_downstream(
     """
     import pandas as pd
 
+    paths = _DatasetPaths.resolve(data_dir)
+    _ensure_labels_env(paths.labels_dir)
+
     from downstream_evaluation.config import ClassifierConfig, parse_time_windows
     from downstream_evaluation.data.splits import load_split_file
     from downstream_evaluation.evaluation.metrics import (
@@ -107,11 +137,11 @@ def evaluate_downstream(
         task_list = list(tasks)
 
     # Resolve paths.
-    daily_hourly_dir = _resolve_data_dir(data_dir, _DEFAULT_DAILY_HOURLY_HF_DIR)
-    split_file = _DEFAULT_SPLIT_FILE
-    window_index_path = _DEFAULT_WINDOW_INDEX_PATH
-    labels_path = _DEFAULT_WEEKLY_LABELS_LOOKUP
-    clip_dates_path = _DEFAULT_CLIP_DATES
+    daily_hourly_dir = paths.daily_hourly_hf
+    split_file = paths.splits_file
+    window_index_path = paths.window_index
+    labels_path = paths.weekly_labels_lookup
+    clip_dates_path = paths.clip_dates
 
     # Load user splits.
     split_users = load_split_file(split_file)
@@ -457,7 +487,9 @@ def evaluate_imputation(
                 f"Valid scenarios: {MASKING_SCENARIOS}"
             )
 
-    daily_hf_dir = _resolve_data_dir(data_dir, _DEFAULT_DAILY_HF_DIR)
+    paths = _DatasetPaths.resolve(data_dir)
+    _ensure_labels_env(paths.labels_dir)
+    daily_hf_dir = paths.daily_hf
 
     # Build a minimal config.
     from imputation_evaluation.config import (
@@ -483,7 +515,7 @@ def evaluate_imputation(
 
     data_cfg = DataConfig(
         daily_hf_dir=str(daily_hf_dir),
-        split_file=str(_DEFAULT_SPLIT_FILE),
+        split_file=str(paths.splits_file),
         split_seed=seed,
         batch_size=5000,
         num_workers=4,
