@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Iterable
 import numpy as np
 
 if TYPE_CHECKING:
-    from openmhc._results import DownstreamResults, ImputationResults
+    from openmhc._results import PredictionResults, ImputationResults
 
 # ---------------------------------------------------------------------------
 # Constants from the paper
@@ -229,8 +229,8 @@ def imputation_to_submission_yaml(
     )
 
 
-def downstream_to_submission_yaml(
-    results: "DownstreamResults",
+def prediction_to_submission_yaml(
+    results: "PredictionResults",
     method_name: str,
     submitter_team: str,
     code_url: str,
@@ -272,6 +272,52 @@ def downstream_to_submission_yaml(
             "body_biomarkers: —",
             "mental_wellbeing: —",
             "sleep_lifestyle: —",
+        ],
+        raw_block=raw,
+    )
+
+
+def forecasting_to_submission_yaml(
+    results: "ForecastingResults",
+    method_name: str,
+    submitter_team: str,
+    code_url: str,
+    paper_url: str = "",
+    method_category: str = "Other",
+    foundation_variant: str = "N/A (not a foundation model)",
+    feature_dim: str = "—",
+    notes: str = "",
+) -> str:
+    """Render a paste-ready submission body for a Track 3 forecasting result.
+
+    Skill scores against the Seasonal Naive baseline are left as ``—``
+    until the per-channel baseline file is shipped. Subgroup keys match
+    the submission template (``step``, ``flights``, ``hr``, ``energy``,
+    ``sleep``, ``workouts``).
+    """
+    raw = json.dumps(results.per_channel, indent=2, default=_json_default)
+    return _render_yaml_block(
+        track="Track 3 — Forecasting",
+        method_name=method_name,
+        submitter_team=submitter_team,
+        method_category=method_category,
+        foundation_variant=foundation_variant,
+        feature_dim=feature_dim,
+        paper_url=paper_url,
+        code_url=code_url,
+        notes=notes,
+        aggregate_lines=[
+            "skill_score: —  # computed by maintainers vs Seasonal Naive baseline",
+            "fair_skill_score: —",
+            "avg_rank: —",
+        ],
+        subgroup_lines=[
+            "step: —",
+            "flights: —",
+            "hr: —",
+            "energy: —",
+            "sleep: —",
+            "workouts: —",
         ],
         raw_block=raw,
     )

@@ -1,0 +1,1 @@
+"""Naive forecasting models."""

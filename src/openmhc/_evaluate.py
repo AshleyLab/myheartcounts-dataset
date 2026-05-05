@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import tempfile
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
@@ -21,7 +22,7 @@ if TYPE_CHECKING:
     from openmhc._protocols import Encoder, Imputer
 
 from openmhc._dataset import data_dir as _resolve_default_data_dir
-from openmhc._results import DownstreamResults, ImputationResults
+from openmhc._results import PredictionResults, ImputationResults
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +45,8 @@ class _DatasetPaths:
     norm_stats: Path
     clip_dates: Path
     labels_dir: Path
+    hourly_trajectory: Path
+    forecasting_sample_index_dir: Path
 
     @classmethod
     def resolve(cls, override: str | Path | None = None) -> "_DatasetPaths":
@@ -66,6 +69,8 @@ class _DatasetPaths:
             norm_stats=root / "processed" / "normalization_stats_hourly.json",
             clip_dates=root / "labels" / "clip_dates.json",
             labels_dir=root / "labels",
+            hourly_trajectory=root / "hourly_trajectory",
+            forecasting_sample_index_dir=root / "forecasting_sample_index",
         )
 
 
@@ -82,17 +87,17 @@ def _ensure_labels_env(labels_dir: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Downstream evaluation
+# Prediction evaluation
 # ---------------------------------------------------------------------------
 
 
-def evaluate_downstream(
+def evaluate_prediction(
     encoder: Encoder,
     tasks: str | list[str] = "all",
     data_dir: str | Path | None = None,
     seed: int = 42,
-) -> DownstreamResults:
-    """Run downstream health prediction evaluation with a custom encoder.
+) -> PredictionResults:
+    """Run health-prediction evaluation with a custom encoder.
 
     Encodes weekly sensor tensors via `encoder.encode()` and evaluates the
     resulting embeddings on up to 33 health prediction tasks using linear
@@ -108,7 +113,7 @@ def evaluate_downstream(
         seed: Random seed for classifiers and splits.
 
     Returns:
-        A DownstreamResults instance with per-task metrics and a global score
+        A PredictionResults instance with per-task metrics and a global score
         (mean AUROC across binary tasks).
     """
     import pandas as pd
@@ -325,7 +330,7 @@ def evaluate_downstream(
 
     global_score = float(np.mean(binary_aurocs)) if binary_aurocs else 0.0
 
-    return DownstreamResults(records=records, global_score=global_score)
+    return PredictionResults(records=records, global_score=global_score)
 
 
 def _extract_encoder_features(
@@ -635,3 +640,111 @@ class _ImputerMethodAdapter:
 
     def prepare_split(self, *args, **kwargs) -> None:
         """No-op; some internal methods use this hook."""
+
+
+# ---------------------------------------------------------------------------
+# Forecasting evaluation (Track 3)
+# ---------------------------------------------------------------------------
+
+
+def evaluate_forecasting(
+    forecaster,
+    forecasting_length: int = 24,
+    data_dir: str | Path | None = None,
+    seed: int = 42,
+    max_samples: int | None = None,
+) -> "ForecastingResults":
+    """Run forecasting evaluation (Track 3) with a custom forecaster.
+
+    Args:
+        forecaster: Object satisfying the :class:`Forecaster` protocol —
+            has ``predict(history, horizon)`` returning a ``(n_channels,
+            horizon)`` array.
+        forecasting_length: Forecast horizon in hours. Defaults to 24
+            (matching the paper's Track 3 sub-task).
+        data_dir: Override for the dataset root. ``None`` uses the default
+            (``MHC_DATA_DIR`` env var or ``~/.cache/openmhc/data``).
+        seed: Random seed.
+        max_samples: Limit prediction samples per user (debugging).
+
+    Returns:
+        :class:`ForecastingResults` with per-channel metrics.
+    """
+    from openmhc._results import ForecastingResults
+
+    paths = _DatasetPaths.resolve(data_dir)
+    _ensure_labels_env(paths.labels_dir)
+
+    from forecasting_evaluation.config import (
+        DataConfig,
+        EvaluatorConfig,
+        FeaturesConfig,
+        ForecastingConfig,
+        ForecastingEvalConfig,
+        ForecastingModelConfig,
+        OutputConfig,
+    )
+    from forecasting_evaluation.runner import run_eval
+
+    # Pick a sample-index file matching the requested forecasting horizon.
+    sample_index_file = paths.forecasting_sample_index_dir / "sample_index_raw.json"
+
+    data_cfg = DataConfig(
+        trajectory_hf_dir=str(paths.hourly_trajectory),
+        split_file=str(paths.splits_file),
+        day_remain_mask=str(paths.forecasting_sample_index_dir / "day_remain_mask.json"),
+        sample_index_file=str(sample_index_file),
+        split_seed=seed,
+        max_samples=max_samples,
+    )
+    forecasting_cfg = ForecastingConfig(forecasting_length=forecasting_length)
+
+    with tempfile.TemporaryDirectory(prefix="openmhc-fc-") as tmp_results:
+        cfg = ForecastingEvalConfig(
+            seed=seed,
+            experiment_name="openmhc_run",
+            debug_mode=False,
+            data=data_cfg,
+            forecasting=forecasting_cfg,
+            model=ForecastingModelConfig(),  # ignored by _CustomModelEvaluator
+            features=FeaturesConfig(),
+            evaluator=EvaluatorConfig(),
+            output=OutputConfig(results_dir=tmp_results),
+        )
+        adapter = _build_forecaster_adapter(forecaster)
+        result = run_eval(cfg, model=adapter)
+
+    return ForecastingResults(
+        per_channel=result.get("per_channel", {}),
+        run_dir=str(result.get("run_dir", "")),
+        n_samples=int(result.get("n_samples", 0)),
+    )
+
+
+def _build_forecaster_adapter(forecaster):
+    """Wrap a user's ``Forecaster`` as an internal ``BasePredictionModel``.
+
+    Subclasses ``BasePredictionModel`` so we inherit ``predict_wrapper`` (which
+    adds timing + memory tracking around the user's ``predict()`` call).
+    """
+    from forecasting_evaluation.models.base import BasePredictionModel
+
+    class _ForecasterAdapter(BasePredictionModel):
+        model_name = "openmhc_custom_forecaster"
+        quantile_levels = None
+        uses_standard_scaler = False
+        scaler_stats = None
+
+        def __init__(self, forecaster):
+            self._forecaster = forecaster
+
+        def predict(self, inputs):
+            """Translate ``SubTrajectoryInput`` → user's ``predict(history, horizon)``."""
+            point = self._forecaster.predict(inputs.history, inputs.prediction_hours)
+            return np.asarray(point, dtype=np.float32), None
+
+        def reset(self):
+            if hasattr(self._forecaster, "reset"):
+                self._forecaster.reset()
+
+    return _ForecasterAdapter(forecaster)

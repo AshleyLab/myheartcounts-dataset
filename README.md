@@ -38,7 +38,7 @@ class MeanPoolEncoder:
         # weekly_tensors: (B, 168, 38). Return (B, D) embeddings.
         return weekly_tensors[:, :, :19].mean(axis=1).astype(np.float32)
 
-results = openmhc.evaluate_downstream(MeanPoolEncoder())
+results = openmhc.evaluate_prediction(MeanPoolEncoder())
 print(results.summary())
 print("global score (mean AUROC over binary tasks):", results.global_score)
 ```
@@ -86,7 +86,7 @@ Submissions must follow the standard evaluation protocol — same split file, ma
 
 | Path | What's there |
 |---|---|
-| `src/openmhc/` | Public API (`evaluate_downstream`, `evaluate_imputation`, `download_dataset`, …) |
+| `src/openmhc/` | Public API (`evaluate_prediction`, `evaluate_imputation`, `download_dataset`, …) |
 | `src/downstream_evaluation/` | Track 1 internals (linear probes, time-window selection, metrics) |
 | `src/imputation_evaluation/` | Track 2 internals (masking scenarios, per-channel metrics) |
 | `src/labels/` | Label registry + type lookup |

@@ -14,8 +14,8 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class DownstreamResults:
-    """Results from downstream health prediction evaluation.
+class PredictionResults:
+    """Results from health-prediction evaluation.
 
     Attributes:
         records: List of per-task metric records. Each record is a dict with
@@ -94,9 +94,9 @@ class DownstreamResults:
         fill them in during ingestion. ``paper_url`` is optional — leave
         empty for independent submissions without a write-up.
         """
-        from openmhc._submission import downstream_to_submission_yaml
+        from openmhc._submission import prediction_to_submission_yaml
 
-        return downstream_to_submission_yaml(
+        return prediction_to_submission_yaml(
             self,
             method_name=method_name,
             submitter_team=submitter_team,
@@ -111,7 +111,7 @@ class DownstreamResults:
 
     def __repr__(self) -> str:
         n = len(self.records)
-        return f"DownstreamResults({n} records, global_score={self.global_score:.4f})"
+        return f"PredictionResults({n} records, global_score={self.global_score:.4f})"
 
 
 @dataclass
@@ -240,6 +240,90 @@ class ImputationResults:
     def __repr__(self) -> str:
         n = len(self.scenarios)
         return f"ImputationResults({n} scenarios)"
+
+
+@dataclass
+class ForecastingResults:
+    """Results from forecasting evaluation (Track 3).
+
+    Attributes:
+        per_channel: Dict mapping channel name (e.g. ``"hr"``) to a per-metric
+            dict (``mae``, ``mase``, ``ql``, ``sql`` for continuous; ``auprc``,
+            ``auroc`` for binary).
+        run_dir: Path to the directory where per-user prediction parquets +
+            offline metric outputs were written.
+        n_samples: Total prediction samples emitted.
+    """
+
+    per_channel: dict = field(repr=False)
+    run_dir: str = ""
+    n_samples: int = 0
+
+    def to_dataframe(self) -> pd.DataFrame:
+        """Flatten per-channel metrics into a long DataFrame."""
+        rows = []
+        for channel, metrics in self.per_channel.items():
+            if not isinstance(metrics, dict):
+                continue
+            for metric_name, value in metrics.items():
+                rows.append({"channel": channel, "metric": metric_name, "value": value})
+        return pd.DataFrame(rows)
+
+    def to_csv(self, path: str | Path) -> None:
+        """Export per-channel results to CSV."""
+        self.to_dataframe().to_csv(path, index=False)
+        logger.info("Forecasting results saved to %s", path)
+
+    def to_json(self, path: str | Path) -> None:
+        """Export full results dict to JSON."""
+        Path(path).write_text(
+            json.dumps(self.per_channel, indent=2, default=_json_default)
+        )
+        logger.info("Forecasting results saved to %s", path)
+
+    def summary(self) -> pd.DataFrame:
+        """Wide table: rows = channels, cols = metrics."""
+        df = self.to_dataframe()
+        if df.empty:
+            return df
+        return df.pivot_table(
+            index="channel", columns="metric", values="value", aggfunc="first"
+        ).reset_index()
+
+    def to_submission_yaml(
+        self,
+        method_name: str,
+        submitter_team: str,
+        code_url: str,
+        paper_url: str = "",
+        method_category: str = "Other",
+        foundation_variant: str = "N/A (not a foundation model)",
+        feature_dim: str = "—",
+        notes: str = "",
+    ) -> str:
+        """Render a paste-ready submission body for a Track 3 forecasting result.
+
+        Skill scores against the Seasonal Naive baseline are emitted as ``—``
+        because the per-channel baseline file isn't shipped yet; maintainers
+        fill them in from ``raw_metrics`` during ingestion.
+        """
+        from openmhc._submission import forecasting_to_submission_yaml
+
+        return forecasting_to_submission_yaml(
+            self,
+            method_name=method_name,
+            submitter_team=submitter_team,
+            code_url=code_url,
+            paper_url=paper_url,
+            method_category=method_category,
+            foundation_variant=foundation_variant,
+            feature_dim=feature_dim,
+            notes=notes,
+        )
+
+    def __repr__(self) -> str:
+        n = len(self.per_channel)
+        return f"ForecastingResults({n} channels, n_samples={self.n_samples})"
 
 
 def _json_default(obj):

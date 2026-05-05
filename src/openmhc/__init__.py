@@ -3,7 +3,7 @@
 Quick start:
 
     >>> import openmhc
-    >>> results = openmhc.evaluate_downstream(my_encoder)
+    >>> results = openmhc.evaluate_prediction(my_encoder)
     >>> results.summary()
     >>> results.global_score  # mean AUROC across binary tasks
 
@@ -17,16 +17,22 @@ Quick start:
 
 from openmhc._constants import MASKING_SCENARIOS, SENSOR_CHANNELS
 from openmhc._dataset import data_dir, download_dataset
-from openmhc._protocols import Encoder, Imputer
-from openmhc._results import DownstreamResults, ImputationResults
+from openmhc._protocols import Encoder, Forecaster, Imputer
+from openmhc._results import (
+    ForecastingResults,
+    ImputationResults,
+    PredictionResults,
+)
 
 __all__ = [
     # Protocols
     "Encoder",
     "Imputer",
+    "Forecaster",
     # Evaluation functions
-    "evaluate_downstream",
+    "evaluate_prediction",
     "evaluate_imputation",
+    "evaluate_forecasting",
     # Dataset
     "download_dataset",
     "data_dir",
@@ -35,18 +41,19 @@ __all__ = [
     "list_masking_scenarios",
     "SENSOR_CHANNELS",
     # Result types
-    "DownstreamResults",
+    "PredictionResults",
     "ImputationResults",
+    "ForecastingResults",
 ]
 
 
-def evaluate_downstream(
+def evaluate_prediction(
     encoder: Encoder,
     tasks: str | list[str] = "all",
     data_dir: str | None = None,
     seed: int = 42,
-) -> DownstreamResults:
-    """Run downstream health prediction evaluation with a custom encoder.
+) -> PredictionResults:
+    """Run health-prediction evaluation with a custom encoder.
 
     Args:
         encoder: Object implementing the Encoder protocol.
@@ -56,9 +63,9 @@ def evaluate_downstream(
         seed: Random seed for classifiers and splits.
 
     Returns:
-        DownstreamResults with per-task metrics and a global score.
+        PredictionResults with per-task metrics and a global score.
     """
-    from openmhc._evaluate import evaluate_downstream as _eval
+    from openmhc._evaluate import evaluate_prediction as _eval
 
     return _eval(encoder, tasks=tasks, data_dir=data_dir, seed=seed)
 
@@ -87,8 +94,39 @@ def evaluate_imputation(
     return _eval(imputer, masking_scenarios=masking_scenarios, data_dir=data_dir, seed=seed)
 
 
+def evaluate_forecasting(
+    forecaster: Forecaster,
+    forecasting_length: int = 24,
+    data_dir: str | None = None,
+    seed: int = 42,
+    max_samples: int | None = None,
+) -> ForecastingResults:
+    """Run forecasting evaluation (Track 3) with a custom forecaster.
+
+    Args:
+        forecaster: Object implementing the Forecaster protocol —
+            ``predict(history, horizon)`` returns ``(n_channels, horizon)``.
+        forecasting_length: Forecast horizon in hours. Defaults to 24.
+        data_dir: Override for the dataset root. None uses the default.
+        seed: Random seed.
+        max_samples: Limit prediction samples per user (debugging only).
+
+    Returns:
+        ForecastingResults with per-channel metrics.
+    """
+    from openmhc._evaluate import evaluate_forecasting as _eval
+
+    return _eval(
+        forecaster,
+        forecasting_length=forecasting_length,
+        data_dir=data_dir,
+        seed=seed,
+        max_samples=max_samples,
+    )
+
+
 def list_tasks() -> list[str]:
-    """Return all 33 available downstream prediction task names.
+    """Return all 33 available prediction task names.
 
     Returns:
         Sorted list of task name strings.
