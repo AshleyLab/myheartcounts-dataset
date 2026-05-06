@@ -78,12 +78,25 @@ def _ensure_labels_env(labels_dir: Path) -> None:
     """Point the bundled `labels.api` module at the downloaded labels dir.
 
     `labels.api` reads `LABELS_DATA_PATH` / `CONTEXT_LABELS_PATH` env vars
-    at import time. Set them to the dataset paths if the user hasn't.
+    at import time and caches them in module-level Path constants. We set
+    the env vars if the user hasn't, then reload the module if it was
+    already imported (e.g. via ``openmhc.list_tasks()``) so the cached
+    paths reflect the new values.
     """
+    changed = False
     if not os.getenv("LABELS_DATA_PATH"):
         os.environ["LABELS_DATA_PATH"] = str(labels_dir / "last_labels.json")
+        changed = True
     if not os.getenv("CONTEXT_LABELS_PATH"):
         os.environ["CONTEXT_LABELS_PATH"] = str(labels_dir / "context_labels.json")
+        changed = True
+
+    if changed:
+        import importlib
+        import sys
+
+        if "labels.api" in sys.modules:
+            importlib.reload(sys.modules["labels.api"])
 
 
 # ---------------------------------------------------------------------------
@@ -108,8 +121,11 @@ def evaluate_prediction(
         encoder: Object with an `encode(weekly_tensors) -> embeddings` method.
             Input shape is (B, 168, 38), output shape is (B, D).
         tasks: "all" to run all 33 tasks, or a list of task name strings.
-        data_dir: Path to the `daily_hourly_hf` dataset directory. None uses
-            the default location.
+        data_dir: Override for the dataset root (the same root that
+            ``download_dataset`` writes to). ``None`` uses the default
+            (``MHC_DATA_DIR`` env var or ``~/.cache/openmhc/data``). All
+            sub-paths (`processed/daily_hourly_hf/`, `splits/`, `labels/`,
+            etc.) are derived from this root.
         seed: Random seed for classifiers and splits.
 
     Returns:
@@ -472,8 +488,11 @@ def evaluate_imputation(
             `impute(data, observed_mask, target_mask)` methods.
         masking_scenarios: "all" to run all 6 scenarios, or a list of scenario
             name strings.
-        data_dir: Path to the `daily_hf` dataset directory. None uses the
-            default location.
+        data_dir: Override for the dataset root (the same root that
+            ``download_dataset`` writes to). ``None`` uses the default
+            (``MHC_DATA_DIR`` env var or ``~/.cache/openmhc/data``). All
+            sub-paths (`processed/daily_hf/`, `splits/`, `labels/`, etc.)
+            are derived from this root.
         seed: Random seed for mask generation.
 
     Returns:

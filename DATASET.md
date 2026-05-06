@@ -79,7 +79,7 @@ $MHC_DATA_DIR/
     └── day_remain_mask.json      # per-user retain mask
 ```
 
-The eval API resolves these paths through ``openmhc._evaluate._DatasetPaths`` — every entry above is derived from a single root (``MHC_DATA_DIR`` / explicit ``data_dir=`` arg / ``~/.cache/openmhc/data``). If your dataset uses a different layout, the simplest fix is to symlink or rearrange the unpacked files to match.
+The eval API derives every entry above from a single dataset root, resolved (in priority order) from: an explicit ``data_dir=`` argument to ``evaluate_*`` / ``download_dataset``, the ``MHC_DATA_DIR`` env var, or the default ``~/.cache/openmhc/data``. ``openmhc.data_dir()`` returns the resolved root and ``openmhc.download_dataset()`` writes to that same root, so the API and the downloader always agree. If your dataset uses a different layout, the simplest fix is to symlink or rearrange the unpacked files to match.
 
 The schema-only registry files (`label_types.json`, `ordinal_dictionary.json`, `validity_config.json`) ship with this code repo at `data/labels/` and don't need to be downloaded.
 

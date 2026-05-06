@@ -18,8 +18,19 @@ from openmhc._evaluate import _DatasetPaths
 
 @pytest.fixture(autouse=True)
 def _isolate_env(monkeypatch):
-    """Clear MHC_DATA_DIR for each test so they start from a known state."""
-    monkeypatch.delenv("MHC_DATA_DIR", raising=False)
+    """Clear dataset / labels env vars so each test starts from a known state.
+
+    Without this, tests that set ``LABELS_DATA_PATH`` / ``CONTEXT_LABELS_PATH``
+    would leak into sibling test modules (e.g. ``src/labels/test_api.py``)
+    and make ordering matter.
+    """
+    for var in (
+        "MHC_DATA_DIR",
+        "LABELS_DATA_PATH",
+        "CONTEXT_LABELS_PATH",
+        "ENROLLMENT_DATA_PATH",
+    ):
+        monkeypatch.delenv(var, raising=False)
     yield
 
 
