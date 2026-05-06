@@ -25,7 +25,7 @@ import openmhc
 openmhc.download_dataset(version="tiny")
 ```
 
-Then evaluate a model. Models implement one of two duck-typed protocols — no inheritance required.
+Then evaluate a model. Models implement one of three duck-typed protocols — no inheritance required.
 
 ### Track 1 — outcome prediction (`Encoder`)
 
@@ -64,6 +64,22 @@ results = openmhc.evaluate_imputation(MeanImputer())
 print(results.summary())
 ```
 
+### Track 3 — forecasting (`Forecaster`)
+
+```python
+import numpy as np
+import openmhc
+
+class LastValueForecaster:
+    def predict(self, history: np.ndarray, horizon: int) -> np.ndarray:
+        # history: (n_channels, history_length); returns (n_channels, horizon)
+        last = np.nan_to_num(history[:, -1:], nan=0.0)
+        return np.tile(last, (1, horizon)).astype(np.float32)
+
+results = openmhc.evaluate_forecasting(LastValueForecaster(), forecasting_length=24)
+print(results.summary())
+```
+
 A more complete walkthrough is in [`notebooks/quickstart.ipynb`](notebooks/quickstart.ipynb).
 
 ## Submit to the leaderboard
@@ -86,9 +102,10 @@ Submissions must follow the standard evaluation protocol — same split file, ma
 
 | Path | What's there |
 |---|---|
-| `src/openmhc/` | Public API (`evaluate_prediction`, `evaluate_imputation`, `download_dataset`, …) |
+| `src/openmhc/` | Public API (`evaluate_prediction`, `evaluate_imputation`, `evaluate_forecasting`, `download_dataset`, …) |
 | `src/downstream_evaluation/` | Track 1 internals (linear probes, time-window selection, metrics) |
 | `src/imputation_evaluation/` | Track 2 internals (masking scenarios, per-channel metrics) |
+| `src/forecasting_evaluation/` | Track 3 internals (window cache, point + quantile metrics) |
 | `src/labels/` | Label registry + type lookup |
 | `data/labels/` | Schema-only registry files (label types, ordinal vocab, validity config) |
 | `notebooks/quickstart.ipynb` | End-to-end example |

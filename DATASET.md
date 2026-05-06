@@ -56,20 +56,27 @@ After download, `$MHC_DATA_DIR` should look like:
 
 ```
 $MHC_DATA_DIR/
-├── labels/
+├── labels/                       # Track 1
 │   ├── last_labels.json          # participant-level outcome labels
 │   ├── context_labels.json       # participant-level covariates
-│   ├── healthkit_daily.json      # daily-resolution HealthKit metrics
 │   ├── label_validity.json       # which (user, label) pairs pass validity
-│   └── clip_dates.json           # per-task date clipping (longitudinal labels)
+│   └── clip_dates.json           # per-task date clipping (longitudinal labels — optional)
 ├── splits/
 │   └── sharable_users_seed42_2026.json   # canonical user-level splits
-└── processed/
-    ├── daily_hourly_hf/          # daily ×24h sensor tensors (HuggingFace Arrow)
-    ├── daily_hf/                 # daily ×1440min sensor tensors (HuggingFace Arrow)
-    ├── window_index_w7_s7_d5.parquet     # 7-day weekly window index
-    ├── weekly_labels_lookup_stride7.parquet  # weekly labels lookup
-    └── normalization_stats_hourly.json   # global z-score statistics
+├── processed/                    # Tracks 1 + 2
+│   ├── daily_hourly_hf/          # daily ×24h sensor tensors (HuggingFace Arrow) — Track 1
+│   ├── daily_hf/                 # daily ×1440min sensor tensors (HuggingFace Arrow) — Track 2
+│   ├── window_index_w7_s7_d5.parquet         # 7-day weekly window index — Track 1
+│   ├── weekly_labels_lookup_stride7.parquet  # weekly labels lookup — Track 1
+│   ├── daily_labels_lookup.parquet           # daily labels lookup — Track 1
+│   └── normalization_stats_hourly.json       # global z-score statistics
+├── hourly_trajectory/            # Track 3 — hourly-resolution per-user trajectories
+└── forecasting_sample_index/     # Track 3
+    ├── sample_index_raw.json     # forecast-window sample index
+    ├── sample_index_P_48_raw.json
+    ├── sample_index_MH_7_3S_100.json
+    ├── sample_index_P_48_M_H_7_3_S_100.json
+    └── day_remain_mask.json      # per-user retain mask
 ```
 
 The eval API resolves these paths through ``openmhc._evaluate._DatasetPaths`` — every entry above is derived from a single root (``MHC_DATA_DIR`` / explicit ``data_dir=`` arg / ``~/.cache/openmhc/data``). If your dataset uses a different layout, the simplest fix is to symlink or rearrange the unpacked files to match.
