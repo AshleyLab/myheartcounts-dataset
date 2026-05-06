@@ -25,3 +25,5 @@ env/
 # Cached data
 ~/.cache/
 .cache/
+data/.hf_cache/
+data/processed/

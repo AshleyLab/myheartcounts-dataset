@@ -1,4 +1,4 @@
-"""Public evaluation functions for MHC-Benchmark.
+"""Public evaluation functions for OpenMHC.
 
 These functions provide a simple interface to the benchmark's evaluation
 pipelines. They accept duck-typed Encoder/Imputer objects and return
@@ -9,7 +9,10 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import tempfile
 import warnings
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -18,54 +21,96 @@ import numpy as np
 if TYPE_CHECKING:
     from openmhc._protocols import Encoder, Imputer
 
-from openmhc._results import DownstreamResults, ImputationResults
+from openmhc._dataset import data_dir as _resolve_default_data_dir
+from openmhc._results import PredictionResults, ImputationResults
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Default paths (relative to repo root)
-# ---------------------------------------------------------------------------
-_REPO_ROOT = Path(__file__).resolve().parents[2]
-_DEFAULT_DAILY_HOURLY_HF_DIR = _REPO_ROOT / "data" / "processed" / "daily_hourly_hf"
-_DEFAULT_WINDOW_INDEX_PATH = (
-    _REPO_ROOT / "data" / "processed" / "window_index_w7_s7_d5.parquet"
-)
-_DEFAULT_SPLIT_FILE = _REPO_ROOT / "data" / "splits" / "sharable_users_seed42_2026.json"
-_DEFAULT_WEEKLY_LABELS_LOOKUP = (
-    _REPO_ROOT / "data" / "processed" / "weekly_labels_lookup_stride7.parquet"
-)
-_DEFAULT_CLIP_DATES = _REPO_ROOT / "data" / "labels" / "clip_dates.json"
-_DEFAULT_DAILY_HF_DIR = _REPO_ROOT / "data" / "processed" / "daily_hf"
-_DEFAULT_NORM_STATS = _REPO_ROOT / "data" / "processed" / "normalization_stats_hourly.json"
 
+@dataclass
+class _DatasetPaths:
+    """Resolved paths into the dataset directory.
 
-def _resolve_data_dir(data_dir: str | Path | None, default: Path) -> Path:
-    """Resolve a user-provided data directory or fall back to the default.
-
-    Args:
-        data_dir: User-provided path, or None for the default.
-        default: Default path to use when data_dir is None.
-
-    Returns:
-        Resolved Path object.
+    All paths are derived from a single ``root`` so the API stays consistent
+    with what :func:`openmhc.download_dataset` produces. The expected layout
+    matches DATASET.md.
     """
-    if data_dir is not None:
-        return Path(data_dir)
-    return default
+
+    root: Path
+    daily_hourly_hf: Path
+    daily_hf: Path
+    window_index: Path
+    weekly_labels_lookup: Path
+    splits_file: Path
+    norm_stats: Path
+    clip_dates: Path
+    labels_dir: Path
+    hourly_trajectory: Path
+    forecasting_sample_index_dir: Path
+
+    @classmethod
+    def resolve(cls, override: str | Path | None = None) -> "_DatasetPaths":
+        """Build the paths bundle from an explicit override or the default.
+
+        Resolution order matches :func:`openmhc.data_dir`:
+
+        1. ``override`` argument (if provided)
+        2. ``MHC_DATA_DIR`` env var
+        3. ``~/.cache/openmhc/data``
+        """
+        root = _resolve_default_data_dir(override)
+        return cls(
+            root=root,
+            daily_hourly_hf=root / "processed" / "daily_hourly_hf",
+            daily_hf=root / "processed" / "daily_hf",
+            window_index=root / "processed" / "window_index_w7_s7_d5.parquet",
+            weekly_labels_lookup=root / "processed" / "weekly_labels_lookup_stride7.parquet",
+            splits_file=root / "splits" / "sharable_users_seed42_2026.json",
+            norm_stats=root / "processed" / "normalization_stats_hourly.json",
+            clip_dates=root / "labels" / "clip_dates.json",
+            labels_dir=root / "labels",
+            hourly_trajectory=root / "hourly_trajectory",
+            forecasting_sample_index_dir=root / "forecasting_sample_index",
+        )
+
+
+def _ensure_labels_env(labels_dir: Path) -> None:
+    """Point the bundled `labels.api` module at the downloaded labels dir.
+
+    `labels.api` reads `LABELS_DATA_PATH` / `CONTEXT_LABELS_PATH` env vars
+    at import time and caches them in module-level Path constants. We set
+    the env vars if the user hasn't, then reload the module if it was
+    already imported (e.g. via ``openmhc.list_tasks()``) so the cached
+    paths reflect the new values.
+    """
+    changed = False
+    if not os.getenv("LABELS_DATA_PATH"):
+        os.environ["LABELS_DATA_PATH"] = str(labels_dir / "last_labels.json")
+        changed = True
+    if not os.getenv("CONTEXT_LABELS_PATH"):
+        os.environ["CONTEXT_LABELS_PATH"] = str(labels_dir / "context_labels.json")
+        changed = True
+
+    if changed:
+        import importlib
+        import sys
+
+        if "labels.api" in sys.modules:
+            importlib.reload(sys.modules["labels.api"])
 
 
 # ---------------------------------------------------------------------------
-# Downstream evaluation
+# Prediction evaluation
 # ---------------------------------------------------------------------------
 
 
-def evaluate_downstream(
+def evaluate_prediction(
     encoder: Encoder,
     tasks: str | list[str] = "all",
     data_dir: str | Path | None = None,
     seed: int = 42,
-) -> DownstreamResults:
-    """Run downstream health prediction evaluation with a custom encoder.
+) -> PredictionResults:
+    """Run health-prediction evaluation with a custom encoder.
 
     Encodes weekly sensor tensors via `encoder.encode()` and evaluates the
     resulting embeddings on up to 33 health prediction tasks using linear
@@ -76,15 +121,21 @@ def evaluate_downstream(
         encoder: Object with an `encode(weekly_tensors) -> embeddings` method.
             Input shape is (B, 168, 38), output shape is (B, D).
         tasks: "all" to run all 33 tasks, or a list of task name strings.
-        data_dir: Path to the `daily_hourly_hf` dataset directory. None uses
-            the default location.
+        data_dir: Override for the dataset root (the same root that
+            ``download_dataset`` writes to). ``None`` uses the default
+            (``MHC_DATA_DIR`` env var or ``~/.cache/openmhc/data``). All
+            sub-paths (`processed/daily_hourly_hf/`, `splits/`, `labels/`,
+            etc.) are derived from this root.
         seed: Random seed for classifiers and splits.
 
     Returns:
-        A DownstreamResults instance with per-task metrics and a global score
+        A PredictionResults instance with per-task metrics and a global score
         (mean AUROC across binary tasks).
     """
     import pandas as pd
+
+    paths = _DatasetPaths.resolve(data_dir)
+    _ensure_labels_env(paths.labels_dir)
 
     from downstream_evaluation.config import ClassifierConfig, parse_time_windows
     from downstream_evaluation.data.splits import load_split_file
@@ -107,11 +158,11 @@ def evaluate_downstream(
         task_list = list(tasks)
 
     # Resolve paths.
-    daily_hourly_dir = _resolve_data_dir(data_dir, _DEFAULT_DAILY_HOURLY_HF_DIR)
-    split_file = _DEFAULT_SPLIT_FILE
-    window_index_path = _DEFAULT_WINDOW_INDEX_PATH
-    labels_path = _DEFAULT_WEEKLY_LABELS_LOOKUP
-    clip_dates_path = _DEFAULT_CLIP_DATES
+    daily_hourly_dir = paths.daily_hourly_hf
+    split_file = paths.splits_file
+    window_index_path = paths.window_index
+    labels_path = paths.weekly_labels_lookup
+    clip_dates_path = paths.clip_dates
 
     # Load user splits.
     split_users = load_split_file(split_file)
@@ -206,14 +257,20 @@ def evaluate_downstream(
             clip = all_clip_dates.get(task_name)
 
             for clf_type in classifiers:
+                if task_name not in labels_df.columns:
+                    logger.warning(
+                        "Task %s missing from labels lookup, skipping", task_name
+                    )
+                    break
+                task_labels = labels_df[task_name].values
                 try:
                     splits = store.aggregate_for_task(
-                        labels_df=labels_df,
-                        task_name=task_name,
-                        clip_dates=clip,
-                        time_window=tw,
-                        split_users=split_users,
-                        method="mean",
+                        task_labels,
+                        task_type,
+                        clip,
+                        tw,
+                        split_users,
+                        pooling_method="mean",
                     )
                 except Exception as e:
                     logger.warning(
@@ -221,9 +278,11 @@ def evaluate_downstream(
                     )
                     continue
 
-                X_train, y_train, _ = splits["train"]
-                X_val, y_val, _ = splits["validation"]
-                X_test, y_test, _ = splits["test"]
+                # Current signature returns 4-tuple (X, y, user_ids, n_weeks)
+                # under "train"/"val"/"test" keys (split file used "validation").
+                X_train, y_train, *_ = splits["train"]
+                X_val, y_val, *_ = splits["val"]
+                X_test, y_test, *_ = splits["test"]
 
                 if len(X_train) == 0 or len(X_test) == 0:
                     logger.warning("Task %s: empty split, skipping", task_name)
@@ -287,7 +346,7 @@ def evaluate_downstream(
 
     global_score = float(np.mean(binary_aurocs)) if binary_aurocs else 0.0
 
-    return DownstreamResults(records=records, global_score=global_score)
+    return PredictionResults(records=records, global_score=global_score)
 
 
 def _extract_encoder_features(
@@ -429,8 +488,11 @@ def evaluate_imputation(
             `impute(data, observed_mask, target_mask)` methods.
         masking_scenarios: "all" to run all 6 scenarios, or a list of scenario
             name strings.
-        data_dir: Path to the `daily_hf` dataset directory. None uses the
-            default location.
+        data_dir: Override for the dataset root (the same root that
+            ``download_dataset`` writes to). ``None`` uses the default
+            (``MHC_DATA_DIR`` env var or ``~/.cache/openmhc/data``). All
+            sub-paths (`processed/daily_hf/`, `splits/`, `labels/`, etc.)
+            are derived from this root.
         seed: Random seed for mask generation.
 
     Returns:
@@ -457,9 +519,9 @@ def evaluate_imputation(
                 f"Valid scenarios: {MASKING_SCENARIOS}"
             )
 
-    daily_hf_dir = _resolve_data_dir(data_dir, _DEFAULT_DAILY_HF_DIR)
+    paths = _DatasetPaths.resolve(data_dir)
+    _ensure_labels_env(paths.labels_dir)
 
-    # Build a minimal config.
     from imputation_evaluation.config import (
         DataConfig,
         EvalConfig,
@@ -471,7 +533,7 @@ def evaluate_imputation(
         VisualizationConfig,
         WandbConfig,
     )
-    from imputation_evaluation.data.data_loader import ImputationDataLoader
+    from imputation_evaluation.runner import run_eval
 
     masking_cfg = MaskingConfig(mask_seed=seed)
     masking_cfg.random_noise.enabled = "random_noise" in scenario_list
@@ -482,8 +544,8 @@ def evaluate_imputation(
     masking_cfg.intensity_failure.enabled = "intensity_failure" in scenario_list
 
     data_cfg = DataConfig(
-        daily_hf_dir=str(daily_hf_dir),
-        split_file=str(_DEFAULT_SPLIT_FILE),
+        daily_hf_dir=str(paths.daily_hf),
+        split_file=str(paths.splits_file),
         split_seed=seed,
         batch_size=5000,
         num_workers=4,
@@ -501,7 +563,7 @@ def evaluate_imputation(
         seed=seed,
         data=data_cfg,
         masking=masking_cfg,
-        method=MethodConfig(type="mean"),
+        method=MethodConfig(type="mean"),  # placeholder; not used (custom adapter below)
         output=OutputConfig(),
         evaluation=eval_cfg,
         visualization=VisualizationConfig(),
@@ -509,46 +571,9 @@ def evaluate_imputation(
         wandb=WandbConfig(),
     )
 
-    # Load data.
-    loader = ImputationDataLoader(cfg.data)
-    loaded = loader.load()
-
-    # Generate masks.
-    from imputation_evaluation.masking import MaskCacheGenerator, create_mask_generators
-
-    generators = create_mask_generators(cfg.masking)
-    mask_gen = MaskCacheGenerator(
-        generators=generators,
-        seed=cfg.masking.mask_seed,
-    )
-    mask_cache = mask_gen.generate(loaded.val_loader, loaded.test_loader)
-
-    # Wrap the user's imputer in our internal method interface.
     adapter = _ImputerMethodAdapter(imputer)
-
-    logger.info("Fitting imputer on training data...")
-    adapter.fit(loaded.train_loader)
-
-    # Run evaluation.
-    from imputation_evaluation.evaluation.evaluator import ImputationEvaluator
-
-    evaluator = ImputationEvaluator(
-        scenarios=[g.name for g in generators],
-        num_eval_workers=cfg.data.num_eval_workers,
-        include_ks=cfg.evaluation.include_ks,
-        include_wasserstein=cfg.evaluation.include_wasserstein,
-        compute_metrics=True,
-        save_pairs=False,
-    )
-
-    results = evaluator.run(
-        val_loader=loaded.val_loader,
-        test_loader=loaded.test_loader,
-        mask_cache=mask_cache,
-        method=adapter,
-        channel_stds=loaded.channel_stds,
-    )
-
+    logger.info("Running imputation eval with custom imputer...")
+    results = run_eval(cfg, method=adapter)
     return ImputationResults(scenarios=results.get("scenarios", results))
 
 
@@ -617,19 +642,14 @@ class _ImputerMethodAdapter:
         data: np.ndarray,
         original_masks: np.ndarray,
         artificial_masks: np.ndarray,
+        **kwargs,
     ) -> np.ndarray:
         """Delegate to the user's impute, translating argument names.
 
-        Args:
-            data: Sensor values of shape (N, 19, 1440) with NaN at masked
-                positions.
-            original_masks: Binary mask of shape (N, 19, 1440) where
-                1 = originally observed.
-            artificial_masks: Binary mask of shape (N, 19, 1440) where
-                1 = positions to impute.
-
-        Returns:
-            Array of shape (N, 19, 1440) with imputed values.
+        Internal callers may pass extra kwargs (``sample_indices``,
+        ``day_offsets``) used by personalized / RoPE-aware methods. The
+        public ``Imputer`` protocol doesn't expose those, so we discard
+        them silently.
         """
         return self._imputer.impute(
             data=data,
@@ -639,3 +659,111 @@ class _ImputerMethodAdapter:
 
     def prepare_split(self, *args, **kwargs) -> None:
         """No-op; some internal methods use this hook."""
+
+
+# ---------------------------------------------------------------------------
+# Forecasting evaluation (Track 3)
+# ---------------------------------------------------------------------------
+
+
+def evaluate_forecasting(
+    forecaster,
+    forecasting_length: int = 24,
+    data_dir: str | Path | None = None,
+    seed: int = 42,
+    max_samples: int | None = None,
+) -> "ForecastingResults":
+    """Run forecasting evaluation (Track 3) with a custom forecaster.
+
+    Args:
+        forecaster: Object satisfying the :class:`Forecaster` protocol —
+            has ``predict(history, horizon)`` returning a ``(n_channels,
+            horizon)`` array.
+        forecasting_length: Forecast horizon in hours. Defaults to 24
+            (matching the paper's Track 3 sub-task).
+        data_dir: Override for the dataset root. ``None`` uses the default
+            (``MHC_DATA_DIR`` env var or ``~/.cache/openmhc/data``).
+        seed: Random seed.
+        max_samples: Limit prediction samples per user (debugging).
+
+    Returns:
+        :class:`ForecastingResults` with per-channel metrics.
+    """
+    from openmhc._results import ForecastingResults
+
+    paths = _DatasetPaths.resolve(data_dir)
+    _ensure_labels_env(paths.labels_dir)
+
+    from forecasting_evaluation.config import (
+        DataConfig,
+        EvaluatorConfig,
+        FeaturesConfig,
+        ForecastingConfig,
+        ForecastingEvalConfig,
+        ForecastingModelConfig,
+        OutputConfig,
+    )
+    from forecasting_evaluation.runner import run_eval
+
+    # Pick a sample-index file matching the requested forecasting horizon.
+    sample_index_file = paths.forecasting_sample_index_dir / "sample_index_raw.json"
+
+    data_cfg = DataConfig(
+        trajectory_hf_dir=str(paths.hourly_trajectory),
+        split_file=str(paths.splits_file),
+        day_remain_mask=str(paths.forecasting_sample_index_dir / "day_remain_mask.json"),
+        sample_index_file=str(sample_index_file),
+        split_seed=seed,
+        max_samples=max_samples,
+    )
+    forecasting_cfg = ForecastingConfig(forecasting_length=forecasting_length)
+
+    with tempfile.TemporaryDirectory(prefix="openmhc-fc-") as tmp_results:
+        cfg = ForecastingEvalConfig(
+            seed=seed,
+            experiment_name="openmhc_run",
+            debug_mode=False,
+            data=data_cfg,
+            forecasting=forecasting_cfg,
+            model=ForecastingModelConfig(),  # ignored by _CustomModelEvaluator
+            features=FeaturesConfig(),
+            evaluator=EvaluatorConfig(),
+            output=OutputConfig(results_dir=tmp_results),
+        )
+        adapter = _build_forecaster_adapter(forecaster)
+        result = run_eval(cfg, model=adapter)
+
+    return ForecastingResults(
+        per_channel=result.get("per_channel", {}),
+        run_dir=str(result.get("run_dir", "")),
+        n_samples=int(result.get("n_samples", 0)),
+    )
+
+
+def _build_forecaster_adapter(forecaster):
+    """Wrap a user's ``Forecaster`` as an internal ``BasePredictionModel``.
+
+    Subclasses ``BasePredictionModel`` so we inherit ``predict_wrapper`` (which
+    adds timing + memory tracking around the user's ``predict()`` call).
+    """
+    from forecasting_evaluation.models.base import BasePredictionModel
+
+    class _ForecasterAdapter(BasePredictionModel):
+        model_name = "openmhc_custom_forecaster"
+        quantile_levels = None
+        uses_standard_scaler = False
+        scaler_stats = None
+
+        def __init__(self, forecaster):
+            self._forecaster = forecaster
+
+        def predict(self, inputs):
+            """Translate ``SubTrajectoryInput`` → user's ``predict(history, horizon)``."""
+            point = self._forecaster.predict(inputs.history, inputs.prediction_hours)
+            return np.asarray(point, dtype=np.float32), None
+
+        def reset(self):
+            if hasattr(self._forecaster, "reset"):
+                self._forecaster.reset()
+
+    return _ForecasterAdapter(forecaster)

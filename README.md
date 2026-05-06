@@ -25,7 +25,7 @@ import openmhc
 openmhc.download_dataset(version="tiny")
 ```
 
-Then evaluate a model. Models implement one of two duck-typed protocols — no inheritance required.
+Then evaluate a model. Models implement one of three duck-typed protocols — no inheritance required.
 
 ### Track 1 — outcome prediction (`Encoder`)
 
@@ -38,7 +38,7 @@ class MeanPoolEncoder:
         # weekly_tensors: (B, 168, 38). Return (B, D) embeddings.
         return weekly_tensors[:, :, :19].mean(axis=1).astype(np.float32)
 
-results = openmhc.evaluate_downstream(MeanPoolEncoder())
+results = openmhc.evaluate_prediction(MeanPoolEncoder())
 print(results.summary())
 print("global score (mean AUROC over binary tasks):", results.global_score)
 ```
@@ -64,6 +64,22 @@ results = openmhc.evaluate_imputation(MeanImputer())
 print(results.summary())
 ```
 
+### Track 3 — forecasting (`Forecaster`)
+
+```python
+import numpy as np
+import openmhc
+
+class LastValueForecaster:
+    def predict(self, history: np.ndarray, horizon: int) -> np.ndarray:
+        # history: (n_channels, history_length); returns (n_channels, horizon)
+        last = np.nan_to_num(history[:, -1:], nan=0.0)
+        return np.tile(last, (1, horizon)).astype(np.float32)
+
+results = openmhc.evaluate_forecasting(LastValueForecaster(), forecasting_length=24)
+print(results.summary())
+```
+
 A more complete walkthrough is in [`notebooks/quickstart.ipynb`](notebooks/quickstart.ipynb).
 
 ## Submit to the leaderboard
@@ -78,7 +94,7 @@ body = results.to_submission_yaml(
 print(body)
 ```
 
-`to_submission_yaml` returns a paste-ready body matching the textareas in the [submission issue template](../../issues/new?template=submission.yml). For Track 2 imputation, skill scores and per-category subgroup scores are computed locally against the frozen LOCF baseline; for Track 1, those fields are filled in by the maintainers from `raw_metrics` during ingestion. The HuggingFace Space ingests merged submissions and the public leaderboard rebuilds automatically.
+`to_submission_yaml` returns a paste-ready body matching the textareas in the [submission issue template](../../issues/new?template=submission.yml). For Track 2 imputation, skill scores and per-category subgroup scores are computed locally against the frozen LOCF baseline; for Tracks 1 and 3, those fields are filled in by the maintainers from `raw_metrics` during ingestion (Linear + Seasonal Naive baseline files aren't shipped yet). The HuggingFace Space ingests merged submissions and the public leaderboard rebuilds automatically.
 
 Submissions must follow the standard evaluation protocol — same split file, masking config, and label-validity criterion as the paper. The submission template enforces required fields.
 
@@ -86,9 +102,10 @@ Submissions must follow the standard evaluation protocol — same split file, ma
 
 | Path | What's there |
 |---|---|
-| `src/openmhc/` | Public API (`evaluate_downstream`, `evaluate_imputation`, `download_dataset`, …) |
+| `src/openmhc/` | Public API (`evaluate_prediction`, `evaluate_imputation`, `evaluate_forecasting`, `download_dataset`, …) |
 | `src/downstream_evaluation/` | Track 1 internals (linear probes, time-window selection, metrics) |
 | `src/imputation_evaluation/` | Track 2 internals (masking scenarios, per-channel metrics) |
+| `src/forecasting_evaluation/` | Track 3 internals (window cache, point + quantile metrics) |
 | `src/labels/` | Label registry + type lookup |
 | `data/labels/` | Schema-only registry files (label types, ordinal vocab, validity config) |
 | `notebooks/quickstart.ipynb` | End-to-end example |

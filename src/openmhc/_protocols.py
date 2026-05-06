@@ -13,7 +13,7 @@ import numpy as np
 
 @runtime_checkable
 class Encoder(Protocol):
-    """Protocol for downstream health prediction encoders.
+    """Protocol for health-prediction encoders.
 
     Encode weekly sensor tensors into fixed-size embeddings.
 
@@ -86,5 +86,38 @@ class Imputer(Protocol):
         Returns:
             Array of shape (N, 19, 1440) with imputed values at target
             positions. Must be float32.
+        """
+        ...
+
+
+@runtime_checkable
+class Forecaster(Protocol):
+    """Protocol for forecasting evaluation (Track 3).
+
+    Forecast future hours from a history window. The benchmark evaluates
+    point predictions; quantile forecasts are optional via a return signature
+    extension (see below).
+
+    Example:
+        >>> class LastValueForecaster:
+        ...     def predict(self, history, horizon):
+        ...         # history: (n_channels, history_length)
+        ...         # returns: (n_channels, horizon)
+        ...         last = history[:, -1:]
+        ...         return np.tile(last, (1, horizon))
+    """
+
+    def predict(self, history: np.ndarray, horizon: int) -> np.ndarray:
+        """Forecast ``horizon`` future hours given the history window.
+
+        Args:
+            history: Float array of shape ``(n_channels, history_length)``
+                with the past observations. May contain NaN at missing
+                positions.
+            horizon: Number of future hours to predict.
+
+        Returns:
+            Float array of shape ``(n_channels, horizon)`` with the point
+            forecast. Must be float32.
         """
         ...
