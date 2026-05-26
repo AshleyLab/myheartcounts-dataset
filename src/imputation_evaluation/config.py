@@ -205,11 +205,18 @@ class MethodConfig:
         "lsm2",
         "lsm2_weekly_sparse",
         "pypots",
+        "brits",
+        "timesnet",
+        "dlinear",
+        "fedformer",
         "personalized_mean",
         "personalized_mode",
         "personalized_temporal_mean",
     ] = "mean"
     decimal_precision: int = 1  # Rounding precision for mode computation
+    release_dir: str | None = None  # Manifest-bundled release dir (paper checkpoints)
+    device: str = "cuda"  # Inference device for neural imputers
+    inference_batch_size: int = 64  # Inference batch size for neural imputers
     lsm2: LSM2MethodConfig = field(default_factory=LSM2MethodConfig)  # LSM2-specific config
     pypots: PyPOTSMethodConfig = field(default_factory=PyPOTSMethodConfig)  # PyPOTS-specific config
 

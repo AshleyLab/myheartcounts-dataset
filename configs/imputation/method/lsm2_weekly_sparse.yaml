@@ -1,0 +1,10 @@
+# @package method
+type: lsm2_weekly_sparse
+release_dir: ???
+device: cuda
+inference_batch_size: 64
+lsm2:
+  checkpoint_path: ""
+  device: cuda
+  inference_batch_size: 64
+  normalization_prior_count: 1.0e12

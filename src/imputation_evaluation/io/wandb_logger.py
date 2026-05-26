@@ -3,14 +3,30 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import asdict
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from imputation_evaluation.config import ImputationEvalConfig
 
 logger = logging.getLogger(__name__)
+
+
+def _config_to_wandb_dict(config: Any) -> dict[str, Any]:
+    """Convert a dataclass or DictConfig snapshot into a wandb-friendly dict.
+
+    Uses the shared shim from :mod:`eval_hydra` when available (i.e. when the
+    ``[hydra]`` extra is installed) and falls back to ``dataclasses.asdict``
+    so this module still works in the non-Hydra path.
+    """
+    try:
+        from eval_hydra.wandb_shim import to_wandb_config
+
+        return to_wandb_config(config)
+    except ImportError:
+        from dataclasses import asdict
+
+        return asdict(config)
 
 
 def init_wandb(config: ImputationEvalConfig, run_name: str | None = None) -> None:
@@ -32,7 +48,7 @@ def init_wandb(config: ImputationEvalConfig, run_name: str | None = None) -> Non
         entity=config.wandb.entity,
         name=run_name,
         tags=config.wandb.tags,
-        config=asdict(config),
+        config=_config_to_wandb_dict(config),
     )
     logger.info(f"Initialized wandb run: {wandb.run.name}")
 
@@ -71,12 +87,6 @@ def log_results(results: dict) -> None:
                 flat_metrics[f"{prefix}/continuous/mean_nMSE"] = cont["mean_normalized_mse"]
             if "mean_normalized_mae" in cont:
                 flat_metrics[f"{prefix}/continuous/mean_nMAE"] = cont["mean_normalized_mae"]
-            if "mean_ks_statistic" in cont:
-                flat_metrics[f"{prefix}/continuous/mean_ks"] = cont["mean_ks_statistic"]
-            if "mean_wasserstein_distance" in cont:
-                flat_metrics[f"{prefix}/continuous/mean_wasserstein"] = cont[
-                    "mean_wasserstein_distance"
-                ]
 
             # Binary aggregate metrics
             binary = metrics.get("binary", {})
@@ -94,8 +104,6 @@ def log_results(results: dict) -> None:
                     flat_metrics[f"{ch_prefix}/nMSE"] = ch_metrics["normalized_mse"]
                 if "normalized_mae" in ch_metrics:
                     flat_metrics[f"{ch_prefix}/nMAE"] = ch_metrics["normalized_mae"]
-                if "ks_statistic" in ch_metrics:
-                    flat_metrics[f"{ch_prefix}/ks"] = ch_metrics["ks_statistic"]
                 if "balanced_accuracy" in ch_metrics:
                     flat_metrics[f"{ch_prefix}/bal_acc"] = ch_metrics["balanced_accuracy"]
 

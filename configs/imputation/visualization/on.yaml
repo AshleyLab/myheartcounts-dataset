@@ -1,0 +1,6 @@
+# @package visualization
+enabled: true
+plots_per_scenario: 5
+dpi: 150
+format: png
+split: test

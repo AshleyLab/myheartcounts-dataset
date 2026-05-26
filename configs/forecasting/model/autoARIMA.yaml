@@ -1,0 +1,9 @@
+# @package model
+type: autoARIMA
+autoARIMA:
+  start_p: 2
+  start_q: 2
+  max_p: 5
+  max_q: 5
+  seasonal: true
+  max_history_length: 336   # 14 days

@@ -1,0 +1,8 @@
+# @package data
+trajectory_hf_dir: ${oc.env:MHC_DATA_DIR,${oc.env:HOME}/.cache/openmhc/data}/hourly_trajectory
+task_name: hourly_trajectory_forecasting
+split_file: ${oc.env:MHC_DATA_DIR,${oc.env:HOME}/.cache/openmhc/data}/splits/sharable_users_seed42_2026.json
+day_remain_mask: ${oc.env:MHC_DATA_DIR,${oc.env:HOME}/.cache/openmhc/data}/forecasting_sample_index/day_remain_mask.json
+sample_index_file: ${oc.env:MHC_DATA_DIR,${oc.env:HOME}/.cache/openmhc/data}/forecasting_sample_index/sample_index_P_24_M_H_7_3_S_100.json
+num_workers: 4
+max_samples: null

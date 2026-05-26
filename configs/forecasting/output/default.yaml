@@ -1,0 +1,4 @@
+# @package output
+results_dir: results/forecasting_eval
+save_config: true
+overwrite_existing_parquet: false

@@ -1,0 +1,8 @@
+# @package masking
+mask_seed: 42
+random_noise:      {enabled: false}
+temporal_slice:    {enabled: false}
+signal_slice:      {enabled: false}
+sleep_gap:         {enabled: true}
+workout_gap:       {enabled: false}
+intensity_failure: {enabled: false}

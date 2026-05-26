@@ -1,0 +1,33 @@
+# Root config for the Hydra-driven imputation evaluation CLI.
+#
+# Compose: each group below picks one of the preset YAMLs under its directory.
+# Override on the CLI, e.g.:
+#   mhc-impute-eval method=brits method.release_dir=/path/to/release
+#   mhc-impute-eval --multirun method=mean,locf masking=all_six,sleep_gap_only
+
+defaults:
+  - data: default
+  - masking: all_six
+  - method: mean
+  - output: default
+  - evaluation: default
+  - visualization: "off"
+  - sensitivity: "off"
+  - wandb: "off"
+  - _self_
+  # SLURM dispatch (Sherlock): add ``hydra/launcher=sherlock_submitit`` on the
+  # CLI when running ``--multirun``. The launcher YAML lives in the shared
+  # ``eval_hydra`` package and is resolved via ``hydra.searchpath`` below.
+
+seed: 42
+
+hydra:
+  searchpath:
+    - pkg://eval_hydra.configs
+  run:
+    dir: ${output.results_dir}/${now:%Y%m%d_%H%M%S}_${method.type}
+  sweep:
+    dir: ${output.results_dir}/multirun/${now:%Y%m%d_%H%M%S}
+    subdir: ${method.type}__${hydra.job.num}
+  job:
+    chdir: false

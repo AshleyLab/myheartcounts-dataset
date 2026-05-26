@@ -1,0 +1,20 @@
+# @package method
+# Recommended: ``release_dir`` to a manifest-bundled release.
+type: fedformer
+release_dir: ???
+device: cuda
+inference_batch_size: 64
+pypots:
+  model_path: ""
+  model_name: fedformer
+  n_steps: 1440
+  n_features: 19
+  n_layers: 2
+  d_model: 64
+  d_ffn: 64
+  n_heads: 4
+  moving_avg_window_size: 25
+  dropout: 0.1
+  version: Fourier
+  modes: 32
+  mode_select: random

@@ -1,0 +1,18 @@
+# @package method
+# Recommended: ``release_dir`` to a manifest-bundled release.
+type: timesnet
+release_dir: ???
+device: cuda
+inference_batch_size: 64
+pypots:
+  model_path: ""
+  model_name: timesnet
+  n_steps: 1440
+  n_features: 19
+  n_layers: 2
+  top_k: 5
+  d_model: 64
+  d_ffn: 64
+  n_kernels: 6
+  dropout: 0.1
+  apply_nonstationary_norm: false
