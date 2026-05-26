@@ -77,6 +77,16 @@ See [`docs/neural-imputers.md`](docs/neural-imputers.md) for the full reference
 (architecture hyperparameters, paper checkpoint sources, release bundle format,
 and the `tools/build_manifest.py` converter for staging your own bundles).
 
+For reproducible runs (W&B logging, SLURM sweeps, manifest-traceable releases),
+the `mhc-impute-eval` Hydra CLI composes YAML configs at `configs/imputation/`:
+
+```bash
+mhc-impute-eval method=brits method.release_dir=path/to/openmhc-brits-paper/
+mhc-impute-eval --multirun method=brits,timesnet,lsm2 masking=all_six
+```
+
+See [`src/imputation_evaluation/README.md`](src/imputation_evaluation/README.md#part-15--reproducible-runs-via-mhc-impute-eval) for the full guide (configs, overrides, SLURM dispatch, adding new methods).
+
 ### Track 3 — forecasting (`Forecaster`)
 
 ```python

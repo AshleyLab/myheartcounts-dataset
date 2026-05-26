@@ -67,6 +67,20 @@ LSM2Imputer.from_release(
 )
 ```
 
+For batch evaluation, sweeps, or SLURM-dispatched runs against published paper
+checkpoints, use the Hydra CLI documented in
+[`src/imputation_evaluation/README.md`](../src/imputation_evaluation/README.md#part-15--reproducible-runs-via-mhc-impute-eval):
+
+```bash
+mhc-impute-eval method=brits method.release_dir=path/to/openmhc-brits-paper/
+mhc-impute-eval method=lsm2  method.release_dir=path/to/openmhc-lsm2-daily/
+mhc-impute-eval --multirun method=brits,timesnet,dlinear,fedformer \
+  method.release_dir=releases/${method.type}
+```
+
+The CLI copies the release manifest into the run dir so each result is
+traceable to its exact checkpoint and arch.
+
 ---
 
 ## Release bundle layout
@@ -167,11 +181,37 @@ output of `tools/build_manifest.py` when run with `--release-name`:
 
 | Release | W&B artifact | Size | Notes |
 |---|---|---|---|
-| `brits` | `MHC_Dataset/mhc-pypots-brits/...` (see private repo) | ~750 KB | `rnn_hidden_size=128`, `n_steps=1440` |
-| `dlinear` | local-only (see private repo) | ~16 MB | `d_model=256`, `moving_avg_window_size=51`, `n_steps=1440` |
+| `brits` | `MHC_Dataset/mhc-pypots-brits/brits:v19` (file `BRITS_epoch5_MAE0.0945.pypots`) | ~750 KB | `rnn_hidden_size=128`, `n_steps=1440`, val MAE 0.0945 @ ep5 |
+| `dlinear` | `MHC_Dataset/mhc-pypots-dlinear/dlinear:v49` (file `DLinear_epoch2_MAE0.1335.pypots`) | ~16 MB | `d_model=256`, `moving_avg_window_size=51`, `n_steps=1440`, val MAE 0.1335 @ ep2 |
 | `dlinear-7day` | `MHC_Dataset/mhc-pypots-dlinear/dlinear:v48` | 776 MB | `n_steps=10080`, epoch 16 val MAE 0.1456 |
 | `fedformer` | `MHC_Dataset/mhc-pypots-fedformer/fedformer:v31` | 20 MB | Run `ouqezdi7`, val MAE 0.1706 @ ep12 |
 | `timesnet` | `MHC_Dataset/mhc-pypots-timesnet/timesnet:v31` | 287 MB | Run `x9386qo6`, val MAE 0.2718 @ ep11 |
+
+### Downloading the checkpoints
+
+The simplest path is the W&B CLI — it downloads the entire artifact directory
+(checkpoint file + any sibling metadata) into `--root`:
+
+```bash
+wandb artifact get MHC_Dataset/mhc-pypots-brits/brits:v19          --root ./brits_v19
+wandb artifact get MHC_Dataset/mhc-pypots-dlinear/dlinear:v49      --root ./dlinear_v49
+wandb artifact get MHC_Dataset/mhc-pypots-dlinear/dlinear:v48      --root ./dlinear_v48_7day
+wandb artifact get MHC_Dataset/mhc-pypots-fedformer/fedformer:v31  --root ./fedformer_v31
+wandb artifact get MHC_Dataset/mhc-pypots-timesnet/timesnet:v31    --root ./timesnet_v31
+```
+
+Then point the wrappers at the downloaded directory — `BRITSImputer` /
+`TimesNetImputer` / `DLinearImputer` / `FEDformerImputer` all accept a directory
+as `model_path` and pick up the first `*.pypots` file inside.
+
+To stage the checkpoint into a release bundle (with manifest + normalization
+stats) for the leaderboard, feed the downloaded directory to
+[`tools/build_manifest.py`](#bundling-a-release-for-the-leaderboard-toolsbuild_manifestpy)
+via `--model-path-override`.
+
+> **Don't use `:latest`.** W&B's `:latest` alias is mutable and will drift as
+> new versions are pushed. Always pin to the explicit `:vNN` version shown in
+> the table.
 
 ---
 
@@ -258,9 +298,25 @@ architecture comes from the checkpoint.
 The daily and weekly bundles share `LSM2Imputer` — the wrapper handles both
 by reading the trained sizing from the checkpoint.
 
+### Downloading the checkpoints
+
+Same W&B CLI pattern as the PyPOTS family:
+
+```bash
+wandb artifact get MHC_Dataset/mhc-mae-ssl-daily/mae-daily:v0           --root ./lsm2_daily_v0
+wandb artifact get MHC_Dataset/mhc-mae-ssl/model-o5quh2cd:v2            --root ./lsm2_weekly_v2
+wandb artifact get MHC_Dataset/mhc-mae-ssl/mae-weekly-sparse-d4:v0      --root ./lsm2_weekly_sparse_v0
+```
+
+The LSM2 wrappers look for `*.ckpt` (then `*.pt`, then `*.pth`) inside the
+downloaded directory. Normalization stats are typically embedded in
+`ckpt["LightningDataModule"]["normalization_stats"]`, so no sibling JSON is
+required — the converter (and the wrappers) will pull stats straight from the
+checkpoint.
+
 ---
 
-## Building your own release (`tools/build_manifest.py`)
+## Bundling a release for the leaderboard (`tools/build_manifest.py`)
 
 Given a private-repo eval config and a `.pypots` (or `.ckpt`) on disk, the
 converter stages a release directory:

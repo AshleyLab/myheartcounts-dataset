@@ -57,13 +57,18 @@ def register_configs() -> None:
 register_configs()
 
 
-# ``config_path`` is resolved relative to this file when the CLI is launched
-# from an installed package. The repo also ships ``configs/imputation/`` at
-# repo root; users can point at it with ``--config-dir configs/imputation``
-# when running from a source checkout.
+# Resolve ``configs/imputation/`` to an absolute path at import time so the
+# console-script entry point (``mhc-impute-eval``) works the same as
+# ``python -m imputation_evaluation.hydra.cli``. Hydra's relative-path
+# resolution gets confused by the entry-point wrapper, so we sidestep it.
+# Layout: this file lives at ``src/imputation_evaluation/hydra/cli.py``;
+# ``parents[3]`` is the repo root.
+_CONFIG_PATH = str(Path(__file__).resolve().parents[3] / "configs" / "imputation")
+
+
 @hydra.main(
     version_base="1.3",
-    config_path="../../../configs/imputation",
+    config_path=_CONFIG_PATH,
     config_name="eval",
 )
 def main(cfg: DictConfig) -> dict[str, Any]:
