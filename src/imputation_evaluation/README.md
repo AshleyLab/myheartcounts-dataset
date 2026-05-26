@@ -1,6 +1,6 @@
 # Imputation Evaluation (Track 2)
 
-This package powers the imputation track of the MyHeartCounts benchmark. It evaluates how well a method reconstructs artificially masked sensor data across six masking scenarios, on minute-level daily samples of shape `(19 channels × 1440 minutes)`.
+This package covers the imputation track of the MyHeartCounts benchmark. It evaluates how well a method reconstructs artificially masked sensor data across six masking scenarios, on minute-level daily samples of shape `(19 channels × 1440 minutes)`.
 
 Most users should read **Part 1** and call `openmhc.evaluate_imputation` — they never need to import anything from `imputation_evaluation` directly. **Part 2** documents the library internals for developers hacking on the eval pipeline itself.
 
@@ -24,7 +24,7 @@ print(results.summary())                       # one row per (scenario, split, c
 results.to_csv("imputation_results.csv")
 ```
 
-`evaluate_imputation(imputer, masking_scenarios="all", data_dir=None, seed=42)` returns an [`ImputationResults`](../openmhc/_results.py) instance. The dataset root is resolved from `data_dir` → `MHC_DATA_DIR` env var → `~/.cache/openmhc/data` (the default location `openmhc.download_dataset` writes to).
+`evaluate_imputation(imputer, masking_scenarios="all", data_dir=None, seed=42)` returns an [`ImputationResults`](../openmhc/_results.py) instance. Large benchmark payloads are resolved from `data_dir` first, then `MHC_DATA_DIR`. If neither is provided, the API raises instead of silently falling back to `~/.cache/openmhc/data`.
 
 ### The `Imputer` protocol
 
@@ -140,6 +140,129 @@ All of these accept `data_dir=` / `seed=` overrides; defaults match `evaluate_im
 
 ---
 
+## Part 1.5 — Reproducible runs via `mhc-impute-eval`
+
+Reach for the CLI (instead of the Python API in Part 1) when you want:
+
+- Composable YAML configs and CLI overrides instead of in-code wiring.
+- A timestamped run directory with the resolved config and the loaded release manifest copied in.
+- W&B logging out of the box (`wandb=on`).
+- Hydra `--multirun` sweeps over methods / scenarios / data subsets.
+- SLURM dispatch on Sherlock via the `submitit` launcher.
+
+The CLI is declared in [`pyproject.toml`](../../pyproject.toml) as the
+`mhc-impute-eval` console script. Public-API users (`openmhc.evaluate_imputation`)
+never touch Hydra.
+
+### Configs
+
+Config presets live at `configs/imputation/` (repo root), composed via the
+`defaults:` list in [`configs/imputation/eval.yaml`](../../configs/imputation/eval.yaml):
+
+| Group | Presets | Picks |
+|---|---|---|
+| `data/` | `default`, `xs` | Data root, batch size, splits, multi-day window |
+| `masking/` | `all_six` (default), `sleep_gap_only`, `workout_gap_only`, `random_noise_only` | Which masking scenarios are enabled |
+| `method/` | `mean`, `mode`, `linear`, `locf`, `temporal_mean`, `temporal_mode`, `brits`, `timesnet`, `dlinear`, `fedformer`, `lsm2`, `lsm2_weekly_sparse` | Imputation method + arch / runtime kwargs |
+| `output/` | `default` | `results_dir`, optional experiment name |
+| `evaluation/` | `default` | `compute_metrics`, `save_pairs` |
+| `visualization/` | `off`, `on` | Visualization toggle (see Known gaps below) |
+| `sensitivity/` | `off`, `on` | Demographic subgroup metrics |
+| `wandb/` | `off`, `on` | W&B logging |
+
+The schema is the dataclass tree in [`config.py`](config.py) (`ImputationEvalConfig`); Hydra validates every override against it.
+
+### Usage
+
+```bash
+# Reference imputer — fits on the train split inside its __init__
+mhc-impute-eval method=mean
+
+# Paper checkpoint — manifest-bundled release
+mhc-impute-eval method=brits method.release_dir=path/to/openmhc-brits-paper/
+
+# Sweep across methods and masking scenarios
+mhc-impute-eval --multirun \
+  method=brits,timesnet,dlinear,fedformer \
+  method.release_dir=releases/${method.type} \
+  masking=all_six,sleep_gap_only
+```
+
+Common overrides (anything on a dataclass is reachable via dotted keys):
+
+| Override | Effect |
+|---|---|
+| `data=xs` | Use the small dev subset (downloadable via `openmhc.download_dataset(version="xs")`) |
+| `method.device=cuda:0` | Inference device for neural imputers |
+| `method.inference_batch_size=128` | Inference batch size for neural imputers |
+| `masking=sleep_gap_only` | Restrict to one scenario (faster smoke tests) |
+| `wandb=on wandb.tags='[smoke]'` | Log this run to W&B |
+| `seed=7` | Override the top-level RNG seed |
+
+### Paper-checkpoint manifests
+
+For neural methods (`brits`, `timesnet`, `dlinear`, `fedformer`, `lsm2`,
+`lsm2_weekly_sparse`), the recommended path is `method.release_dir=<dir>`. The
+release dir contains an `openmhc_manifest.json` plus the checkpoint and
+optional `normalization_stats.json`; the CLI reads the manifest, validates
+that `kind` matches the requested method, and reconstructs the model via
+`cls.from_release(...)`. The manifest is then copied into the run dir so every
+result is traceable to its exact checkpoint + arch. See
+[`docs/neural-imputers.md`](../../docs/neural-imputers.md) for the bundle
+schema and the `tools/build_manifest.py` packager.
+
+If you don't have a manifest (e.g. a bare PyPOTS file from your own training
+run), the inline-arch fallback on each method YAML is consulted instead — see
+the comments at the top of [`configs/imputation/method/brits.yaml`](../../configs/imputation/method/brits.yaml)
+and [`configs/imputation/method/lsm2.yaml`](../../configs/imputation/method/lsm2.yaml).
+Arch fields must match the trained model or PyPOTS's `load()` raises a
+size-mismatch error.
+
+### SLURM (Sherlock)
+
+```bash
+mhc-impute-eval --multirun hydra/launcher=sherlock_submitit \
+  method=brits,timesnet,dlinear,fedformer method.release_dir=releases/${method.type}
+```
+
+The `sherlock_submitit` launcher YAML lives in the shared `eval_hydra` package
+and is picked up via `hydra.searchpath: [pkg://eval_hydra.configs]` in
+`eval.yaml`. Override partition / GPU count on the CLI as usual
+(`hydra.launcher.partition=gpu hydra.launcher.gres=gpu:1`).
+
+### Output layout
+
+Single run:
+
+```
+${output.results_dir}/<YYYYMMDD_HHMMSS>_<method.type>/
+├── results.json              # the run's metrics, JSON-serialized
+├── .hydra/                   # resolved config + overrides
+└── openmhc_manifest.json     # copied if method.release_dir was used
+```
+
+Multirun: subdirs under `${output.results_dir}/multirun/<ts>/<method.type>__<job_num>/`.
+
+### Adding a new method to the CLI
+
+Three edits:
+
+1. **[`src/imputation_evaluation/config.py`](config.py)** — add your method name to the `MethodConfig.type` `Literal[...]`. If it needs hyperparameters, define a small `@dataclass MyMethodConfig` and add a field on `MethodConfig` (mirror `LSM2MethodConfig` / `PyPOTSMethodConfig`).
+2. **[`src/imputation_evaluation/hydra/registry.py`](hydra/registry.py)** — register the class in `_REFERENCE_CLASSES` (no checkpoint) or `_PAPER_CHECKPOINT_CLASSES` (uses `ReleaseLoadableMixin.from_release`). For an exotic builder, write a small function that returns `(_ImputerMethodAdapter(imputer), manifest_or_None)`.
+3. **`configs/imputation/method/my_method.yaml`**:
+
+   ```yaml
+   # @package method
+   type: my_method
+   # any new fields you added to MethodConfig
+   ```
+
+Run with `mhc-impute-eval method=my_method`. The public-API path
+(`openmhc.evaluate_imputation(MyImputer())`) keeps working in parallel — the
+imputer class itself does not need to know about Hydra.
+
+---
+
 ## Part 2 — Library internals (`imputation_evaluation/`)
 
 This package is the engine `openmhc.evaluate_imputation` calls. The public surface (the `Imputer` protocol, results object, dataset-path resolution) lives in `openmhc/`; this package contains the masking, evaluation, and I/O machinery.
@@ -171,7 +294,7 @@ src/imputation_evaluation/
     └── wandb_logger.py        # Optional W&B logging
 ```
 
-The package does **not** contain `methods/`, `visualization/`, `scripts/`, or `configs/`. The `ImputationMethod` interface that `run_eval` expects is satisfied by the `_ImputerMethodAdapter` at [`src/openmhc/_evaluate.py:586`](../openmhc/_evaluate.py), which bridges from the public `openmhc.Imputer` protocol.
+The package does **not** contain `methods/` or `visualization/` within `src/imputation_evaluation/`. Hydra config YAMLs live at `configs/imputation/` (repo root); see Part 1.5. The `ImputationMethod` interface that `run_eval` expects is satisfied by the `_ImputerMethodAdapter` at [`src/openmhc/_evaluate.py:586`](../openmhc/_evaluate.py), which bridges from the public `openmhc.Imputer` protocol.
 
 ### Library entry point
 

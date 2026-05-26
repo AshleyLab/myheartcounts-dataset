@@ -15,21 +15,69 @@ from typing import Any
 
 import pandas as pd
 
-DATA_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "labels"
-LABELS_PATH = Path(os.getenv("LABELS_DATA_PATH", DATA_DIR / "last_labels.json"))
-CONTEXT_LABELS_PATH = Path(
-    os.getenv("CONTEXT_LABELS_PATH", DATA_DIR / "context_labels.json")
+from openmhc._dataset import bundled_metadata_dir as _bundled_metadata_dir
+from openmhc._dataset import data_dir as _resolve_dataset_root
+
+BUNDLED_METADATA_DIR = _bundled_metadata_dir()
+DATA_DIR = BUNDLED_METADATA_DIR
+
+
+def _normalize_path(path: str | Path) -> Path:
+    return Path(path).expanduser().resolve()
+
+
+def _resolve_bundled_metadata_path(env_var: str, filename: str) -> Path:
+    override = os.getenv(env_var)
+    if override:
+        return _normalize_path(override)
+    return (BUNDLED_METADATA_DIR / filename).resolve()
+
+
+def _resolve_dataset_payload_path(env_var: str, filename: str) -> Path | None:
+    override = os.getenv(env_var)
+    if override:
+        return _normalize_path(override)
+    try:
+        root = _resolve_dataset_root()
+    except ValueError:
+        return None
+    return root / "labels" / filename
+
+
+def _require_dataset_payload_path(
+    path: Path | None,
+    *,
+    env_var: str,
+    filename: str,
+) -> Path:
+    if path is not None:
+        return path
+    raise ValueError(
+        f"OpenMHC dataset root is required to resolve labels/{filename}. "
+        f"Expected this file under <dataset_root>/labels/{filename}. "
+        f"Set `{env_var}` directly, pass `data_dir=` / `dest=`, or set `MHC_DATA_DIR`."
+    )
+
+
+LABELS_PATH = _resolve_dataset_payload_path("LABELS_DATA_PATH", "last_labels.json")
+CONTEXT_LABELS_PATH = _resolve_dataset_payload_path(
+    "CONTEXT_LABELS_PATH", "context_labels.json"
 )
-ORDINAL_DICTIONARY_PATH = Path(
-    os.getenv("ORDINAL_DICTIONARY_PATH", DATA_DIR / "ordinal_dictionary.json")
+ORDINAL_DICTIONARY_PATH = _resolve_bundled_metadata_path(
+    "ORDINAL_DICTIONARY_PATH", "ordinal_dictionary.json"
 )
-ENROLLMENT_PATH = Path(os.getenv("ENROLLMENT_DATA_PATH", DATA_DIR / "enrollment_info.json"))
-LABEL_TYPES_PATH = Path(os.getenv("LABEL_TYPES_PATH", DATA_DIR / "label_types.json"))
-LABEL_VALIDITY_PATH = Path(
-    os.getenv("LABEL_VALIDITY_PATH", DATA_DIR / "label_validity.json")
+ENROLLMENT_PATH = _resolve_dataset_payload_path(
+    "ENROLLMENT_DATA_PATH", "enrollment_info.json"
 )
-HEALTHKIT_DAILY_PATH = Path(
-    os.getenv("HEALTHKIT_DAILY_PATH", DATA_DIR / "healthkit_daily.json")
+LABEL_TYPES_PATH = _resolve_bundled_metadata_path("LABEL_TYPES_PATH", "label_types.json")
+LABEL_VALIDITY_PATH = _resolve_dataset_payload_path(
+    "LABEL_VALIDITY_PATH", "label_validity.json"
+)
+HEALTHKIT_DAILY_PATH = _resolve_dataset_payload_path(
+    "HEALTHKIT_DAILY_PATH", "healthkit_daily.json"
+)
+VALIDITY_CONFIG_PATH = _resolve_bundled_metadata_path(
+    "VALIDITY_CONFIG_PATH", "validity_config.json"
 )
 
 
@@ -481,8 +529,8 @@ class LabelsStore:
 
     def __init__(
         self,
-        labels_path: Path,
-        enrollment_path: Path,
+        labels_path: Path | None,
+        enrollment_path: Path | None,
         validity_path: Path | None = None,
         healthkit_daily_path: Path | None = None,
         context_labels_path: Path | None = None,
@@ -521,7 +569,13 @@ class LabelsStore:
         ``last_labels.json`` takes precedence.
         """
         if self._labels_index is None:
-            index = _load_labels(self.labels_path)
+            index = _load_labels(
+                _require_dataset_payload_path(
+                    self.labels_path,
+                    env_var="LABELS_DATA_PATH",
+                    filename="last_labels.json",
+                )
+            )
             if (
                 self.context_labels_path is not None
                 and self.context_labels_path.exists()
@@ -546,7 +600,15 @@ class LabelsStore:
             EnrollmentIndex containing enrollment data.
         """
         if self._enrollment is None:
-            self._enrollment = EnrollmentIndex(_load_enrollment(self.enrollment_path))
+            self._enrollment = EnrollmentIndex(
+                _load_enrollment(
+                    _require_dataset_payload_path(
+                        self.enrollment_path,
+                        env_var="ENROLLMENT_DATA_PATH",
+                        filename="enrollment_info.json",
+                    )
+                )
+            )
         return self._enrollment
 
     @property
@@ -905,7 +967,13 @@ def get_labels_statistics() -> pd.DataFrame:
     For each label, includes: data type, min value, max value, median value,
     and count of unique values.
     """
-    labels_data = _load_labels(LABELS_PATH)
+    labels_data = _load_labels(
+        _require_dataset_payload_path(
+            LABELS_PATH,
+            env_var="LABELS_DATA_PATH",
+            filename="last_labels.json",
+        )
+    )
     stats_data = []
 
     for label in sorted(LABEL_NAMES):

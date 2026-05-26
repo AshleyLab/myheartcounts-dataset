@@ -4,8 +4,8 @@ The MyHeartCounts (MHC) wearable benchmark dataset is hosted separately from thi
 
 | Version | Size | Use case | DOI |
 |---|---|---|---|
-| `tiny` | ~TBD MB | Quickstart, NeurIPS reviewer evaluation | [`doi:10.7910/DVN/ZYMJF6`](https://dataverse.harvard.edu/dataset.xhtml?persistentId=doi:10.7910/DVN/ZYMJF6) |
-| `full` | ~TBD GB | Full leaderboard submissions | TBD (released after publication) |
+| `xs` | ~1.9 GB | Quickstart, NeurIPS reviewer evaluation | [`doi:10.7910/DVN/ZYMJF6`](https://dataverse.harvard.edu/dataset.xhtml?persistentId=doi:10.7910/DVN/ZYMJF6) |
+| `full` | ~38 GB | Full leaderboard submissions | TBD (released after publication) |
 
 ## Download
 
@@ -14,14 +14,14 @@ The Python API wraps the Dataverse access API — no Dataverse account needed fo
 ```python
 import openmhc
 
-# Tiny (recommended first)
-openmhc.download_dataset(version="tiny")
+# XS subset (recommended first — 593 users, ~1.9 GB)
+openmhc.download_dataset(version="xs", dest="~/.cache/openmhc/data")
 
-# Full (when published)
-openmhc.download_dataset(version="full")
+# Full dataset (when published — 11,894 users, ~38 GB)
+openmhc.download_dataset(version="full", dest="~/.cache/openmhc/data")
 ```
 
-By default the data is cached at `~/.cache/openmhc/data`. Override with the `dest=` argument or the `MHC_DATA_DIR` environment variable.
+OpenMHC no longer picks a dataset cache path implicitly. Pass `dest=` or set `MHC_DATA_DIR` first. You can still use `~/.cache/openmhc/data`, but it must be explicit.
 
 ```bash
 export MHC_DATA_DIR=/path/to/your/data
@@ -32,7 +32,7 @@ export MHC_DATA_DIR=/path/to/your/data
 If the dataset is restricted (DUA-gated), pass your Dataverse API token:
 
 ```python
-openmhc.download_dataset(version="tiny", api_token="<your-token>")
+openmhc.download_dataset(version="xs", api_token="<your-token>")
 ```
 
 Or set the `DATAVERSE_API_TOKEN` environment variable. Get a token at [your Dataverse account page](https://dataverse.harvard.edu/dataverseuser.xhtml?selectTab=apiTokenTab).
@@ -42,10 +42,11 @@ Or set the `DATAVERSE_API_TOKEN` environment variable. Get a token at [your Data
 If you'd rather not use the helper (corporate proxies, air-gapped clusters), use `curl`:
 
 ```bash
-# Tiny
-curl -L -o openmhc-tiny.zip \
+# XS subset
+curl -L -o openmhc-xs.zip \
   "https://dataverse.harvard.edu/api/access/dataset/:persistentId/?persistentId=doi:10.7910/DVN/ZYMJF6"
-unzip openmhc-tiny.zip -d ~/.cache/openmhc/data
+mkdir -p ~/.cache/openmhc/data
+unzip openmhc-xs.zip -d ~/.cache/openmhc/data
 ```
 
 For restricted datasets, add `-H "X-Dataverse-key: <your-token>"`.
@@ -79,9 +80,9 @@ $MHC_DATA_DIR/
     └── day_remain_mask.json      # per-user retain mask
 ```
 
-The eval API derives every entry above from a single dataset root, resolved (in priority order) from: an explicit ``data_dir=`` argument to ``evaluate_*`` / ``download_dataset``, the ``MHC_DATA_DIR`` env var, or the default ``~/.cache/openmhc/data``. ``openmhc.data_dir()`` returns the resolved root and ``openmhc.download_dataset()`` writes to that same root, so the API and the downloader always agree. If your dataset uses a different layout, the simplest fix is to symlink or rearrange the unpacked files to match.
+The eval API derives every large payload above from a single dataset root, resolved from an explicit ``data_dir=`` / ``dest=`` argument or the ``MHC_DATA_DIR`` env var. If neither is provided, ``openmhc.data_dir()`` and the public evaluation APIs raise immediately instead of silently falling back to `~/.cache/openmhc/data`. If your dataset uses a different layout, the simplest fix is to symlink or rearrange the unpacked files to match.
 
-The schema-only registry files (`label_types.json`, `ordinal_dictionary.json`, `validity_config.json`) ship with this code repo at `data/labels/` and don't need to be downloaded.
+The schema-only registry files (`label_types.json`, `ordinal_dictionary.json`, `validity_config.json`) ship with this code repo at `data/labels/` and remain the default for bundled metadata. Large JSON label payloads such as `last_labels.json`, `context_labels.json`, `enrollment_info.json`, `label_validity.json`, and `healthkit_daily.json` must come from your explicit dataset root unless you override them with per-file env vars.
 
 ## Splits
 

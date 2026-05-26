@@ -70,8 +70,8 @@ def _build_reference(
     # Reference imputers take the dataset *root* (looking for
     # ``splits/`` and ``processed/daily_hf`` underneath). The runner's
     # ``data.daily_hf_dir`` is a different concept (the HF disk path
-    # consumed by the evaluator), so we let the imputer fall back to
-    # ``MHC_DATA_DIR`` / the default cache.
+    # consumed by the evaluator), so we let the imputer resolve its root
+    # from explicit ``data_dir=`` configuration or ``MHC_DATA_DIR``.
     imputer = cls()
     return _ImputerMethodAdapter(imputer), None
 

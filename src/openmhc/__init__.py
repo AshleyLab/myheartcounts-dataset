@@ -15,7 +15,14 @@ Quick start:
     >>> openmhc.SENSOR_CHANNELS           # 19 channel names
 """
 
+from pathlib import Path
+
 from openmhc._constants import MASKING_SCENARIOS, SENSOR_CHANNELS
+from openmhc._data_utils import (
+    iter_split_data,
+    iter_train_data,
+    load_sample_metadata,
+)
 from openmhc._dataset import data_dir, download_dataset
 from openmhc._protocols import Encoder, Forecaster, Imputer
 from openmhc._results import (
@@ -36,6 +43,10 @@ __all__ = [
     # Dataset
     "download_dataset",
     "data_dir",
+    # Data utilities
+    "iter_train_data",
+    "iter_split_data",
+    "load_sample_metadata",
     # Discovery
     "list_tasks",
     "list_masking_scenarios",
@@ -50,7 +61,7 @@ __all__ = [
 def evaluate_prediction(
     encoder: Encoder,
     tasks: str | list[str] = "all",
-    data_dir: str | None = None,
+    data_dir: str | Path | None = None,
     seed: int = 42,
 ) -> PredictionResults:
     """Run health-prediction evaluation with a custom encoder.
@@ -58,8 +69,8 @@ def evaluate_prediction(
     Args:
         encoder: Object implementing the Encoder protocol.
         tasks: "all" to run all 33 tasks, or a list of task names.
-        data_dir: Path to the `daily_hourly_hf` dataset directory.
-            None uses the default location.
+        data_dir: Path to the dataset root. If omitted, ``MHC_DATA_DIR``
+            must be set.
         seed: Random seed for classifiers and splits.
 
     Returns:
@@ -73,8 +84,9 @@ def evaluate_prediction(
 def evaluate_imputation(
     imputer: Imputer,
     masking_scenarios: str | list[str] = "all",
-    data_dir: str | None = None,
+    data_dir: str | Path | None = None,
     seed: int = 42,
+    version: str | None = None,
 ) -> ImputationResults:
     """Run imputation evaluation with a custom imputer.
 
@@ -82,22 +94,31 @@ def evaluate_imputation(
         imputer: Object implementing the Imputer protocol.
         masking_scenarios: "all" to run all 6 scenarios, or a list of
             scenario names.
-        data_dir: Path to the `daily_hf` dataset directory.
-            None uses the default location.
+        data_dir: Path to the dataset root directory. If omitted,
+            ``MHC_DATA_DIR`` must be set.
         seed: Random seed for mask generation.
+        version: ``"full"`` (11,894-user leaderboard split) or ``"xs"``
+            (593-user reviewer subset). None auto-detects from what is
+            present in the data directory.
 
     Returns:
         ImputationResults with per-scenario, per-split metrics.
     """
     from openmhc._evaluate import evaluate_imputation as _eval
 
-    return _eval(imputer, masking_scenarios=masking_scenarios, data_dir=data_dir, seed=seed)
+    return _eval(
+        imputer,
+        masking_scenarios=masking_scenarios,
+        data_dir=data_dir,
+        seed=seed,
+        version=version,
+    )
 
 
 def evaluate_forecasting(
     forecaster: Forecaster,
     forecasting_length: int = 24,
-    data_dir: str | None = None,
+    data_dir: str | Path | None = None,
     seed: int = 42,
     max_samples: int | None = None,
 ) -> ForecastingResults:
@@ -107,7 +128,8 @@ def evaluate_forecasting(
         forecaster: Object implementing the Forecaster protocol —
             ``predict(history, horizon)`` returns ``(n_channels, horizon)``.
         forecasting_length: Forecast horizon in hours. Defaults to 24.
-        data_dir: Override for the dataset root. None uses the default.
+        data_dir: Override for the dataset root. If omitted,
+            ``MHC_DATA_DIR`` must be set.
         seed: Random seed.
         max_samples: Limit prediction samples per user (debugging only).
 
