@@ -18,11 +18,11 @@ Python ≥ 3.10. Installs the `openmhc` package and its evaluation dependencies.
 
 ## Quickstart
 
-Download the tiny version of the dataset (small subset for reviewers and quickstart):
+Download the XS version of the dataset (small subset for reviewers and quickstart):
 
 ```python
 import openmhc
-openmhc.download_dataset(version="tiny")
+openmhc.download_dataset(version="xs")
 ```
 
 Then evaluate a model. Models implement one of three duck-typed protocols — no inheritance required.
@@ -63,6 +63,19 @@ class MeanImputer:
 results = openmhc.evaluate_imputation(MeanImputer())
 print(results.summary())
 ```
+
+For the paper baselines (BRITS, TimesNet, DLinear, FEDformer, LSM2 daily / weekly /
+weekly-sparse), `openmhc.imputers` ships pre-trained-checkpoint wrappers loadable in
+one line from a release bundle:
+
+```python
+from openmhc.imputers import LSM2Imputer
+imp = LSM2Imputer.from_release("path/to/openmhc-lsm2-daily/")
+```
+
+See [`docs/neural-imputers.md`](docs/neural-imputers.md) for the full reference
+(architecture hyperparameters, paper checkpoint sources, release bundle format,
+and the `tools/build_manifest.py` converter for staging your own bundles).
 
 ### Track 3 — forecasting (`Forecaster`)
 

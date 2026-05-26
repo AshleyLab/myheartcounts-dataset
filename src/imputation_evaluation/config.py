@@ -66,8 +66,8 @@ class RandomNoiseConfig:
     """Random noise masking configuration."""
 
     enabled: bool = True
-    patch_size: int = 10  # Consecutive minutes per patch
-    mask_ratio: float = 0.8  # Fraction of valid data to mask
+    patch_size: int = 30  # Consecutive minutes per patch
+    mask_ratio: float = 0.5  # Fraction of valid data to mask
 
 
 @dataclass
@@ -75,7 +75,7 @@ class TemporalSliceConfig:
     """Temporal slice masking configuration."""
 
     enabled: bool = True
-    mask_ratio: float = 0.5  # Fraction of valid timesteps to mask
+    mask_ratio: float = 0.25  # Fraction of valid timesteps to mask
     min_block_size: int = 30  # Min contiguous block (minutes)
     max_block_size: int = 60  # Max contiguous block (minutes)
 
@@ -138,15 +138,15 @@ class MaskingConfig:
 
 
 @dataclass
-class MAEMethodConfig:
-    """MAE-specific method configuration."""
+class LSM2MethodConfig:
+    """LSM2 (formerly MAE) method configuration."""
 
-    checkpoint_path: str = ""  # Path to trained MAE checkpoint (.ckpt)
+    checkpoint_path: str = ""  # Path to trained LSM2 checkpoint (.ckpt)
     device: str = "cuda"  # Device for inference ("cuda", "cuda:0", "cpu")
     inference_batch_size: int = 64  # Batch size for GPU inference
 
-    # Must match MAE training config (configs/mae/default.yaml)
-    # 1e12 = global/population normalization (default for MAE training)
+    # Must match LSM2 training config (configs/lsm2/default.yaml in the private repo).
+    # 1e12 = global/population normalization (default for LSM2 training)
     # 0 = instance normalization; >0 = hybrid
     normalization_prior_count: float = 1.0e12
     stats_max_samples: int | None = 10000  # Max samples for computing normalization stats
@@ -202,15 +202,15 @@ class MethodConfig:
         "temporal_mode",
         "linear",
         "locf",
-        "mae",
-        "mae_weekly_sparse",
+        "lsm2",
+        "lsm2_weekly_sparse",
         "pypots",
         "personalized_mean",
         "personalized_mode",
         "personalized_temporal_mean",
     ] = "mean"
     decimal_precision: int = 1  # Rounding precision for mode computation
-    mae: MAEMethodConfig = field(default_factory=MAEMethodConfig)  # MAE-specific config
+    lsm2: LSM2MethodConfig = field(default_factory=LSM2MethodConfig)  # LSM2-specific config
     pypots: PyPOTSMethodConfig = field(default_factory=PyPOTSMethodConfig)  # PyPOTS-specific config
 
 
@@ -228,10 +228,6 @@ class OutputConfig:
 class EvalConfig:
     """Evaluation configuration."""
 
-    include_ks: bool = True  # Set False to reduce memory (no continuous value storage for KS)
-    include_wasserstein: bool = (
-        True  # Compute per-sample Wasserstein distance for continuous channels
-    )
     compute_metrics: bool = True  # If False, only save pairs (no MetricAccumulator)
     save_pairs: bool = True  # Save raw (gt, pred) pairs to Parquet
 

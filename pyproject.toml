@@ -36,6 +36,12 @@ dev = [
   "pytest",
   "ruff",
 ]
+pypots = [
+  "pypots>=0.7",
+]
+lsm2 = [
+  "pytorch-lightning>=2.0",
+]
 
 [tool.setuptools]
 package-dir = {"" = "src"}
