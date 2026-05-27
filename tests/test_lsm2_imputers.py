@@ -155,6 +155,7 @@ def test_lsm2_daily_round_trip(tmp_path):
 
     imp = LSM2Imputer(
         model_path=ckpt,
+        version="xs",
         seq_length=N_STEPS,
         patch_size=PATCH_SIZE,
         in_channels=N_CHANNELS,
@@ -188,6 +189,7 @@ def test_lsm2_directory_path_resolution(tmp_path):
 
     imp = LSM2Imputer(
         model_path=tmp_path,
+        version="xs",
         seq_length=N_STEPS,
         patch_size=PATCH_SIZE,
         device="cpu",
@@ -202,7 +204,7 @@ def test_lsm2_missing_path_raises(tmp_path):
     from openmhc.imputers import LSM2Imputer
 
     with pytest.raises(FileNotFoundError):
-        LSM2Imputer(model_path=tmp_path / "does_not_exist", device="cpu")
+        LSM2Imputer(model_path=tmp_path / "does_not_exist", version="xs", device="cpu")
 
 
 def test_lsm2_weekly_sparse_round_trip(tmp_path):
@@ -214,6 +216,7 @@ def test_lsm2_weekly_sparse_round_trip(tmp_path):
 
     imp = LSM2WeeklySparseImputer(
         model_path=ckpt,
+        version="xs",
         seq_length=N_STEPS,
         patch_size=PATCH_SIZE,
         in_channels=N_CHANNELS,
@@ -285,6 +288,7 @@ def test_lsm2_from_release_round_trip(tmp_path):
     release = _build_lsm2_release(tmp_path)
     imp = LSM2Imputer.from_release(
         release,
+        version="xs",
         device="cpu",
         inference_batch_size=2,
         inference_dropout_removal_ratio=0.0,
@@ -302,4 +306,4 @@ def test_lsm2_from_release_kind_mismatch_raises(tmp_path):
 
     release = _build_lsm2_release(tmp_path)
     with pytest.raises(ValueError, match="kind 'lsm2'"):
-        LSM2WeeklySparseImputer.from_release(release, device="cpu")
+        LSM2WeeklySparseImputer.from_release(release, version="xs", device="cpu")

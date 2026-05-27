@@ -44,7 +44,7 @@ def _make_target_mask(
 def stub_iter_train_data(monkeypatch):
     """Patch ``openmhc.iter_train_data`` to yield synthetic batches."""
     def _fake_iter_split_data(
-        split, data_dir=None, batch_size=5000, num_workers=4, seed=42
+        split, version=None, data_dir=None, batch_size=5000, num_workers=4, seed=42
     ):
         if split == "train":
             yield _make_synthetic_batch(40, seed=10)
@@ -74,7 +74,7 @@ def stub_iter_train_data(monkeypatch):
 @pytest.fixture
 def stub_metadata(monkeypatch):
     """Patch ``load_sample_metadata`` so personalized imputers see synthetic users."""
-    def _fake(split, data_dir=None, seed=42):
+    def _fake(split, version=None, data_dir=None, seed=42):
         n = {"train": 80, "val": 20, "test": 20}[split]
         # Five distinct users, cycling.
         return [
@@ -306,7 +306,7 @@ class TestBaseImputer:
     def test_default_impute_raises(self):
         from openmhc.imputers import BaseImputer
 
-        bi = BaseImputer()
+        bi = BaseImputer(version="xs")
         with pytest.raises(NotImplementedError):
             bi.impute(np.zeros((1, 19, 10)), np.ones((1, 19, 10)), np.zeros((1, 19, 10)))
 
@@ -315,7 +315,7 @@ class TestMeanImputer:
     def test_fills_only_target_positions_with_channel_mean(self, stub_iter_train_data):
         from openmhc.imputers import MeanImputer
 
-        imp = MeanImputer()
+        imp = MeanImputer(version="xs")
         data, mask = _make_synthetic_batch(5, seed=42)
         target = _make_target_mask(mask, frac=0.1)
         # Wipe target positions (simulate the harness's NaN injection).
@@ -344,7 +344,7 @@ class TestModeImputer:
     def test_fills_with_per_channel_mode(self, stub_iter_train_data):
         from openmhc.imputers import ModeImputer
 
-        imp = ModeImputer()
+        imp = ModeImputer(version="xs")
         data, mask = _make_synthetic_batch(5, seed=7)
         target = _make_target_mask(mask, frac=0.1)
         out = imp.impute(data, mask, target)
@@ -362,7 +362,7 @@ class TestLinearImputer:
     def test_interpolates_between_known_anchors(self, stub_iter_train_data):
         from openmhc.imputers import LinearImputer
 
-        imp = LinearImputer()
+        imp = LinearImputer(version="xs")
         # Construct a deterministic per-(n, c) ramp so we know the right answer.
         data = np.arange(SEQ_LEN, dtype=np.float32)[None, None, :].repeat(2, axis=0)
         data = np.broadcast_to(data, (2, N_CHANNELS, SEQ_LEN)).copy()
@@ -381,7 +381,7 @@ class TestLOCFImputer:
     def test_carries_last_known_value_forward(self, stub_iter_train_data):
         from openmhc.imputers import LOCFImputer
 
-        imp = LOCFImputer()
+        imp = LOCFImputer(version="xs")
         data = np.zeros((1, N_CHANNELS, SEQ_LEN), dtype=np.float32)
         data[0, 0, :] = 5.0  # constant value
         observed = np.ones_like(data)
@@ -397,7 +397,7 @@ class TestTemporalMeanImputer:
     def test_output_shape_dtype_and_fill_positions(self, stub_iter_train_data):
         from openmhc.imputers import TemporalMeanImputer
 
-        imp = TemporalMeanImputer()
+        imp = TemporalMeanImputer(version="xs")
         data, mask = _make_synthetic_batch(3, seed=99)
         target = _make_target_mask(mask, frac=0.1)
         out = imp.impute(data, mask, target)
@@ -416,7 +416,7 @@ class TestPersonalizedMeanImputer:
     def test_per_user_dispatch(self, stub_iter_train_data, stub_metadata):
         from openmhc.imputers import PersonalizedMeanImputer
 
-        imp = PersonalizedMeanImputer()
+        imp = PersonalizedMeanImputer(version="xs")
         data, mask = _make_synthetic_batch(2, seed=0)
         target = _make_target_mask(mask, frac=0.1)
         # Two different users -> two different fill values (in general).
@@ -440,7 +440,7 @@ class TestPersonalizedMeanImputer:
     def test_unknown_user_falls_back_to_global(self, stub_iter_train_data, stub_metadata):
         from openmhc.imputers import PersonalizedMeanImputer
 
-        imp = PersonalizedMeanImputer()
+        imp = PersonalizedMeanImputer(version="xs")
         data, mask = _make_synthetic_batch(1, seed=0)
         target = _make_target_mask(mask, frac=0.1)
         out = imp.impute(data, mask, target, user_ids=["nobody_special"])
@@ -480,6 +480,7 @@ class TestTorchImputer:
 
         imp = TorchImputer(
             IdentityConv(),
+            version="xs",
             device="cpu",
             inference_batch_size=4,
             forward_signature="x_mask",
@@ -511,6 +512,7 @@ class TestTorchImputer:
 
         imp = TorchImputer(
             ZeroModel(),
+            version="xs",
             device="cpu",
             inference_batch_size=4,
             forward_signature="x_mask",

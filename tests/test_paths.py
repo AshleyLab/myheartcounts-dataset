@@ -14,15 +14,37 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+import json
+
 import openmhc
-from openmhc._dataset import bundled_metadata_dir, data_dir
+from openmhc._dataset import (
+    DATASET_VERSION_FILENAME,
+    bundled_metadata_dir,
+    data_dir,
+    write_dataset_marker,
+)
 from openmhc._evaluate import _DatasetPaths
 
 
-def _write_minimal_split(root: Path, name: str = "sharable_users_seed42_2026.json") -> None:
+def _write_minimal_split(root: Path, version: str = "full") -> None:
+    """Build a minimal version-tagged dataset root.
+
+    Writes both the split file (with the canonical user count for the
+    requested version) and the ``dataset_version.json`` marker, so
+    ``_DatasetPaths.resolve(root, version=...)`` is happy without needing
+    the full payload on disk.
+    """
+    expected = {"full": 11894, "xs": 593}[version]
+    name = {
+        "full": "sharable_users_seed42_2026.json",
+        "xs": "sharable_users_seed42_2026_xs.json",
+    }[version]
     split_dir = root / "splits"
     split_dir.mkdir(parents=True, exist_ok=True)
-    (split_dir / name).write_text('{"train": [], "validation": [], "test": []}')
+    users = [f"u{i}" for i in range(expected)]
+    payload = {"train": users, "validation": [], "test": []}
+    (split_dir / name).write_text(json.dumps(payload))
+    write_dataset_marker(root, version=version, n_users=expected)
 
 
 @pytest.fixture(autouse=True)
@@ -76,7 +98,7 @@ class TestDatasetPaths:
     """Confirm the eval pipeline routes through ``data_dir`` consistently."""
 
     def test_all_subpaths_under_root(self, tmp_path):
-        _write_minimal_split(tmp_path)
+        _write_minimal_split(tmp_path, version="full")
         paths = _DatasetPaths.resolve(tmp_path, version="full")
         assert paths.daily_hourly_hf == tmp_path / "processed" / "daily_hourly_hf"
         assert paths.daily_hf == tmp_path / "processed" / "daily_hf"
@@ -91,7 +113,7 @@ class TestDatasetPaths:
         assert paths.labels_dir == tmp_path / "labels"
 
     def test_env_override_propagates(self, monkeypatch, tmp_path):
-        _write_minimal_split(tmp_path)
+        _write_minimal_split(tmp_path, version="full")
         monkeypatch.setenv("MHC_DATA_DIR", str(tmp_path))
         paths = _DatasetPaths.resolve(version="full")
         assert paths.root == tmp_path.resolve()
@@ -99,9 +121,38 @@ class TestDatasetPaths:
 
     def test_explicit_override_propagates(self, tmp_path):
         root = tmp_path / "explicit"
-        _write_minimal_split(root)
+        _write_minimal_split(root, version="full")
         paths = _DatasetPaths.resolve(root, version="full")
         assert paths.root == (tmp_path / "explicit").resolve()
+
+    def test_version_required(self, tmp_path):
+        _write_minimal_split(tmp_path, version="full")
+        with pytest.raises(ValueError, match="version='xs' or version='full'"):
+            _DatasetPaths.resolve(tmp_path)
+
+    def test_marker_required(self, tmp_path):
+        # split file present but no marker
+        split_dir = tmp_path / "splits"
+        split_dir.mkdir()
+        (split_dir / "sharable_users_seed42_2026.json").write_text("{}")
+        with pytest.raises(FileNotFoundError, match=DATASET_VERSION_FILENAME):
+            _DatasetPaths.resolve(tmp_path, version="full")
+
+    def test_marker_version_mismatch_rejected(self, tmp_path):
+        _write_minimal_split(tmp_path, version="xs")
+        with pytest.raises(ValueError, match="is version 'xs'"):
+            _DatasetPaths.resolve(tmp_path, version="full")
+
+    def test_split_user_count_mismatch_rejected(self, tmp_path):
+        # Marker claims full (11894 users), but split file holds only 5.
+        split_dir = tmp_path / "splits"
+        split_dir.mkdir()
+        (split_dir / "sharable_users_seed42_2026.json").write_text(
+            '{"train": ["u0","u1","u2"], "validation": ["u3"], "test": ["u4"]}'
+        )
+        write_dataset_marker(tmp_path, version="full")  # n_users defaults to 11894
+        with pytest.raises(ValueError, match="contains 5 users"):
+            _DatasetPaths.resolve(tmp_path, version="full")
 
 
 class TestLabelsEnvWiring:
@@ -220,7 +271,7 @@ class TestPublicApisRequireDatasetRoot:
                 return weekly_tensors
 
         with pytest.raises(ValueError, match="MHC_DATA_DIR"):
-            openmhc.evaluate_prediction(DummyEncoder())
+            openmhc.evaluate_prediction(DummyEncoder(), version="xs")
 
     def test_evaluate_imputation_fails_fast(self):
         class DummyImputer:
@@ -228,7 +279,7 @@ class TestPublicApisRequireDatasetRoot:
                 return data
 
         with pytest.raises(ValueError, match="MHC_DATA_DIR"):
-            openmhc.evaluate_imputation(DummyImputer())
+            openmhc.evaluate_imputation(DummyImputer(), version="xs")
 
     def test_evaluate_forecasting_fails_fast(self):
         class DummyForecaster:
@@ -236,4 +287,4 @@ class TestPublicApisRequireDatasetRoot:
                 return history
 
         with pytest.raises(ValueError, match="MHC_DATA_DIR"):
-            openmhc.evaluate_forecasting(DummyForecaster())
+            openmhc.evaluate_forecasting(DummyForecaster(), version="xs")

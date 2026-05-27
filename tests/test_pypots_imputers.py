@@ -89,6 +89,7 @@ def test_brits_round_trip(tmp_path):
 
     imp = BRITSImputer(
         model_path=tmp_path,
+        version="xs",
         device="cpu",
         inference_batch_size=4,
         n_steps=N_STEPS,
@@ -130,6 +131,7 @@ def test_timesnet_round_trip(tmp_path):
 
     imp = TimesNetImputer(
         model_path=tmp_path,
+        version="xs",
         device="cpu",
         inference_batch_size=4,
         n_steps=N_STEPS,
@@ -163,6 +165,7 @@ def test_dlinear_round_trip(tmp_path):
 
     imp = DLinearImputer(
         model_path=tmp_path,
+        version="xs",
         device="cpu",
         inference_batch_size=4,
         n_steps=N_STEPS,
@@ -182,14 +185,15 @@ def test_fedformer_round_trip(tmp_path):
     from openmhc.imputers import FEDformerImputer
 
     # Use Wavelets; tiny Fourier configs trip a PyPOTS-internal einsum shape check.
-    arch = dict(
+    # PyPOTS's FEDformer calls the basis flavor `version`; our wrapper renames it
+    # to `variant` so it doesn't collide with the dataset version.
+    shared_arch = dict(
         n_layers=1,
         d_model=16,
         n_heads=4,
         d_ffn=16,
         moving_avg_window_size=5,
         dropout=0.0,
-        version="Wavelets",
         modes=4,
         mode_select="random",
     )
@@ -200,17 +204,20 @@ def test_fedformer_round_trip(tmp_path):
             batch_size=4,
             epochs=1,
             device="cpu",
-            **arch,
+            version="Wavelets",
+            **shared_arch,
         ),
         tmp_path,
     )
 
     imp = FEDformerImputer(
         model_path=tmp_path,
+        version="xs",
         device="cpu",
         inference_batch_size=4,
         n_steps=N_STEPS,
-        **arch,
+        variant="Wavelets",
+        **shared_arch,
     )
     assert imp.name == "pypots_fedformer"
 
@@ -259,6 +266,7 @@ def test_normalization_round_trip(tmp_path):
 
     imp = BRITSImputer(
         model_path=tmp_path,
+        version="xs",
         device="cpu",
         inference_batch_size=4,
         n_steps=N_STEPS,
@@ -293,6 +301,7 @@ def test_directory_path_resolution(tmp_path):
     # Pass the directory, not the file.
     imp = BRITSImputer(
         model_path=tmp_path,
+        version="xs",
         device="cpu",
         inference_batch_size=4,
         n_steps=N_STEPS,
@@ -307,6 +316,7 @@ def test_missing_path_raises(tmp_path):
     with pytest.raises(FileNotFoundError):
         BRITSImputer(
             model_path=tmp_path / "does_not_exist",
+            version="xs",
             device="cpu",
             n_steps=N_STEPS,
             rnn_hidden_size=8,
@@ -319,6 +329,7 @@ def test_empty_directory_raises(tmp_path):
     with pytest.raises(FileNotFoundError):
         BRITSImputer(
             model_path=tmp_path,
+            version="xs",
             device="cpu",
             n_steps=N_STEPS,
             rnn_hidden_size=8,
@@ -381,7 +392,7 @@ def test_from_release_round_trip(tmp_path):
     from openmhc.imputers import BRITSImputer
 
     release = _build_brits_release(tmp_path)
-    imp = BRITSImputer.from_release(release, device="cpu", inference_batch_size=4)
+    imp = BRITSImputer.from_release(release, version="xs", device="cpu", inference_batch_size=4)
     assert imp.name == "pypots_brits"
     assert imp._rnn_hidden_size == 8
 
@@ -396,7 +407,7 @@ def test_from_release_accepts_manifest_file_path(tmp_path):
 
     release = _build_brits_release(tmp_path)
     manifest_file = release / "openmhc_manifest.json"
-    imp = BRITSImputer.from_release(manifest_file, device="cpu", inference_batch_size=4)
+    imp = BRITSImputer.from_release(manifest_file, version="xs", device="cpu", inference_batch_size=4)
     assert imp.name == "pypots_brits"
 
 
@@ -405,7 +416,7 @@ def test_from_release_kind_mismatch_raises(tmp_path):
 
     release = _build_brits_release(tmp_path)
     with pytest.raises(ValueError, match="kind 'brits'"):
-        TimesNetImputer.from_release(release, device="cpu")
+        TimesNetImputer.from_release(release, version="xs", device="cpu")
 
 
 def test_from_release_optional_stats(tmp_path):
@@ -413,7 +424,7 @@ def test_from_release_optional_stats(tmp_path):
     from openmhc.imputers import BRITSImputer
 
     release = _build_brits_release(tmp_path, with_stats=False)
-    imp = BRITSImputer.from_release(release, device="cpu", inference_batch_size=4)
+    imp = BRITSImputer.from_release(release, version="xs", device="cpu", inference_batch_size=4)
     assert imp._stats is None
 
     data, mask = _make_synthetic_batch(2, seed=12)
@@ -427,7 +438,7 @@ def test_from_release_runtime_kwargs_override(tmp_path):
     from openmhc.imputers import BRITSImputer
 
     release = _build_brits_release(tmp_path)
-    imp = BRITSImputer.from_release(release, device="cpu", inference_batch_size=128)
+    imp = BRITSImputer.from_release(release, version="xs", device="cpu", inference_batch_size=128)
     assert imp._inference_batch_size == 128
 
 
@@ -442,7 +453,7 @@ def test_release_bundle_is_movable(tmp_path):
     shutil.copytree(src, moved)
     shutil.rmtree(src)
 
-    imp = BRITSImputer.from_release(moved, device="cpu", inference_batch_size=4)
+    imp = BRITSImputer.from_release(moved, version="xs", device="cpu", inference_batch_size=4)
     data, mask = _make_synthetic_batch(2, seed=14)
     target = _make_target_mask(mask, frac=0.1, seed=15)
     out = imp.impute(data, mask, target)
