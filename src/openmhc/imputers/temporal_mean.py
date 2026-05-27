@@ -6,6 +6,7 @@ from pathlib import Path
 
 import numpy as np
 
+from openmhc._dataset import Version
 from openmhc.imputers._base import BaseImputer
 
 
@@ -21,8 +22,12 @@ class TemporalMeanImputer(BaseImputer):
 
     name = "temporal_mean"
 
-    def __init__(self, data_dir: str | Path | None = None) -> None:
-        super().__init__(data_dir=data_dir)
+    def __init__(
+        self,
+        version: Version,
+        data_dir: str | Path | None = None,
+    ) -> None:
+        super().__init__(version=version, data_dir=data_dir)
         self._temporal_means = self.compute_temporal_means()  # (C, 1440)
 
     def impute(

@@ -17,6 +17,7 @@ from typing import Iterator, Literal
 import numpy as np
 
 from openmhc._data_utils import iter_train_data, load_sample_metadata
+from openmhc._dataset import Version
 
 N_CHANNELS = 19
 SEQ_LEN = 1440
@@ -33,13 +34,23 @@ class BaseImputer:
     n_channels: int = N_CHANNELS
     seq_len: int = SEQ_LEN
 
-    def __init__(self, data_dir: str | Path | None = None) -> None:
-        """Store the dataset root used by helper methods.
+    def __init__(
+        self,
+        version: Version,
+        data_dir: str | Path | None = None,
+    ) -> None:
+        """Store the dataset root and version used by helper methods.
 
         Args:
+            version: ``"xs"`` or ``"full"``. Required — propagated to
+                every internal ``iter_*`` / ``load_sample_metadata`` call
+                so the dataset root's ``dataset_version.json`` marker
+                can verify the imputer is being fit on the version the
+                caller intended.
             data_dir: Override for the dataset root. If omitted,
                 ``MHC_DATA_DIR`` must be set.
         """
+        self._version: Version = version
         self._data_dir = data_dir
 
     # ------------------------------------------------------------------
@@ -52,7 +63,7 @@ class BaseImputer:
         Each batch is ``(B, 19, 1440)`` float32. ``data`` has NaN at
         missing positions; ``mask`` is 1 where observed, 0 elsewhere.
         """
-        return iter_train_data(data_dir=self._data_dir)
+        return iter_train_data(version=self._version, data_dir=self._data_dir)
 
     def compute_channel_means(self) -> np.ndarray:
         """Per-channel mean over all observed positions in the train split.
@@ -145,7 +156,9 @@ class BaseImputer:
         ``sample_idx`` is the split-local position that aligns with the
         ``sample_indices`` kwarg passed to ``impute``.
         """
-        return load_sample_metadata(split, data_dir=self._data_dir)
+        return load_sample_metadata(
+            split, version=self._version, data_dir=self._data_dir
+        )
 
     def build_user_index(
         self, split: Literal["train", "val", "test"]

@@ -6,6 +6,7 @@ from pathlib import Path
 
 import numpy as np
 
+from openmhc._dataset import Version
 from openmhc.imputers._base import BaseImputer
 
 
@@ -20,8 +21,12 @@ class LOCFImputer(BaseImputer):
 
     name = "locf"
 
-    def __init__(self, data_dir: str | Path | None = None) -> None:
-        super().__init__(data_dir=data_dir)
+    def __init__(
+        self,
+        version: Version,
+        data_dir: str | Path | None = None,
+    ) -> None:
+        super().__init__(version=version, data_dir=data_dir)
         self._channel_means = self.compute_channel_means()
 
     def impute(

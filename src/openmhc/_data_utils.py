@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Iterator, Literal
 
 import numpy as np
 
+from openmhc._dataset import Version
 from openmhc._evaluate import _DatasetPaths
 
 if TYPE_CHECKING:
@@ -34,6 +35,7 @@ _VALID_SPLITS = ("train", "val", "test")
 
 def _make_data_config(
     data_dir: str | Path | None,
+    version: Version,
     batch_size: int,
     num_workers: int,
     seed: int,
@@ -41,7 +43,8 @@ def _make_data_config(
     """Build the imputation DataConfig used by both utilities and the harness."""
     from imputation_evaluation.config import DataConfig
 
-    paths = _DatasetPaths.resolve(data_dir)
+    paths = _DatasetPaths.resolve(data_dir, version=version)
+    paths.require("daily_hf", "splits_file")
     return DataConfig(
         daily_hf_dir=str(paths.daily_hf),
         split_file=str(paths.splits_file),
@@ -54,6 +57,7 @@ def _make_data_config(
 
 def iter_split_data(
     split: Literal["train", "val", "test"],
+    version: Version,
     data_dir: str | Path | None = None,
     batch_size: int = 5000,
     num_workers: int = 0,
@@ -72,6 +76,8 @@ def iter_split_data(
 
     Args:
         split: One of ``"train"``, ``"val"``, ``"test"``.
+        version: ``"xs"`` or ``"full"``. Required — cross-checked against
+            the dataset root's ``dataset_version.json`` marker.
         data_dir: Override for the dataset root.
         batch_size: Samples per batch.
         num_workers: DataLoader worker processes.
@@ -87,7 +93,7 @@ def iter_split_data(
         )
     from imputation_evaluation.data.data_loader import ImputationDataLoader
 
-    cfg = _make_data_config(data_dir, batch_size, num_workers, seed)
+    cfg = _make_data_config(data_dir, version, batch_size, num_workers, seed)
     loaded = ImputationDataLoader(cfg).load_splits(
         batch_size=batch_size,
         num_workers=num_workers,
@@ -108,6 +114,7 @@ def iter_split_data(
 
 
 def iter_train_data(
+    version: Version,
     data_dir: str | Path | None = None,
     batch_size: int = 5000,
     num_workers: int = 0,
@@ -120,6 +127,7 @@ def iter_train_data(
     """
     return iter_split_data(
         "train",
+        version=version,
         data_dir=data_dir,
         batch_size=batch_size,
         num_workers=num_workers,
@@ -129,6 +137,7 @@ def iter_train_data(
 
 def load_sample_metadata(
     split: Literal["train", "val", "test"],
+    version: Version,
     data_dir: str | Path | None = None,
     seed: int = 42,
 ) -> list[dict]:
@@ -143,6 +152,8 @@ def load_sample_metadata(
 
     Args:
         split: One of ``"train"``, ``"val"``, ``"test"``.
+        version: ``"xs"`` or ``"full"``. Required — cross-checked against
+            the dataset root's ``dataset_version.json`` marker.
         data_dir: Override for the dataset root.
         seed: Random seed (only used if no split file is provided).
 
@@ -158,7 +169,7 @@ def load_sample_metadata(
 
     from imputation_evaluation.data.data_loader import ImputationDataLoader
 
-    cfg = _make_data_config(data_dir, batch_size=5000, num_workers=0, seed=seed)
+    cfg = _make_data_config(data_dir, version, batch_size=5000, num_workers=0, seed=seed)
     split_indices, all_user_ids, all_dates = ImputationDataLoader(cfg).load_split_indices()
 
     indices = split_indices[split]

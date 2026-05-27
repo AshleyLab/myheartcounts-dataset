@@ -55,6 +55,7 @@ class _PyPOTSImputerBase(ReleaseLoadableMixin, BaseImputer):
     def __init__(
         self,
         model_path: str | Path,
+        version,
         *,
         device: str = "cuda",
         inference_batch_size: int = 64,
@@ -63,7 +64,7 @@ class _PyPOTSImputerBase(ReleaseLoadableMixin, BaseImputer):
         n_features: int = 19,
         data_dir: str | Path | None = None,
     ) -> None:
-        super().__init__(data_dir=data_dir)
+        super().__init__(version=version, data_dir=data_dir)
         self._device = device
         self._inference_batch_size = int(inference_batch_size)
         self._n_steps = int(n_steps)
@@ -185,6 +186,7 @@ class BRITSImputer(_PyPOTSImputerBase):
     def __init__(
         self,
         model_path: str | Path,
+        version,
         *,
         rnn_hidden_size: int = 128,
         device: str = "cuda",
@@ -197,6 +199,7 @@ class BRITSImputer(_PyPOTSImputerBase):
         self._rnn_hidden_size = int(rnn_hidden_size)
         super().__init__(
             model_path,
+            version=version,
             device=device,
             inference_batch_size=inference_batch_size,
             normalization_stats_path=normalization_stats_path,
@@ -238,6 +241,7 @@ class TimesNetImputer(_PyPOTSImputerBase):
     def __init__(
         self,
         model_path: str | Path,
+        version,
         *,
         n_layers: int = 2,
         top_k: int = 5,
@@ -262,6 +266,7 @@ class TimesNetImputer(_PyPOTSImputerBase):
         self._apply_nonstationary_norm = bool(apply_nonstationary_norm)
         super().__init__(
             model_path,
+            version=version,
             device=device,
             inference_batch_size=inference_batch_size,
             normalization_stats_path=normalization_stats_path,
@@ -306,6 +311,7 @@ class DLinearImputer(_PyPOTSImputerBase):
     def __init__(
         self,
         model_path: str | Path,
+        version,
         *,
         moving_avg_window_size: int = 25,
         d_model: int | None = 64,
@@ -322,6 +328,7 @@ class DLinearImputer(_PyPOTSImputerBase):
         self._individual = bool(individual)
         super().__init__(
             model_path,
+            version=version,
             device=device,
             inference_batch_size=inference_batch_size,
             normalization_stats_path=normalization_stats_path,
@@ -349,13 +356,16 @@ class FEDformerImputer(_PyPOTSImputerBase):
 
     Args:
         model_path: Path to a ``.pypots`` checkpoint or a directory holding one.
+        version: OpenMHC dataset version (``"xs"`` or ``"full"``). Distinct
+            from the FEDformer architectural variant — see ``variant``.
         n_layers: Transformer layers.
         d_model: Model dimension.
         n_heads: Attention heads.
         d_ffn: Feed-forward inner dimension.
         moving_avg_window_size: Trend decomposition window.
         dropout: Dropout rate.
-        version: ``"Fourier"`` or ``"Wavelets"``.
+        variant: FEDformer frequency basis. ``"Fourier"`` or ``"Wavelets"``.
+            Maps to PyPOTS's own ``version`` kwarg internally.
         modes: Number of frequency modes.
         mode_select: ``"random"`` or ``"low"``.
         device, inference_batch_size, normalization_stats_path, n_steps,
@@ -367,6 +377,7 @@ class FEDformerImputer(_PyPOTSImputerBase):
     def __init__(
         self,
         model_path: str | Path,
+        version,
         *,
         n_layers: int = 2,
         d_model: int = 64,
@@ -374,7 +385,7 @@ class FEDformerImputer(_PyPOTSImputerBase):
         d_ffn: int = 64,
         moving_avg_window_size: int = 25,
         dropout: float = 0.1,
-        version: Literal["Fourier", "Wavelets"] = "Fourier",
+        variant: Literal["Fourier", "Wavelets"] = "Fourier",
         modes: int = 32,
         mode_select: Literal["random", "low"] = "random",
         device: str = "cuda",
@@ -390,11 +401,12 @@ class FEDformerImputer(_PyPOTSImputerBase):
         self._d_ffn = int(d_ffn)
         self._moving_avg_window_size = int(moving_avg_window_size)
         self._dropout = float(dropout)
-        self._version = version
+        self._variant = variant
         self._modes = int(modes)
         self._mode_select = mode_select
         super().__init__(
             model_path,
+            version=version,
             device=device,
             inference_batch_size=inference_batch_size,
             normalization_stats_path=normalization_stats_path,
@@ -415,7 +427,7 @@ class FEDformerImputer(_PyPOTSImputerBase):
             d_ffn=self._d_ffn,
             moving_avg_window_size=self._moving_avg_window_size,
             dropout=self._dropout,
-            version=self._version,
+            version=self._variant,
             modes=self._modes,
             mode_select=self._mode_select,
             batch_size=self._inference_batch_size,

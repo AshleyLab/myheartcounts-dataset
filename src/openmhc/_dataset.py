@@ -16,11 +16,19 @@ Large benchmark payloads are always resolved from one explicit dataset root:
 
 If neither is provided, OpenMHC raises instead of silently falling back to a
 cache directory.
+
+Every dataset root carries a ``dataset_version.json`` marker file written by
+:func:`download_dataset`. The marker pins the version and expected user count
+so the resolver can fail loudly if a directory ever ends up holding mismatched
+contents (e.g. an XS bundle whose split file got renamed to the canonical
+"full" name). For existing roots that predate the marker, use
+:func:`write_dataset_marker` to write one explicitly.
 """
 
 from __future__ import annotations
 
 import io
+import json
 import os
 import shutil
 import tarfile
@@ -28,6 +36,7 @@ import tempfile
 import urllib.request
 import zipfile
 from pathlib import Path
+from typing import Literal
 
 _DATAVERSE_BASE = "https://dataverse.harvard.edu"
 
@@ -36,6 +45,18 @@ _VERSION_DOIS: dict[str, str | None] = {
     "xs": "doi:10.7910/DVN/ZYMJF6",
     "full": None,  # doi:10.7910/DVN/XNBITM — set once the Dataverse deposit is public
 }
+
+# Expected user count per version (sum across train/validation/test in the
+# canonical split file). The resolver cross-checks the loaded split file
+# against these numbers, so a renamed/swapped split fails loudly.
+EXPECTED_N_USERS: dict[str, int] = {
+    "xs": 593,
+    "full": 11894,
+}
+
+DATASET_VERSION_FILENAME = "dataset_version.json"
+
+Version = Literal["xs", "full"]
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _BUNDLED_METADATA_DIR = _REPO_ROOT / "data" / "labels"
@@ -73,6 +94,92 @@ def data_dir(override: str | Path | None = None) -> Path:
     if env:
         return Path(env).expanduser().resolve()
     raise _missing_dataset_root_error()
+
+
+def write_dataset_marker(
+    root: str | Path,
+    version: Version,
+    *,
+    n_users: int | None = None,
+    daily_hf_rows: int | None = None,
+) -> Path:
+    """Write a ``dataset_version.json`` marker to an existing dataset root.
+
+    Use this when you have a dataset root that predates the marker file
+    (e.g. an old XS cache) and need to make it usable with the strict
+    resolver.
+
+    Args:
+        root: Path to the dataset root that contains ``processed/``,
+            ``splits/``, ``labels/``, etc.
+        version: ``"xs"`` or ``"full"``. Stored verbatim and cross-checked
+            by :class:`_DatasetPaths`.
+        n_users: Expected user count across all splits. Defaults to the
+            canonical count for ``version``.
+        daily_hf_rows: Expected row count of ``processed/daily_hf/``.
+            Optional; if omitted the resolver skips that check.
+
+    Returns:
+        Path to the written marker file.
+    """
+    if version not in EXPECTED_N_USERS:
+        raise ValueError(
+            f"version must be one of {sorted(EXPECTED_N_USERS)}, got {version!r}"
+        )
+    root_path = Path(root).expanduser().resolve()
+    if not root_path.exists():
+        raise FileNotFoundError(f"dataset root does not exist: {root_path}")
+    payload: dict = {
+        "version": version,
+        "n_users": int(n_users) if n_users is not None else EXPECTED_N_USERS[version],
+    }
+    if daily_hf_rows is not None:
+        payload["daily_hf_rows"] = int(daily_hf_rows)
+    marker = root_path / DATASET_VERSION_FILENAME
+    marker.write_text(json.dumps(payload, indent=2) + "\n")
+    return marker
+
+
+def read_dataset_marker(root: str | Path) -> dict:
+    """Read ``dataset_version.json`` from a dataset root.
+
+    Args:
+        root: Path to the dataset root.
+
+    Returns:
+        Parsed marker payload.
+
+    Raises:
+        FileNotFoundError: If the marker is missing. The error message
+            includes instructions for backfilling it with
+            :func:`write_dataset_marker`.
+        ValueError: If the marker is malformed.
+    """
+    root_path = Path(root).expanduser().resolve()
+    marker = root_path / DATASET_VERSION_FILENAME
+    if not marker.exists():
+        raise FileNotFoundError(
+            f"Missing dataset version marker: {marker}\n\n"
+            "Every OpenMHC dataset root must contain a `dataset_version.json` "
+            "file declaring which release ('xs' or 'full') lives there. "
+            "`download_dataset` writes this automatically; for a pre-existing "
+            "root, run:\n"
+            "    openmhc.write_dataset_marker(root, version='xs')  # or 'full'\n"
+        )
+    try:
+        payload = json.loads(marker.read_text())
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"malformed dataset marker {marker}: {exc}") from exc
+    if not isinstance(payload, dict) or "version" not in payload:
+        raise ValueError(
+            f"dataset marker {marker} is missing required 'version' field"
+        )
+    if payload["version"] not in EXPECTED_N_USERS:
+        raise ValueError(
+            f"dataset marker {marker} has unknown version "
+            f"{payload['version']!r}; expected one of {sorted(EXPECTED_N_USERS)}"
+        )
+    return payload
 
 
 def download_dataset(
@@ -139,6 +246,8 @@ def download_dataset(
         _post_process_xs(target)
     elif version == "full":
         _post_process_full(target)
+
+    write_dataset_marker(target, version)
 
     print(f"Done. Reuse this root via MHC_DATA_DIR={target} or data_dir={target!s}.")
     return target

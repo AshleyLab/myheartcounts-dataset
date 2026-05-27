@@ -8,6 +8,7 @@ from typing import Any
 
 import numpy as np
 
+from openmhc._dataset import Version
 from openmhc.imputers._personalized_base import PersonalizedImputerBase
 
 
@@ -74,11 +75,12 @@ class PersonalizedModeImputer(PersonalizedImputerBase):
 
     def __init__(
         self,
+        version: Version,
         decimal_precision: int = 1,
         data_dir: str | Path | None = None,
     ) -> None:
         self.decimal_precision = decimal_precision
-        super().__init__(data_dir=data_dir)
+        super().__init__(version=version, data_dir=data_dir)
 
     def _compute_global_fallback(self) -> np.ndarray:
         # Reuse the same Counter-based computation as ModeImputer.

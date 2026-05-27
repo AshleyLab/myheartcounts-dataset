@@ -7,6 +7,7 @@ from pathlib import Path
 
 import numpy as np
 
+from openmhc._dataset import Version
 from openmhc.imputers._base import BaseImputer
 
 
@@ -23,10 +24,11 @@ class TemporalModeImputer(BaseImputer):
 
     def __init__(
         self,
+        version: Version,
         decimal_precision: int = 1,
         data_dir: str | Path | None = None,
     ) -> None:
-        super().__init__(data_dir=data_dir)
+        super().__init__(version=version, data_dir=data_dir)
         self.decimal_precision = decimal_precision
         self._temporal_modes = self._compute_temporal_modes()  # (C, 1440)
 

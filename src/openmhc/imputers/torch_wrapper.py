@@ -62,6 +62,7 @@ class TorchImputer(BaseImputer):
     def __init__(
         self,
         model,
+        version,
         device: str = "cuda",
         inference_batch_size: int = 128,
         channels_first: bool = True,
@@ -74,7 +75,7 @@ class TorchImputer(BaseImputer):
     ) -> None:
         import torch  # local import — torch is a heavy dep
 
-        super().__init__(data_dir=data_dir)
+        super().__init__(version=version, data_dir=data_dir)
         self._torch = torch
         self._device = torch.device(device)
         self._model = model.to(self._device).eval()

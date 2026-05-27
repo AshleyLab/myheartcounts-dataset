@@ -68,6 +68,7 @@ class _LSM2ImputerBase(ReleaseLoadableMixin, BaseImputer):
     def __init__(
         self,
         model_path: str | Path,
+        version,
         *,
         device: str = "cuda",
         inference_batch_size: int = 64,
@@ -77,7 +78,7 @@ class _LSM2ImputerBase(ReleaseLoadableMixin, BaseImputer):
     ) -> None:
         import torch  # heavy dep — local import
 
-        super().__init__(data_dir=data_dir)
+        super().__init__(version=version, data_dir=data_dir)
         self._torch = torch
         self._device = torch.device(device)
         self._inference_batch_size = int(inference_batch_size)
@@ -269,6 +270,7 @@ class LSM2Imputer(_LSM2ImputerBase):
     def __init__(
         self,
         model_path: str | Path,
+        version,
         *,
         seq_length: int = 1440,
         patch_size: int = 10,
@@ -303,6 +305,7 @@ class LSM2Imputer(_LSM2ImputerBase):
         }
         super().__init__(
             model_path,
+            version=version,
             device=device,
             inference_batch_size=inference_batch_size,
             inference_dropout_removal_ratio=inference_dropout_removal_ratio,
@@ -386,6 +389,7 @@ class LSM2WeeklySparseImputer(_LSM2ImputerBase):
     def __init__(
         self,
         model_path: str | Path,
+        version,
         *,
         # weekly-sparse-specific
         num_days: int = 7,
@@ -430,6 +434,7 @@ class LSM2WeeklySparseImputer(_LSM2ImputerBase):
         }
         super().__init__(
             model_path,
+            version=version,
             device=device,
             inference_batch_size=inference_batch_size,
             inference_dropout_removal_ratio=inference_dropout_removal_ratio,

@@ -24,6 +24,7 @@ from typing import Any
 import numpy as np
 
 from openmhc._data_utils import iter_split_data
+from openmhc._dataset import Version
 from openmhc.imputers._base import BaseImputer
 
 logger = logging.getLogger(__name__)
@@ -32,8 +33,12 @@ logger = logging.getLogger(__name__)
 class PersonalizedImputerBase(BaseImputer, abc.ABC):
     """Base class for per-user imputers."""
 
-    def __init__(self, data_dir: str | Path | None = None) -> None:
-        super().__init__(data_dir=data_dir)
+    def __init__(
+        self,
+        version: Version,
+        data_dir: str | Path | None = None,
+    ) -> None:
+        super().__init__(version=version, data_dir=data_dir)
         self._global_fallback: Any = self._compute_global_fallback()
         self._user_fill_values: dict[str, Any] = {}
         for split in ("val", "test"):
@@ -88,7 +93,7 @@ class PersonalizedImputerBase(BaseImputer, abc.ABC):
         accumulators: dict[str, Any] = {}
         sample_offset = 0
         for data_batch, mask_batch in iter_split_data(
-            split, data_dir=self._data_dir
+            split, version=self._version, data_dir=self._data_dir
         ):
             B = data_batch.shape[0]
             for i in range(B):

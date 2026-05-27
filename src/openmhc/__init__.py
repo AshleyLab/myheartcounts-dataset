@@ -23,7 +23,13 @@ from openmhc._data_utils import (
     iter_train_data,
     load_sample_metadata,
 )
-from openmhc._dataset import data_dir, download_dataset
+from openmhc._dataset import (
+    Version,
+    data_dir,
+    download_dataset,
+    read_dataset_marker,
+    write_dataset_marker,
+)
 from openmhc._protocols import Encoder, Forecaster, Imputer
 from openmhc._results import (
     ForecastingResults,
@@ -43,6 +49,8 @@ __all__ = [
     # Dataset
     "download_dataset",
     "data_dir",
+    "read_dataset_marker",
+    "write_dataset_marker",
     # Data utilities
     "iter_train_data",
     "iter_split_data",
@@ -60,6 +68,7 @@ __all__ = [
 
 def evaluate_prediction(
     encoder: Encoder,
+    version: Version,
     tasks: str | list[str] = "all",
     data_dir: str | Path | None = None,
     seed: int = 42,
@@ -68,6 +77,8 @@ def evaluate_prediction(
 
     Args:
         encoder: Object implementing the Encoder protocol.
+        version: ``"xs"`` or ``"full"``. Required — cross-checked against
+            the dataset root's ``dataset_version.json`` marker.
         tasks: "all" to run all 33 tasks, or a list of task names.
         data_dir: Path to the dataset root. If omitted, ``MHC_DATA_DIR``
             must be set.
@@ -78,28 +89,33 @@ def evaluate_prediction(
     """
     from openmhc._evaluate import evaluate_prediction as _eval
 
-    return _eval(encoder, tasks=tasks, data_dir=data_dir, seed=seed)
+    return _eval(encoder, version=version, tasks=tasks, data_dir=data_dir, seed=seed)
 
 
 def evaluate_imputation(
     imputer: Imputer,
+    version: Version,
     masking_scenarios: str | list[str] = "all",
     data_dir: str | Path | None = None,
     seed: int = 42,
-    version: str | None = None,
+    *,
+    bootstrap: bool | dict = False,
 ) -> ImputationResults:
     """Run imputation evaluation with a custom imputer.
 
     Args:
         imputer: Object implementing the Imputer protocol.
+        version: ``"full"`` (11,894-user leaderboard split) or ``"xs"``
+            (593-user reviewer subset). Required — cross-checked against
+            the dataset root's ``dataset_version.json`` marker.
         masking_scenarios: "all" to run all 6 scenarios, or a list of
             scenario names.
         data_dir: Path to the dataset root directory. If omitted,
             ``MHC_DATA_DIR`` must be set.
         seed: Random seed for mask generation.
-        version: ``"full"`` (11,894-user leaderboard split) or ``"xs"``
-            (593-user reviewer subset). None auto-detects from what is
-            present in the data directory.
+        bootstrap: Opt-in participant-level cluster bootstrap. See
+            :func:`openmhc._evaluate.evaluate_imputation` for the full
+            shape of the option.
 
     Returns:
         ImputationResults with per-scenario, per-split metrics.
@@ -108,15 +124,17 @@ def evaluate_imputation(
 
     return _eval(
         imputer,
+        version=version,
         masking_scenarios=masking_scenarios,
         data_dir=data_dir,
         seed=seed,
-        version=version,
+        bootstrap=bootstrap,
     )
 
 
 def evaluate_forecasting(
     forecaster: Forecaster,
+    version: Version,
     forecasting_length: int = 24,
     data_dir: str | Path | None = None,
     seed: int = 42,
@@ -127,6 +145,8 @@ def evaluate_forecasting(
     Args:
         forecaster: Object implementing the Forecaster protocol —
             ``predict(history, horizon)`` returns ``(n_channels, horizon)``.
+        version: ``"xs"`` or ``"full"``. Required — cross-checked against
+            the dataset root's ``dataset_version.json`` marker.
         forecasting_length: Forecast horizon in hours. Defaults to 24.
         data_dir: Override for the dataset root. If omitted,
             ``MHC_DATA_DIR`` must be set.
@@ -140,6 +160,7 @@ def evaluate_forecasting(
 
     return _eval(
         forecaster,
+        version=version,
         forecasting_length=forecasting_length,
         data_dir=data_dir,
         seed=seed,

@@ -21,7 +21,12 @@ import numpy as np
 if TYPE_CHECKING:
     from openmhc._protocols import Encoder, Imputer
 
-from openmhc._dataset import data_dir as _resolve_dataset_root
+from openmhc._dataset import (
+    EXPECTED_N_USERS,
+    Version,
+    data_dir as _resolve_dataset_root,
+    read_dataset_marker,
+)
 from openmhc._results import PredictionResults, ImputationResults
 
 logger = logging.getLogger(__name__)
@@ -36,6 +41,12 @@ _MAX91D_MASKS_DIR = (
 )
 
 
+_SPLIT_FILENAMES: dict[str, str] = {
+    "full": "sharable_users_seed42_2026.json",
+    "xs": "sharable_users_seed42_2026_xs.json",
+}
+
+
 @dataclass
 class _DatasetPaths:
     """Resolved paths into the dataset directory.
@@ -43,6 +54,13 @@ class _DatasetPaths:
     All paths are derived from a single ``root`` so the API stays consistent
     with what :func:`openmhc.download_dataset` produces. The expected layout
     matches DATASET.md.
+
+    The resolver never falls back. The caller passes ``version`` explicitly,
+    the resolver cross-checks it against the root's ``dataset_version.json``
+    marker, and any mismatch between the requested version, the marker, and
+    the actual user count in the split file is raised. Use
+    :meth:`require` to validate the existence of just the sub-paths a given
+    track needs.
     """
 
     root: Path
@@ -62,51 +80,51 @@ class _DatasetPaths:
     def resolve(
         cls,
         override: str | Path | None = None,
-        version: str | None = None,
+        version: Version | None = None,
     ) -> "_DatasetPaths":
-        """Build the paths bundle from an explicit override or ``MHC_DATA_DIR``.
+        """Build the paths bundle for an explicit version + dataset root.
 
-        Resolution order matches :func:`openmhc.data_dir`:
+        Args:
+            override: Explicit dataset root. Falls back to ``MHC_DATA_DIR``
+                when ``None``. Never falls back to ``~/.cache/openmhc/data``.
+            version: ``"xs"`` or ``"full"``. Required — there is no
+                filename-based auto-detect. The version is cross-checked
+                against the root's ``dataset_version.json`` marker and
+                against the user count in the resolved split file.
 
-        1. ``override`` argument (if provided)
-        2. ``MHC_DATA_DIR`` env var
-
-        ``version`` selects which split file to use:
-
-        - ``"full"`` — ``sharable_users_seed42_2026.json`` (11,894 users)
-        - ``"xs"``   — ``sharable_users_seed42_2026_xs.json`` (593 users)
-        - ``None``   — auto-detect from which split files are present; if both
-          are present the full dataset is preferred.
+        Raises:
+            ValueError: If ``version`` is not provided, is not one of
+                ``"xs"`` / ``"full"``, or disagrees with the marker /
+                split-file contents.
+            FileNotFoundError: If the dataset root is missing or has no
+                ``dataset_version.json`` marker (see
+                :func:`openmhc.write_dataset_marker` to backfill it).
         """
+        if version is None:
+            raise ValueError(
+                "_DatasetPaths.resolve(version=...) is required. "
+                "Auto-detection by filename has been removed; pass "
+                "version='xs' or version='full' explicitly so the resolver "
+                "can cross-check it against the dataset_version.json marker."
+            )
+        if version not in EXPECTED_N_USERS:
+            raise ValueError(
+                f"version must be one of {sorted(EXPECTED_N_USERS)}, got {version!r}"
+            )
+
         root = _resolve_dataset_root(override)
 
-        full_split = root / "splits" / "sharable_users_seed42_2026.json"
-        xs_split   = root / "splits" / "sharable_users_seed42_2026_xs.json"
+        marker = read_dataset_marker(root)
+        if marker["version"] != version:
+            raise ValueError(
+                f"Dataset at {root} is version {marker['version']!r} "
+                f"(per dataset_version.json) but the caller requested "
+                f"{version!r}. Point data_dir / MHC_DATA_DIR at the correct "
+                f"root, or pass version={marker['version']!r}."
+            )
 
-        if version is None:
-            full_ok = full_split.exists()
-            xs_ok   = xs_split.exists()
-            if full_ok and xs_ok:
-                logger.info(
-                    "Both XS and full datasets found at %s; using full. "
-                    "Pass version='xs' to evaluate_imputation() to use the "
-                    "XS subset instead.",
-                    root,
-                )
-                version = "full"
-            elif full_ok:
-                version = "full"
-            elif xs_ok:
-                version = "xs"
-            else:
-                raise FileNotFoundError(
-                    f"No dataset found at {root}. "
-                    "Run openmhc.download_dataset() to download the dataset first."
-                )
-        elif version not in ("xs", "full"):
-            raise ValueError(f"version must be 'xs' or 'full', got {version!r}")
-
-        splits_file = full_split if version == "full" else xs_split
+        splits_file = root / "splits" / _SPLIT_FILENAMES[version]
+        cls._validate_split_file(splits_file, version, marker)
 
         return cls(
             root=root,
@@ -122,6 +140,64 @@ class _DatasetPaths:
             forecasting_sample_index_dir=root / "forecasting_sample_index",
             version=version,
         )
+
+    @staticmethod
+    def _validate_split_file(splits_file: Path, version: str, marker: dict) -> None:
+        """Verify the split file exists and its user count matches the marker."""
+        if not splits_file.exists():
+            raise FileNotFoundError(
+                f"Split file for version {version!r} not found:\n  {splits_file}\n\n"
+                f"Expected layout under the dataset root: "
+                f"splits/{_SPLIT_FILENAMES[version]}"
+            )
+        try:
+            payload = json.loads(splits_file.read_text())
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"malformed split file {splits_file}: {exc}") from exc
+        n_users = sum(
+            len(v) for v in payload.values() if isinstance(v, (list, set, tuple))
+        )
+        expected = marker.get("n_users", EXPECTED_N_USERS[version])
+        if n_users != expected:
+            raise ValueError(
+                f"Split file {splits_file} contains {n_users} users, but version "
+                f"{version!r} expects {expected}. The split file appears to be "
+                f"from a different release. Re-download with "
+                f"openmhc.download_dataset(version={version!r}) or replace the "
+                f"split file with the correct one."
+            )
+
+    def require(self, *attr_names: str) -> None:
+        """Assert that the named sub-paths exist; raise a combined error if not.
+
+        Each track only needs a subset of the resolved paths — Track 1 needs
+        ``daily_hourly_hf`` + ``window_index`` + ``weekly_labels_lookup``,
+        Track 2 needs ``daily_hf``, Track 3 needs ``hourly_trajectory`` +
+        ``forecasting_sample_index_dir``. Call this from the corresponding
+        ``evaluate_*`` function so a missing artifact is reported up front
+        with a single error listing every missing piece.
+
+        Args:
+            *attr_names: Names of attributes on ``self`` whose paths must
+                exist.
+
+        Raises:
+            FileNotFoundError: If any of the named paths is missing. The
+                message lists every missing path at once.
+        """
+        missing: list[tuple[str, Path]] = []
+        for name in attr_names:
+            path = getattr(self, name)
+            if not path.exists():
+                missing.append((name, path))
+        if missing:
+            lines = "\n".join(f"  {n}: {p}" for n, p in missing)
+            raise FileNotFoundError(
+                f"Dataset at {self.root} (version={self.version!r}) is missing "
+                f"required files:\n{lines}\n\n"
+                "Re-run openmhc.download_dataset() or restore the dataset "
+                "from the upstream release."
+            )
 
 
 _LABELS_PAYLOAD_ENV_FILES = {
@@ -163,6 +239,7 @@ def _ensure_labels_env(labels_dir: Path) -> None:
 
 def evaluate_prediction(
     encoder: Encoder,
+    version: Version,
     tasks: str | list[str] = "all",
     data_dir: str | Path | None = None,
     seed: int = 42,
@@ -177,6 +254,9 @@ def evaluate_prediction(
     Args:
         encoder: Object with an `encode(weekly_tensors) -> embeddings` method.
             Input shape is (B, 168, 38), output shape is (B, D).
+        version: ``"xs"`` (593-user reviewer subset) or ``"full"``
+            (11,894-user leaderboard split). Required — cross-checked
+            against the dataset root's ``dataset_version.json`` marker.
         tasks: "all" to run all 33 tasks, or a list of task name strings.
         data_dir: Override for the dataset root (the same root that
             ``download_dataset`` writes to). If omitted, ``MHC_DATA_DIR`` must
@@ -190,7 +270,13 @@ def evaluate_prediction(
     """
     import pandas as pd
 
-    paths = _DatasetPaths.resolve(data_dir)
+    paths = _DatasetPaths.resolve(data_dir, version=version)
+    paths.require(
+        "daily_hourly_hf",
+        "window_index",
+        "weekly_labels_lookup",
+        "labels_dir",
+    )
     _ensure_labels_env(paths.labels_dir)
 
     from downstream_evaluation.config import ClassifierConfig, parse_time_windows
@@ -530,10 +616,10 @@ def _extract_encoder_features(
 
 def evaluate_imputation(
     imputer: Imputer,
+    version: Version,
     masking_scenarios: str | list[str] = "all",
     data_dir: str | Path | None = None,
     seed: int = 42,
-    version: str | None = None,
     *,
     bootstrap: bool | dict = False,
 ) -> ImputationResults:
@@ -548,6 +634,9 @@ def evaluate_imputation(
         imputer: Object implementing ``impute(data, observed_mask,
             target_mask, *, sample_indices=None, user_ids=None,
             dates=None)`` per the ``Imputer`` protocol.
+        version: ``"full"`` (11,894-user leaderboard split) or ``"xs"``
+            (593-user reviewer subset). Required — cross-checked against
+            the dataset root's ``dataset_version.json`` marker.
         masking_scenarios: "all" to run all 6 scenarios, or a list of
             scenario name strings.
         data_dir: Override for the dataset root (the same root that
@@ -556,11 +645,6 @@ def evaluate_imputation(
             etc.) are derived from this root.
         seed: Random seed for mask generation (XS only; full always uses
             pre-computed masks).
-        version: Which dataset split to evaluate on — ``"full"``
-            (11,894 users, leaderboard split) or ``"xs"`` (593-user
-            reviewer subset). ``None`` auto-detects from the split files
-            present in the data directory; if both are present the full
-            dataset is preferred.
         bootstrap: Opt-in participant-level cluster bootstrap. ``False``
             (default) skips it. ``True`` enables with defaults
             (``n_boot=1000, ci_level=0.95, seed=42, include_auc=True``).
@@ -599,6 +683,7 @@ def evaluate_imputation(
             )
 
     paths = _DatasetPaths.resolve(data_dir, version=version)
+    paths.require("daily_hf", "splits_file", "labels_dir")
     _ensure_labels_env(paths.labels_dir)
 
     from imputation_evaluation.config import (
@@ -826,6 +911,7 @@ class _ImputerMethodAdapter:
 
 def evaluate_forecasting(
     forecaster,
+    version: Version,
     forecasting_length: int = 24,
     data_dir: str | Path | None = None,
     seed: int = 42,
@@ -837,6 +923,8 @@ def evaluate_forecasting(
         forecaster: Object satisfying the :class:`Forecaster` protocol —
             has ``predict(history, horizon)`` returning a ``(n_channels,
             horizon)`` array.
+        version: ``"xs"`` or ``"full"``. Required — cross-checked against
+            the dataset root's ``dataset_version.json`` marker.
         forecasting_length: Forecast horizon in hours. Defaults to 24
             (matching the paper's Track 3 sub-task).
         data_dir: Override for the dataset root. If omitted,
@@ -849,7 +937,13 @@ def evaluate_forecasting(
     """
     from openmhc._results import ForecastingResults
 
-    paths = _DatasetPaths.resolve(data_dir)
+    paths = _DatasetPaths.resolve(data_dir, version=version)
+    paths.require(
+        "hourly_trajectory",
+        "forecasting_sample_index_dir",
+        "splits_file",
+        "labels_dir",
+    )
     _ensure_labels_env(paths.labels_dir)
 
     from forecasting_evaluation.config import (
