@@ -534,6 +534,8 @@ def evaluate_imputation(
     data_dir: str | Path | None = None,
     seed: int = 42,
     version: str | None = None,
+    *,
+    bootstrap: bool | dict = False,
 ) -> ImputationResults:
     """Run imputation evaluation with a custom imputer.
 
@@ -559,6 +561,14 @@ def evaluate_imputation(
             reviewer subset). ``None`` auto-detects from the split files
             present in the data directory; if both are present the full
             dataset is preferred.
+        bootstrap: Opt-in participant-level cluster bootstrap. ``False``
+            (default) skips it. ``True`` enables with defaults
+            (``n_boot=1000, ci_level=0.95, seed=42, include_auc=True``).
+            Pass a dict to override fields, e.g.
+            ``{"n_boot": 500, "include_auc": False}``. When enabled, raw
+            (gt, pred) pairs are written to a temporary directory that is
+            cleaned up before this function returns; CI/SE fields appear as
+            sibling columns in ``ImputationResults.to_dataframe()``.
 
     Returns:
         An ImputationResults instance with per-scenario, per-split metrics.
@@ -592,6 +602,7 @@ def evaluate_imputation(
     _ensure_labels_env(paths.labels_dir)
 
     from imputation_evaluation.config import (
+        BootstrapConfig,
         DataConfig,
         EvalConfig,
         ImputationEvalConfig,
@@ -602,6 +613,19 @@ def evaluate_imputation(
         WandbConfig,
     )
     from imputation_evaluation.runner import run_eval
+
+    if bootstrap is False or bootstrap is None:
+        bootstrap_cfg = BootstrapConfig()
+    elif bootstrap is True:
+        bootstrap_cfg = BootstrapConfig(enabled=True)
+    elif isinstance(bootstrap, dict):
+        overrides = dict(bootstrap)
+        overrides.setdefault("enabled", True)
+        bootstrap_cfg = BootstrapConfig(**overrides)
+    else:
+        raise TypeError(
+            f"bootstrap must be bool or dict, got {type(bootstrap).__name__}"
+        )
 
     masking_cfg = MaskingConfig(mask_seed=seed)
     masking_cfg.random_noise.enabled = "random_noise" in scenario_list
@@ -640,23 +664,38 @@ def evaluate_imputation(
         save_pairs=False,
     )
 
-    # ``method`` is omitted: ``ImputationEvalConfig`` defaults it to a stock
-    # ``MethodConfig``, and ``run_eval`` ignores ``cfg.method`` entirely when
-    # we pass our own ``method=adapter`` below.
-    cfg = ImputationEvalConfig(
-        seed=seed,
-        data=data_cfg,
-        masking=masking_cfg,
-        output=OutputConfig(),
-        evaluation=eval_cfg,
-        visualization=VisualizationConfig(),
-        sensitivity=SensitivityConfig(),
-        wandb=WandbConfig(),
-    )
-
     adapter = _ImputerMethodAdapter(imputer)
     logger.info("Running imputation eval with custom imputer...")
-    results = run_eval(cfg, method=adapter)
+
+    def _build_cfg(output_dir: str) -> ImputationEvalConfig:
+        # ``method`` is omitted: ``ImputationEvalConfig`` defaults it to a stock
+        # ``MethodConfig``, and ``run_eval`` ignores ``cfg.method`` entirely when
+        # we pass our own ``method=adapter`` below.
+        return ImputationEvalConfig(
+            seed=seed,
+            data=data_cfg,
+            masking=masking_cfg,
+            output=OutputConfig(results_dir=output_dir),
+            evaluation=eval_cfg,
+            visualization=VisualizationConfig(),
+            sensitivity=SensitivityConfig(),
+            bootstrap=bootstrap_cfg,
+            wandb=WandbConfig(),
+        )
+
+    if bootstrap_cfg.enabled:
+        # Bootstrap requires pair files on disk; stash them in a tempdir so the
+        # user's data root stays clean. The runner writes bootstrap_metrics.json
+        # under results_dir too — also lives + dies with the tempdir.
+        import tempfile
+
+        with tempfile.TemporaryDirectory(prefix="openmhc_bootstrap_") as td:
+            cfg = _build_cfg(td)
+            results = run_eval(cfg, method=adapter)
+    else:
+        cfg = _build_cfg(OutputConfig().results_dir)
+        results = run_eval(cfg, method=adapter)
+
     return ImputationResults(scenarios=results.get("scenarios", results))
 
 

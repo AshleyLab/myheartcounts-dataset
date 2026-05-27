@@ -14,6 +14,7 @@ from omegaconf import DictConfig, OmegaConf
 
 from eval_hydra import dict_to_dataclass, register_dataclass_tree, write_run_artifacts
 from imputation_evaluation.config import (
+    BootstrapConfig,
     DataConfig,
     EvalConfig,
     ImputationEvalConfig,
@@ -49,6 +50,7 @@ def register_configs() -> None:
             "evaluation": EvalConfig,
             "visualization": VisualizationConfig,
             "sensitivity": SensitivityConfig,
+            "bootstrap": BootstrapConfig,
             "wandb": WandbConfig,
         },
     )

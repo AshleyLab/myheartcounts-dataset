@@ -107,6 +107,36 @@ Computed in `evaluation/metrics.py`.
 - **Continuous channels (0–6):** per-channel `rmse`, `mae`, `mse`, plus the normalized variants divided by training std (`normalized_rmse`, `normalized_mae`, `normalized_mse`). Aggregated as `mean_normalized_rmse` / `mean_normalized_mae` / `mean_normalized_mse` under the `"continuous"` group.
 - **Binary channels (7–18):** per-channel `balanced_accuracy` and `roc_auc`. Aggregated as `macro_balanced_accuracy` and `macro_roc_auc` under the `"binary"` group.
 
+### Bootstrap (optional)
+
+For confidence intervals and standard errors, opt into a **participant-level cluster bootstrap** (`evaluation/bootstrap.py`). Resamples are taken over users, not rows — masked positions within a user are highly correlated, so a row-level bootstrap would produce artificially tight CIs.
+
+Implementation: per-user additive sufficient statistics for RMSE / MSE / MAE / balanced accuracy (O(|U|) per iteration); a cluster-weighted Mann-Whitney U trick for ROC AUC (non-decomposable). Default `n_boot=1000`, `ci_level=0.95`, `seed=42`. Output for each metric: `{point, bootstrap_mean, bootstrap_se, ci_lo, ci_hi, n_valid_boot}`.
+
+Python API:
+
+```python
+results = openmhc.evaluate_imputation(my_imputer, bootstrap=True)
+# Or override fields:
+results = openmhc.evaluate_imputation(
+    my_imputer,
+    bootstrap={"n_boot": 500, "ci_level": 0.9, "include_auc": False},
+)
+results.to_dataframe()  # gains sibling columns *_ci_lo, *_ci_hi, *_bootstrap_se
+```
+
+When `bootstrap=True`, raw `(gt, pred)` pairs are written to a temporary directory that is cleaned up before `evaluate_imputation` returns. Disabled (`False`) is the default and preserves byte-identical results.
+
+Hydra CLI:
+
+```bash
+mhc-impute-eval method=mean bootstrap=on
+# Override individual fields:
+mhc-impute-eval method=mean bootstrap=on bootstrap.n_boot=500 bootstrap.include_auc=false
+```
+
+Under the Hydra CLI, the runner forces `save_pairs=true` when `bootstrap.enabled=true`, writes the per-channel structured CI dict to `<output.results_dir>/bootstrap_metrics.json`, and merges sibling fields (`<metric>_ci_lo`, `<metric>_ci_hi`, `<metric>_bootstrap_se`, `<metric>_bootstrap_mean`, `<metric>_n_valid_boot`) into the existing `results.json`.
+
 ### Results object
 
 `ImputationResults.scenarios` is `{scenario: {split: {group: {metric: value}}}}`. Useful methods:
@@ -168,6 +198,7 @@ Config presets live at `configs/imputation/` (repo root), composed via the
 | `evaluation/` | `default` | `compute_metrics`, `save_pairs` |
 | `visualization/` | `off`, `on` | Visualization toggle (see Known gaps below) |
 | `sensitivity/` | `off`, `on` | Demographic subgroup metrics |
+| `bootstrap/` | `off`, `on` | Participant-level cluster bootstrap CIs (see Bootstrap section above) |
 | `wandb/` | `off`, `on` | W&B logging |
 
 The schema is the dataclass tree in [`config.py`](config.py) (`ImputationEvalConfig`); Hydra validates every override against it.

@@ -17,14 +17,17 @@ pass ``subgroup_mappings`` if they want).
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import TYPE_CHECKING
 
 import numpy as np
 
+from pathlib import Path
+
 from imputation_evaluation.data.data_loader import ImputationDataLoader
 from imputation_evaluation.evaluation.evaluator import ImputationEvaluator
-from imputation_evaluation.masking import MaskCacheGenerator, create_mask_generators
+from imputation_evaluation.masking import MaskCache, MaskCacheGenerator, create_mask_generators
 
 if TYPE_CHECKING:
     from imputation_evaluation.config import ImputationEvalConfig
@@ -71,22 +74,31 @@ def run_eval(
     scenario_names = [g.name for g in generators]
     logger.info("Created %d mask generators: %s", len(generators), scenario_names)
 
-    # 3. Generate masks (no pre-cached masks supported in this entry point).
-    logger.info("Generating masks...")
-    mask_generator = MaskCacheGenerator(
-        hf_dataset=loaded_data.hf_dataset,
-        zero_to_nan_transform=loaded_data.zero_to_nan_transform,
-        num_workers=config.data.num_workers,
-        batch_size=config.data.batch_size,
-    )
-    mask_cache = mask_generator.generate(
-        split_indices={
-            "val": loaded_data.split_indices["val"],
-            "test": loaded_data.split_indices["test"],
-        },
-        generators=generators,
-        base_seed=config.masking.mask_seed,
-    )
+    # 3. Load pre-computed masks or generate fresh ones.
+    if config.masking.masks_file:
+        masks_path = Path(config.masking.masks_file)
+        logger.info("Loading pre-computed masks from %s...", masks_path)
+        mask_cache = MaskCache.load(
+            masks_dir=masks_path,
+            scenarios=scenario_names,
+            splits=["val", "test"],
+        )
+    else:
+        logger.info("Generating masks...")
+        mask_generator = MaskCacheGenerator(
+            hf_dataset=loaded_data.hf_dataset,
+            zero_to_nan_transform=loaded_data.zero_to_nan_transform,
+            num_workers=config.data.num_workers,
+            batch_size=config.data.batch_size,
+        )
+        mask_cache = mask_generator.generate(
+            split_indices={
+                "val": loaded_data.split_indices["val"],
+                "test": loaded_data.split_indices["test"],
+            },
+            generators=generators,
+            base_seed=config.masking.mask_seed,
+        )
 
     # 4. Fit the method on training data.
     logger.info("Fitting %s on training data...", method.name)
@@ -124,16 +136,26 @@ def run_eval(
         applicable_indices=applicable_indices,
     )
 
-    # 7. Run evaluation.
+    # 7. Run evaluation. When bootstrap is enabled, force pair-saving on
+    # because the cluster bootstrap operates post-hoc against pair files.
+    bootstrap_cfg = getattr(config, "bootstrap", None)
+    bootstrap_enabled = bool(bootstrap_cfg is not None and bootstrap_cfg.enabled)
+    save_pairs = bootstrap_enabled
+    pairs_dir: Path | None = None
+    if save_pairs:
+        pairs_dir = Path(config.output.results_dir) / "pairs"
+        logger.info(
+            "Bootstrap enabled: forcing save_pairs=True (pairs_dir=%s)",
+            pairs_dir,
+        )
+
     evaluator = ImputationEvaluator(
         scenarios=scenario_names,
         num_eval_workers=config.data.num_eval_workers,
-        include_ks=config.evaluation.include_ks,
-        include_wasserstein=config.evaluation.include_wasserstein,
         n_days=config.data.n_days,
         compute_metrics=config.evaluation.compute_metrics,
-        save_pairs=False,  # public API doesn't need raw pairs on disk
-        pairs_dir=None,
+        save_pairs=save_pairs,
+        pairs_dir=pairs_dir,
     )
     results = evaluator.run(
         val_loader=eval_val_loader,
@@ -149,9 +171,119 @@ def run_eval(
         zero_to_nan_transform=loaded_data.zero_to_nan_transform,
     )
 
+    if bootstrap_enabled:
+        _run_bootstrap(
+            results=results,
+            pairs_dir=pairs_dir,
+            results_dir=Path(config.output.results_dir),
+            bootstrap_cfg=bootstrap_cfg,
+        )
+
     results["config"] = {
         "method": method.name,
         "seed": config.seed,
         "mask_seed": config.masking.mask_seed,
     }
     return results
+
+
+# Suffixes appended to each scalar metric when bootstrap is enabled.
+_BOOTSTRAP_FIELDS = ("bootstrap_mean", "bootstrap_se", "ci_lo", "ci_hi", "n_valid_boot")
+
+
+def _merge_bootstrap_entry(target: dict, metric_name: str, entry: dict) -> None:
+    """Merge bootstrap entry ``{point, bootstrap_mean, ...}`` as sibling fields.
+
+    ``target`` is e.g. ``results["scenarios"][s]["test"]["per_channel"]["ch_0"]``;
+    ``entry`` is the dict returned by ``bootstrap_split``'s ``_entry``. Adds
+    ``{metric}_bootstrap_mean``, ``{metric}_bootstrap_se``, ``{metric}_ci_lo``,
+    ``{metric}_ci_hi``, ``{metric}_n_valid_boot`` next to the existing scalar.
+    """
+    for field in _BOOTSTRAP_FIELDS:
+        if field in entry:
+            target[f"{metric_name}_{field}"] = entry[field]
+
+
+def _merge_split_bootstrap(split_results: dict, split_bootstrap: dict) -> None:
+    """Merge ``bootstrap_split`` output into a per-split results dict (sibling fields).
+
+    Both inputs share the same per_channel / continuous / binary layout.
+    """
+    boot_per_ch = split_bootstrap.get("per_channel", {})
+    for ch_key, ch_entry in split_results.get("per_channel", {}).items():
+        boot_ch = boot_per_ch.get(ch_key)
+        if not isinstance(boot_ch, dict):
+            continue
+        for metric_name, value in boot_ch.items():
+            if isinstance(value, dict) and "point" in value:
+                _merge_bootstrap_entry(ch_entry, metric_name, value)
+
+    for group_name in ("continuous", "binary"):
+        boot_group = split_bootstrap.get(group_name, {})
+        target_group = split_results.get(group_name, {})
+        for metric_name, value in boot_group.items():
+            if isinstance(value, dict) and "point" in value:
+                _merge_bootstrap_entry(target_group, metric_name, value)
+
+
+def _run_bootstrap(
+    *,
+    results: dict,
+    pairs_dir: Path,
+    results_dir: Path,
+    bootstrap_cfg,
+) -> None:
+    """Run participant-level bootstrap and merge CIs into ``results``.
+
+    Side effects:
+        - Mutates ``results["scenarios"][s][split]`` to add ``*_ci_lo``,
+          ``*_ci_hi``, ``*_bootstrap_se``, etc. fields.
+        - Writes the structured per-channel form to ``bootstrap_metrics.json``
+          (path from ``bootstrap_cfg.output_path``, default ``<results_dir>``).
+    """
+    from imputation_evaluation.evaluation.bootstrap import bootstrap_pairs_dir
+
+    logger.info(
+        "Running participant-level bootstrap (n_boot=%d, ci_level=%g, seed=%d)",
+        bootstrap_cfg.n_boot,
+        bootstrap_cfg.ci_level,
+        bootstrap_cfg.seed,
+    )
+    scenario_names = list(results.get("scenarios", {}).keys())
+    boot = bootstrap_pairs_dir(
+        pairs_dir,
+        scenarios=scenario_names or None,
+        n_boot=bootstrap_cfg.n_boot,
+        ci_level=bootstrap_cfg.ci_level,
+        seed=bootstrap_cfg.seed,
+        include_auc=bootstrap_cfg.include_auc,
+    )
+
+    for scenario, split_map in boot.get("scenarios", {}).items():
+        scenario_results = results.get("scenarios", {}).get(scenario)
+        if not isinstance(scenario_results, dict):
+            continue
+        for split, split_boot in split_map.items():
+            split_results = scenario_results.get(split)
+            if isinstance(split_results, dict) and isinstance(split_boot, dict):
+                _merge_split_bootstrap(split_results, split_boot)
+
+    out_path = (
+        Path(bootstrap_cfg.output_path)
+        if bootstrap_cfg.output_path
+        else results_dir / "bootstrap_metrics.json"
+    )
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(boot, indent=2, default=_bootstrap_json_default))
+    logger.info("Wrote bootstrap metrics to %s", out_path)
+    results["bootstrap"] = boot
+
+
+def _bootstrap_json_default(obj):
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    if isinstance(obj, np.generic):
+        return obj.item()
+    if isinstance(obj, Path):
+        return str(obj)
+    raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
