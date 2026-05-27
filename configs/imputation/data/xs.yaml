@@ -3,6 +3,7 @@
 # (``~/.cache/openmhc/data/processed/daily_hf``). Override
 # ``data.daily_hf_dir`` on the CLI when the dataset lives elsewhere.
 daily_hf_dir: ${oc.env:MHC_DATA_DIR,${oc.env:HOME}/.cache/openmhc/data}/processed/daily_hf
+version: xs
 max_samples_per_split: 64
 batch_size: 64
 num_workers: 0

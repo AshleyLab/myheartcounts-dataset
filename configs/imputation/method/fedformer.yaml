@@ -15,6 +15,6 @@ pypots:
   n_heads: 4
   moving_avg_window_size: 25
   dropout: 0.1
-  version: Fourier
+  variant: Fourier   # FEDformer basis flavor ("Fourier" or "Wavelets")
   modes: 32
   mode_select: random
