@@ -34,8 +34,6 @@ Transform tasks into verifiable goals:
 - “Fix the bug” → “Reproduce it in a test, then fix”
 - “Refactor X” → “Ensure tests pass before and after”
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
 ## Project Overview
 
 **OpenMHC** is a public evaluation API and leaderboard for the MyHeartCounts wearable health benchmark (NeurIPS 2026). It evaluates models across three tracks:

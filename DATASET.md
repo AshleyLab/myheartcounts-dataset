@@ -9,22 +9,26 @@ The MyHeartCounts (MHC) wearable benchmark dataset is hosted separately from thi
 
 ## Download
 
-The Python API wraps the Dataverse access API — no Dataverse account needed for public datasets:
+The Python API wraps the Dataverse access API — no Dataverse account needed for public datasets. Each version must live under its **own** dataset root: the strict resolver cross-checks the root's `dataset_version.json` marker against the `version=` you pass to `evaluate_*`, so xs and full **cannot share a directory**.
 
 ```python
 import openmhc
 
 # XS subset (recommended first — 593 users, ~1.9 GB)
-openmhc.download_dataset(version="xs", dest="~/.cache/openmhc/data")
+openmhc.download_dataset(version="xs", dest="~/.cache/openmhc/data-xs")
 
-# Full dataset (when published — 11,894 users, ~38 GB)
-openmhc.download_dataset(version="full", dest="~/.cache/openmhc/data")
+# Full dataset (when published — 11,894 users, ~38 GB) — distinct root
+openmhc.download_dataset(version="full", dest="~/.cache/openmhc/data-full")
 ```
 
-OpenMHC no longer picks a dataset cache path implicitly. Pass `dest=` or set `MHC_DATA_DIR` first. You can still use `~/.cache/openmhc/data`, but it must be explicit.
+`download_dataset` writes a `dataset_version.json` marker into `dest` so the eval API can verify it later.
+
+OpenMHC never picks a dataset path implicitly. Pass `dest=` (download) / `data_dir=` (eval) or set `MHC_DATA_DIR` first:
 
 ```bash
-export MHC_DATA_DIR=/path/to/your/data
+# Point the eval API at whichever version you want to use
+export MHC_DATA_DIR=~/.cache/openmhc/data-xs    # XS for quickstart
+export MHC_DATA_DIR=~/.cache/openmhc/data-full  # Full for leaderboard submissions
 ```
 
 ### Restricted access
@@ -39,31 +43,23 @@ Or set the `DATAVERSE_API_TOKEN` environment variable. Get a token at [your Data
 
 ### Manual download
 
-If you'd rather not use the helper (corporate proxies, air-gapped clusters), use `curl`:
-
-```bash
-# XS subset
-curl -L -o openmhc-xs.zip \
-  "https://dataverse.harvard.edu/api/access/dataset/:persistentId/?persistentId=doi:10.7910/DVN/ZYMJF6"
-mkdir -p ~/.cache/openmhc/data
-unzip openmhc-xs.zip -d ~/.cache/openmhc/data
-```
-
-For restricted datasets, add `-H "X-Dataverse-key: <your-token>"`.
+If you'd rather not use the helper (corporate proxies, air-gapped clusters), see [`docs/manual-dataset-setup.md`](docs/manual-dataset-setup.md) for the full per-version recipe (curl + extract + write marker).
 
 ## Layout
 
-After download, `$MHC_DATA_DIR` should look like:
+Each dataset root has the same internal layout. Pick a path per version — e.g. `~/.cache/openmhc/data-xs/` and `~/.cache/openmhc/data-full/` — and point `MHC_DATA_DIR` at whichever you want to use:
 
 ```
 $MHC_DATA_DIR/
+├── dataset_version.json          # marker — version + n_users (required)
 ├── labels/                       # Track 1
 │   ├── last_labels.json          # participant-level outcome labels
 │   ├── context_labels.json       # participant-level covariates
 │   ├── label_validity.json       # which (user, label) pairs pass validity
 │   └── clip_dates.json           # per-task date clipping (longitudinal labels — optional)
-├── splits/
-│   └── sharable_users_seed42_2026.json   # canonical user-level splits
+├── splits/                       # one file, named per version:
+│   ├── sharable_users_seed42_2026.json       # full (11,894 users)
+│   └── sharable_users_seed42_2026_xs.json    # xs   (   593 users)
 ├── processed/                    # Tracks 1 + 2
 │   ├── daily_hourly_hf/          # daily ×24h sensor tensors (HuggingFace Arrow) — Track 1
 │   ├── daily_hf/                 # daily ×1440min sensor tensors (HuggingFace Arrow) — Track 2
@@ -80,7 +76,20 @@ $MHC_DATA_DIR/
     └── day_remain_mask.json      # per-user retain mask
 ```
 
-The eval API derives every large payload above from a single dataset root, resolved from an explicit ``data_dir=`` / ``dest=`` argument or the ``MHC_DATA_DIR`` env var. If neither is provided, ``openmhc.data_dir()`` and the public evaluation APIs raise immediately instead of silently falling back to `~/.cache/openmhc/data`. If your dataset uses a different layout, the simplest fix is to symlink or rearrange the unpacked files to match.
+The eval API derives every large payload above from a single dataset root, resolved from an explicit `data_dir=` / `dest=` argument or the `MHC_DATA_DIR` env var. If neither is provided, `openmhc.data_dir()` and the public evaluation APIs raise immediately instead of silently falling back to a default location. If your dataset uses a different layout, the simplest fix is to symlink or rearrange the unpacked files to match.
+
+### The `dataset_version.json` marker
+
+Every dataset root must contain a `dataset_version.json` marker. `download_dataset` writes one automatically; for a hand-assembled root, write one with:
+
+```python
+import openmhc
+openmhc.write_dataset_marker("~/.cache/openmhc/data-xs", version="xs")     # or "full"
+```
+
+The marker pins the version and expected user count so the resolver can fail loudly if a directory ever ends up holding mismatched contents (e.g. an xs split file renamed to the canonical full name). `evaluate_*` reads this marker and cross-checks it against the `version=` you pass, so a wrong root is rejected immediately rather than producing a silently-wrong result.
+
+### Bundled vs. dataset-root files
 
 The schema-only registry files (`label_types.json`, `ordinal_dictionary.json`, `validity_config.json`) ship with this code repo at `data/labels/` and remain the default for bundled metadata. Large JSON label payloads such as `last_labels.json`, `context_labels.json`, `enrollment_info.json`, `label_validity.json`, and `healthkit_daily.json` must come from your explicit dataset root unless you override them with per-file env vars.
 

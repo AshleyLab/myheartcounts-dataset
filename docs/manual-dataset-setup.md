@@ -2,7 +2,15 @@
 
 Use this guide if you cannot use `openmhc.download_dataset()` — for example, on air-gapped clusters, behind a corporate proxy, or when you already have the raw Dataverse bundle on disk.
 
-Both dataset versions share the same final layout under one explicit root directory. Set `MHC_DATA_DIR` first or substitute your chosen path directly in the commands below. `~/.cache/openmhc/data` is still a valid choice, but it is no longer implicit.
+**One root per version.** Every OpenMHC dataset root must contain a `dataset_version.json` marker declaring which release lives there (`xs` or `full`), and the public eval API cross-checks that marker against the `version=` you pass. The two versions therefore cannot share a directory — put each under its own root and point `MHC_DATA_DIR` (or `data_dir=`) at whichever one you want to use.
+
+Recommended layout for keeping both versions side by side:
+
+```
+~/.cache/openmhc/
+├── data-xs/      # 593-user reviewer subset
+└── data-full/    # 11,894-user paper release
+```
 
 ---
 
@@ -26,7 +34,7 @@ curl -L -o openmhc-xs.zip \
 ### Step 2 — Extract the outer ZIP
 
 ```bash
-CACHE="${MHC_DATA_DIR:-$HOME/.cache/openmhc/data}"
+CACHE="$HOME/.cache/openmhc/data-xs"
 mkdir -p "$CACHE"
 unzip openmhc-xs.zip -d "$CACHE"
 ```
@@ -82,6 +90,14 @@ If `normalization_stats.json` landed at the cache root rather than in `processed
   mv "$CACHE/normalization_stats.json" "$CACHE/processed/"
 ```
 
+### Step 7 — Write the dataset version marker
+
+```bash
+python -c "import openmhc; openmhc.write_dataset_marker('$CACHE', version='xs')"
+```
+
+This drops `dataset_version.json` at the root. Without it the eval API will refuse to resolve this root.
+
 ---
 
 ## Full version (~38 GB, 11,894 users)
@@ -101,7 +117,7 @@ curl -L -o openmhc-full.zip \
 ### Step 2 — Extract the outer ZIP
 
 ```bash
-CACHE="${MHC_DATA_DIR:-$HOME/.cache/openmhc/data}"
+CACHE="$HOME/.cache/openmhc/data-full"
 mkdir -p "$CACHE"
 unzip openmhc-full.zip -d "$CACHE"
 ```
@@ -135,18 +151,40 @@ cat "$CACHE/archives/hdf5_sharable_2026_full.tar.gz.part-"* | tar -xz -C "$CACHE
 # Hourly trajectories — single archive → hourly_trajectory/
 tar -xzf "$CACHE/archives/hourly_trajectory_full.tar.gz" -C "$CACHE/"
 
-# Per-minute trajectories — 10 parts → minute_trajectory/
+# Per-minute trajectories — 10 parts → minute_trajectory/  (optional;
+# not used by the public evaluate_* API — safe to skip if disk is tight)
 cat "$CACHE/archives/minute_trajectory_full.tar.gz.part-"* | tar -xz -C "$CACHE/"
+```
+
+Extracted footprint is roughly 100–500 GB depending on whether you include `minute_trajectory/`. Only `daily_hf/`, `daily_hourly_hf/`, and `hourly_trajectory/` are read by the public eval API; the others mirror the canonical Dataverse layout.
+
+### Step 5 — Write the dataset version marker
+
+```bash
+python -c "import openmhc; openmhc.write_dataset_marker('$CACHE', version='full')"
+```
+
+If you want the marker to also pin the row count of `processed/daily_hf` (cheap extra check the resolver will validate):
+
+```bash
+python -c "
+import openmhc
+from datasets import load_from_disk
+root = '$CACHE'
+n = len(load_from_disk(f'{root}/processed/daily_hf'))
+openmhc.write_dataset_marker(root, version='full', daily_hf_rows=n)
+"
 ```
 
 ---
 
 ## Expected layout after setup
 
-After either version, `$MHC_DATA_DIR` should look like:
+After either version, the chosen cache root should look like:
 
 ```
-$MHC_DATA_DIR/
+$CACHE/
+├── dataset_version.json                       # marker — REQUIRED
 ├── labels/
 │   ├── last_labels.json
 │   ├── context_labels.json
@@ -154,40 +192,48 @@ $MHC_DATA_DIR/
 │   ├── clip_dates.json
 │   └── ...
 ├── splits/
-│   ├── sharable_users_seed42_2026_xs.json    # XS split (593 users)
-│   └── sharable_users_seed42_2026.json       # Full split (11,894 users)
+│   └── sharable_users_seed42_2026.json        # full root
+│       (or sharable_users_seed42_2026_xs.json  for xs root)
 ├── processed/
-│   ├── daily_hf/                             # Track 2 — 1440-min tensors (HuggingFace Arrow)
-│   ├── daily_hourly_hf/                      # Track 1 — 24-hour tensors (HuggingFace Arrow)
+│   ├── daily_hf/                              # Track 2 — 1440-min tensors (HuggingFace Arrow)
+│   ├── daily_hourly_hf/                       # Track 1 — 24-hour tensors (HuggingFace Arrow)
 │   ├── normalization_stats.json
 │   ├── normalization_stats_hourly.json
 │   ├── window_index_w7_s7_d5.parquet
 │   ├── daily_labels_lookup.parquet
 │   └── weekly_labels_lookup_stride7.parquet
-├── forecasting_sample_index/                 # Track 3
+├── forecasting_sample_index/                  # Track 3
 │   ├── sample_index_raw.json
 │   └── ...
-├── hourly_trajectory/                        # Track 3
-├── minute_trajectory/                        # Track 3
-└── hdf5/                                     # HDF5 copies of sensor data
+├── hourly_trajectory/                         # Track 3
+├── minute_trajectory/                         # Track 3 — optional
+└── hdf5/                                      # HDF5 copies of sensor data
 ```
 
 ## Pointing the API at your data directory
 
+Point `MHC_DATA_DIR` at the version you want to run against:
+
 ```bash
-export MHC_DATA_DIR=/path/to/your/data
+export MHC_DATA_DIR=~/.cache/openmhc/data-xs    # for xs eval / quickstart
+export MHC_DATA_DIR=~/.cache/openmhc/data-full  # for full / leaderboard
 ```
 
-Or pass it explicitly:
+Or pass it explicitly per call (and remember to pass `version=`, which the API now requires):
 
 ```python
 import openmhc
-results = openmhc.evaluate_imputation(MyImputer(), data_dir="/path/to/your/data")
+results = openmhc.evaluate_imputation(
+    MyImputer(),
+    version="full",
+    data_dir="~/.cache/openmhc/data-full",
+)
 ```
 
 `openmhc.data_dir()` returns the explicit root resolved from `data_dir=` or `MHC_DATA_DIR`, so you can verify the lookup:
 
 ```python
 import openmhc
-print(openmhc.data_dir())   # → /path/to/your/data
+print(openmhc.data_dir())                                # → /path/to/your/data
+print(openmhc.read_dataset_marker(openmhc.data_dir()))   # → {'version': 'full', ...}
 ```
