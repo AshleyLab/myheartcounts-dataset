@@ -48,9 +48,18 @@ def register_configs() -> None:
 register_configs()
 
 
+# Resolve ``configs/forecasting/`` to an absolute path at import time so the
+# console-script entry point (``mhc-forecast-eval``) works the same as
+# ``python -m forecasting_evaluation.hydra.cli``. Hydra's relative-path
+# resolution gets confused by the entry-point wrapper, so we sidestep it.
+# Layout: this file lives at ``src/forecasting_evaluation/hydra/cli.py``;
+# ``parents[3]`` is the repo root.
+_CONFIG_PATH = str(Path(__file__).resolve().parents[3] / "configs" / "forecasting")
+
+
 @hydra.main(
     version_base="1.3",
-    config_path="../../../configs/forecasting",
+    config_path=_CONFIG_PATH,
     config_name="eval",
 )
 def main(cfg: DictConfig) -> dict[str, Any]:
