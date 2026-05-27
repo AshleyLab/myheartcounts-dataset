@@ -13,7 +13,6 @@ from pathlib import Path
 import numpy as np
 import pyarrow.compute as pc
 import pyarrow.parquet as pq
-from scipy.stats import ks_2samp, wasserstein_distance
 from sklearn.metrics import balanced_accuracy_score, roc_auc_score
 
 from data.processing.hf_config import CONTINUOUS_CHANNEL_INDICES, N_CHANNELS
@@ -28,8 +27,6 @@ def _channel_file(pairs_dir: Path, ch: int) -> Path:
 def aggregate_pairs(
     pairs_path: str | Path,
     channel_stds: np.ndarray,
-    include_ks: bool = True,
-    include_wasserstein: bool = True,
 ) -> dict:
     """Compute metrics from saved per-channel pair Parquet files.
 
@@ -41,8 +38,6 @@ def aggregate_pairs(
             Also accepts a file path for backward compatibility with old
             ``pairs.parquet`` format (logs a warning).
         channel_stds: Per-channel standard deviations for normalization, shape (C,).
-        include_ks: Whether to compute KS statistic for continuous channels.
-        include_wasserstein: Whether to compute Wasserstein distance.
 
     Returns:
         Metrics dict matching the format of ``MetricAccumulator.compute()``.
@@ -67,7 +62,7 @@ def aggregate_pairs(
                 "Found old-format pairs.parquet. Re-run imputation eval to generate "
                 "per-channel files for lower memory usage."
             )
-            return _aggregate_legacy(old_file, channel_stds, include_ks, include_wasserstein)
+            return _aggregate_legacy(old_file, channel_stds)
         return {"error": "pairs_file_not_found", "n_samples": 0}
 
     metrics = {
@@ -80,8 +75,6 @@ def aggregate_pairs(
     normalized_rmses = []
     normalized_mses = []
     normalized_maes = []
-    ks_statistics = []
-    wasserstein_distances = []
     binary_balanced_accs = []
     binary_roc_aucs = []
     unique_samples: set[int] = set()
@@ -139,26 +132,6 @@ def aggregate_pairs(
             normalized_mses.append(normalized_mse)
             normalized_maes.append(normalized_mae)
 
-            if include_ks and len(gt_ch) >= 2:
-                try:
-                    ks_result = ks_2samp(gt_ch, pred_ch, nan_policy="omit")
-                    ch_metrics["ks_statistic"] = float(ks_result.statistic)
-                    ks_statistics.append(ks_result.statistic)
-                except Exception:
-                    ch_metrics["ks_statistic"] = float("nan")
-            elif include_ks:
-                ch_metrics["ks_statistic"] = float("nan")
-
-            if include_wasserstein and len(gt_ch) >= 1:
-                try:
-                    wd = wasserstein_distance(gt_ch, pred_ch)
-                    ch_metrics["wasserstein_distance"] = float(wd)
-                    wasserstein_distances.append(wd)
-                except Exception:
-                    ch_metrics["wasserstein_distance"] = float("nan")
-            elif include_wasserstein:
-                ch_metrics["wasserstein_distance"] = float("nan")
-
         else:
             # Binary channel — gt is bool in Parquet
             gt_bool = gt_col.to_numpy()
@@ -206,16 +179,6 @@ def aggregate_pairs(
         metrics["continuous"]["mean_normalized_mae"] = float("nan")
         metrics["continuous"]["n_channels"] = 0
 
-    if ks_statistics:
-        metrics["continuous"]["mean_ks_statistic"] = float(np.mean(ks_statistics))
-    else:
-        metrics["continuous"]["mean_ks_statistic"] = float("nan")
-
-    if wasserstein_distances:
-        metrics["continuous"]["mean_wasserstein_distance"] = float(np.mean(wasserstein_distances))
-    else:
-        metrics["continuous"]["mean_wasserstein_distance"] = float("nan")
-
     # Aggregate binary
     if binary_balanced_accs:
         metrics["binary"]["macro_balanced_accuracy"] = float(np.mean(binary_balanced_accs))
@@ -236,8 +199,6 @@ def aggregate_pairs_by_subgroup(
     pairs_path: str | Path,
     channel_stds: np.ndarray,
     subgroup_mapping: dict[int, dict[str, str]],
-    include_ks: bool = False,
-    include_wasserstein: bool = False,
 ) -> dict[str, dict[str, dict]]:
     """Compute per-subgroup metrics from saved per-channel pair Parquet files.
 
@@ -250,8 +211,6 @@ def aggregate_pairs_by_subgroup(
         channel_stds: Per-channel standard deviations for normalization, shape ``(C,)``.
         subgroup_mapping: Maps ``sample_idx`` to attribute dicts,
             e.g. ``{0: {"age_group": "30-39", "sex": "male"}, ...}``.
-        include_ks: Whether to compute KS statistic for continuous channels.
-        include_wasserstein: Whether to compute Wasserstein distance.
 
     Returns:
         ``{attr: {group_name: metrics_dict}}`` where ``metrics_dict``
@@ -339,8 +298,6 @@ def aggregate_pairs_by_subgroup(
             normalized_rmses = []
             normalized_mses = []
             normalized_maes = []
-            ks_statistics = []
-            wasserstein_distances = []
             binary_balanced_accs = []
             binary_roc_aucs = []
 
@@ -376,26 +333,6 @@ def aggregate_pairs_by_subgroup(
                     normalized_rmses.append(normalized_rmse)
                     normalized_mses.append(normalized_mse)
                     normalized_maes.append(normalized_mae)
-
-                    if include_ks and len(gt_ch) >= 2:
-                        try:
-                            ks_result = ks_2samp(gt_ch, pred_ch, nan_policy="omit")
-                            ch_metrics["ks_statistic"] = float(ks_result.statistic)
-                            ks_statistics.append(ks_result.statistic)
-                        except Exception:
-                            ch_metrics["ks_statistic"] = float("nan")
-                    elif include_ks:
-                        ch_metrics["ks_statistic"] = float("nan")
-
-                    if include_wasserstein and len(gt_ch) >= 1:
-                        try:
-                            wd = wasserstein_distance(gt_ch, pred_ch)
-                            ch_metrics["wasserstein_distance"] = float(wd)
-                            wasserstein_distances.append(wd)
-                        except Exception:
-                            ch_metrics["wasserstein_distance"] = float("nan")
-                    elif include_wasserstein:
-                        ch_metrics["wasserstein_distance"] = float("nan")
 
                 else:
                     gt_binary = gt_ch.astype(np.int32) if gt_ch.dtype == bool else (gt_ch > 0.5).astype(np.int32)
@@ -437,18 +374,6 @@ def aggregate_pairs_by_subgroup(
                 metrics["continuous"]["mean_normalized_mae"] = float("nan")
                 metrics["continuous"]["n_channels"] = 0
 
-            if ks_statistics:
-                metrics["continuous"]["mean_ks_statistic"] = float(np.mean(ks_statistics))
-            else:
-                metrics["continuous"]["mean_ks_statistic"] = float("nan")
-
-            if wasserstein_distances:
-                metrics["continuous"]["mean_wasserstein_distance"] = float(
-                    np.mean(wasserstein_distances)
-                )
-            else:
-                metrics["continuous"]["mean_wasserstein_distance"] = float("nan")
-
             # Aggregate binary
             if binary_balanced_accs:
                 metrics["binary"]["macro_balanced_accuracy"] = float(
@@ -472,8 +397,6 @@ def aggregate_pairs_by_subgroup(
 def _aggregate_legacy(
     pairs_file: Path,
     channel_stds: np.ndarray,
-    include_ks: bool,
-    include_wasserstein: bool,
 ) -> dict:
     """Backward-compatible aggregation from old single-file pairs.parquet."""
     table = pq.read_table(pairs_file)
@@ -498,8 +421,6 @@ def _aggregate_legacy(
     normalized_rmses = []
     normalized_mses = []
     normalized_maes = []
-    ks_statistics = []
-    wasserstein_dists = []
     binary_balanced_accs = []
     binary_roc_aucs = []
 
@@ -536,26 +457,6 @@ def _aggregate_legacy(
             normalized_rmses.append(normalized_rmse)
             normalized_mses.append(normalized_mse)
             normalized_maes.append(normalized_mae)
-
-            if include_ks and len(gt_ch) >= 2:
-                try:
-                    ks_result = ks_2samp(gt_ch, pred_ch, nan_policy="omit")
-                    ch_metrics["ks_statistic"] = float(ks_result.statistic)
-                    ks_statistics.append(ks_result.statistic)
-                except Exception:
-                    ch_metrics["ks_statistic"] = float("nan")
-            elif include_ks:
-                ch_metrics["ks_statistic"] = float("nan")
-
-            if include_wasserstein and len(gt_ch) >= 1:
-                try:
-                    wd = wasserstein_distance(gt_ch, pred_ch)
-                    ch_metrics["wasserstein_distance"] = float(wd)
-                    wasserstein_dists.append(wd)
-                except Exception:
-                    ch_metrics["wasserstein_distance"] = float("nan")
-            elif include_wasserstein:
-                ch_metrics["wasserstein_distance"] = float("nan")
 
         else:
             gt_binary = (gt_ch > 0.5).astype(int)
@@ -595,16 +496,6 @@ def _aggregate_legacy(
         metrics["continuous"]["mean_normalized_mse"] = float("nan")
         metrics["continuous"]["mean_normalized_mae"] = float("nan")
         metrics["continuous"]["n_channels"] = 0
-
-    if ks_statistics:
-        metrics["continuous"]["mean_ks_statistic"] = float(np.mean(ks_statistics))
-    else:
-        metrics["continuous"]["mean_ks_statistic"] = float("nan")
-
-    if wasserstein_dists:
-        metrics["continuous"]["mean_wasserstein_distance"] = float(np.mean(wasserstein_dists))
-    else:
-        metrics["continuous"]["mean_wasserstein_distance"] = float("nan")
 
     if binary_balanced_accs:
         metrics["binary"]["macro_balanced_accuracy"] = float(np.mean(binary_balanced_accs))

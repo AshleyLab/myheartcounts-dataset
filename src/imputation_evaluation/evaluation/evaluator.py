@@ -39,8 +39,6 @@ _worker_method: ImputationMethod | None = None
 _worker_scenarios: list[str] | None = None
 _worker_channel_stds: np.ndarray | None = None
 _worker_split_name: str | None = None
-_worker_include_ks: bool = True
-_worker_include_wasserstein: bool = True
 _worker_subgroup_mapping: dict[int, dict[str, str]] | None = None
 _worker_n_days: int = 1
 _worker_window_descriptors: list[list[int]] | None = None
@@ -56,26 +54,20 @@ class MetricAccumulator:
     """Accumulator for incremental metric computation.
 
     Computes metrics incrementally to avoid storing full arrays in memory.
-    - Continuous channels: running sums for global RMSE/MAE; lists for per-sample RMSE/MAE/KS.
+    - Continuous channels: running sums for global RMSE/MAE; lists for per-sample RMSE/MAE.
     - Binary channels: stores only masked (gt, pred) pairs per channel (for now).
     """
 
     def __init__(
         self,
         channel_stds: np.ndarray,
-        include_ks: bool = True,
-        include_wasserstein: bool = True,
     ):
         """Initialize empty accumulator.
 
         Args:
             channel_stds: Per-channel standard deviations for normalization.
-            include_ks: If True, compute KS statistic (per-sample).
-            include_wasserstein: If True, compute Wasserstein distance (per-sample).
         """
         self.channel_stds = channel_stds
-        self.include_ks = include_ks
-        self.include_wasserstein = include_wasserstein
         self.n_applicable: int = 0
         self.n_total: int = 0
 
@@ -90,8 +82,6 @@ class MetricAccumulator:
             "rmse": {ch: [] for ch in CONTINUOUS_CHANNEL_INDICES},
             "mse": {ch: [] for ch in CONTINUOUS_CHANNEL_INDICES},
             "mae": {ch: [] for ch in CONTINUOUS_CHANNEL_INDICES},
-            "ks_statistic": {ch: [] for ch in CONTINUOUS_CHANNEL_INDICES},
-            "wasserstein_distance": {ch: [] for ch in CONTINUOUS_CHANNEL_INDICES},
         }
 
         # Binary channel accumulators (channels 7-18)
@@ -143,16 +133,10 @@ class MetricAccumulator:
                     ground_truth[:, ch, :],
                     imputed[:, ch, :],
                     artificial_masks[:, ch, :],
-                    include_ks=self.include_ks,
-                    include_wasserstein=self.include_wasserstein,
                 )
                 self.per_sample_metrics["rmse"][ch].extend(batch_metrics["rmse"])
                 self.per_sample_metrics["mse"][ch].extend(batch_metrics["mse"])
                 self.per_sample_metrics["mae"][ch].extend(batch_metrics["mae"])
-                self.per_sample_metrics["ks_statistic"][ch].extend(batch_metrics["ks_statistic"])
-                self.per_sample_metrics["wasserstein_distance"][ch].extend(
-                    batch_metrics["wasserstein_distance"]
-                )
 
             else:
                 # Binary channel: store masked values for later
@@ -177,7 +161,7 @@ class MetricAccumulator:
         self._cont_counts += other._cont_counts
 
         # Merge per-sample metrics
-        for metric in ["rmse", "mse", "mae", "ks_statistic", "wasserstein_distance"]:
+        for metric in ["rmse", "mse", "mae"]:
             for ch in CONTINUOUS_CHANNEL_INDICES:
                 self.per_sample_metrics[metric][ch].extend(other.per_sample_metrics[metric][ch])
 
@@ -204,8 +188,6 @@ class MetricAccumulator:
         normalized_rmses = []
         normalized_mses = []
         normalized_maes = []
-        per_sample_ks_means = []
-        per_sample_wasserstein_means = []
         binary_balanced_accs = []
         binary_roc_aucs = []
 
@@ -245,15 +227,11 @@ class MetricAccumulator:
                     ps_rmse = np.array(self.per_sample_metrics["rmse"][ch])
                     ps_mse = np.array(self.per_sample_metrics["mse"][ch])
                     ps_mae = np.array(self.per_sample_metrics["mae"][ch])
-                    ps_ks = np.array(self.per_sample_metrics["ks_statistic"][ch])
-                    ps_wasserstein = np.array(self.per_sample_metrics["wasserstein_distance"][ch])
 
                     # Filter NaNs
                     ps_rmse = ps_rmse[np.isfinite(ps_rmse)]
                     ps_mse = ps_mse[np.isfinite(ps_mse)]
                     ps_mae = ps_mae[np.isfinite(ps_mae)]
-                    ps_ks = ps_ks[np.isfinite(ps_ks)]
-                    ps_wasserstein = ps_wasserstein[np.isfinite(ps_wasserstein)]
 
                     if len(ps_rmse) > 0:
                         ch_metrics["per_sample_rmse_mean"] = float(np.mean(ps_rmse))
@@ -272,25 +250,6 @@ class MetricAccumulator:
                         ch_metrics["per_sample_mae_std"] = float(np.std(ps_mae))
                     else:
                         ch_metrics["per_sample_mae_mean"] = float("nan")
-
-                    if len(ps_ks) > 0:
-                        ch_metrics["per_sample_ks_mean"] = float(np.mean(ps_ks))
-                        ch_metrics["per_sample_ks_std"] = float(np.std(ps_ks))
-                        # Use per-sample mean as the main KS statistic since global is not available
-                        ch_metrics["ks_statistic"] = float(np.mean(ps_ks))
-                        per_sample_ks_means.append(np.mean(ps_ks))
-                    else:
-                        ch_metrics["per_sample_ks_mean"] = float("nan")
-                        ch_metrics["ks_statistic"] = float("nan")
-
-                    if len(ps_wasserstein) > 0:
-                        ch_metrics["per_sample_wasserstein_mean"] = float(np.mean(ps_wasserstein))
-                        ch_metrics["per_sample_wasserstein_std"] = float(np.std(ps_wasserstein))
-                        ch_metrics["wasserstein_distance"] = float(np.mean(ps_wasserstein))
-                        per_sample_wasserstein_means.append(np.mean(ps_wasserstein))
-                    else:
-                        ch_metrics["per_sample_wasserstein_mean"] = float("nan")
-                        ch_metrics["wasserstein_distance"] = float("nan")
 
             else:
                 # Binary channel metrics from stored values
@@ -345,18 +304,6 @@ class MetricAccumulator:
             metrics["continuous"]["mean_normalized_mse"] = float("nan")
             metrics["continuous"]["mean_normalized_mae"] = float("nan")
             metrics["continuous"]["n_channels"] = 0
-
-        if per_sample_ks_means:
-            metrics["continuous"]["mean_ks_statistic"] = float(np.mean(per_sample_ks_means))
-        else:
-            metrics["continuous"]["mean_ks_statistic"] = float("nan")
-
-        if per_sample_wasserstein_means:
-            metrics["continuous"]["mean_wasserstein_distance"] = float(
-                np.mean(per_sample_wasserstein_means)
-            )
-        else:
-            metrics["continuous"]["mean_wasserstein_distance"] = float("nan")
 
         # Aggregate metrics for binary channels
         if binary_balanced_accs:
@@ -479,8 +426,6 @@ def _init_worker(
     scenarios: list[str],
     channel_stds: np.ndarray,
     split_name: str,
-    include_ks: bool,
-    include_wasserstein: bool,
     subgroup_mapping: dict[int, dict[str, str]] | None = None,
     n_days: int = 1,
     window_descriptors: list[list[int]] | None = None,
@@ -499,8 +444,6 @@ def _init_worker(
         scenarios: List of scenario names to evaluate.
         channel_stds: Per-channel standard deviations for metric normalization.
         split_name: Name of the split (e.g. "val", "test").
-        include_ks: Whether to compute KS statistic for continuous channels.
-        include_wasserstein: Whether to compute Wasserstein distance.
         subgroup_mapping: Optional mapping from split-local index to demographic
             attributes for sensitivity analysis.
         n_days: Number of days per sample window (1 = single-day).
@@ -512,7 +455,7 @@ def _init_worker(
         save_pairs: Whether to extract pairs for the main-process PairWriter.
     """
     global _worker_mask_cache, _worker_method, _worker_scenarios
-    global _worker_channel_stds, _worker_split_name, _worker_include_ks, _worker_include_wasserstein
+    global _worker_channel_stds, _worker_split_name
     global _worker_subgroup_mapping, _worker_n_days, _worker_window_descriptors
     global _worker_window_day_offsets, _worker_compute_metrics, _worker_save_pairs
     _worker_mask_cache = mask_cache
@@ -520,8 +463,6 @@ def _init_worker(
     _worker_scenarios = scenarios
     _worker_channel_stds = channel_stds
     _worker_split_name = split_name
-    _worker_include_ks = include_ks
-    _worker_include_wasserstein = include_wasserstein
     _worker_subgroup_mapping = subgroup_mapping
     _worker_n_days = n_days
     _worker_window_descriptors = window_descriptors
@@ -557,11 +498,7 @@ def _evaluate_batch_all_scenarios(
     for scenario_name in _worker_scenarios:
         accumulator = None
         if compute_metrics:
-            accumulator = MetricAccumulator(
-                _worker_channel_stds,
-                include_ks=_worker_include_ks,
-                include_wasserstein=_worker_include_wasserstein,
-            )
+            accumulator = MetricAccumulator(_worker_channel_stds)
 
         sg_accs: dict[str, dict[str, MetricAccumulator]] = {}
         pair_data_list: list[_ExtractedPairs] = []
@@ -628,8 +565,6 @@ def _evaluate_batch_all_scenarios(
                             if group_name not in sg_accs[attr]:
                                 sg_accs[attr][group_name] = MetricAccumulator(
                                     _worker_channel_stds,
-                                    include_ks=_worker_include_ks,
-                                    include_wasserstein=_worker_include_wasserstein,
                                 )
                             idx = np.array(group_indices)
                             sg_accs[attr][group_name].update(
@@ -752,8 +687,6 @@ class ImputationEvaluator:
         self,
         scenarios: list[str],
         num_eval_workers: int = 1,
-        include_ks: bool = True,
-        include_wasserstein: bool = True,
         n_days: int = 1,
         compute_metrics: bool = True,
         save_pairs: bool = True,
@@ -764,8 +697,6 @@ class ImputationEvaluator:
         Args:
             scenarios: List of scenario names to evaluate.
             num_eval_workers: Number of parallel workers for batch evaluation.
-            include_ks: If True, compute KS statistic for continuous channels.
-            include_wasserstein: If True, compute Wasserstein distance for continuous channels.
             n_days: Number of days per sample window (1 = single-day).
             compute_metrics: If True, accumulate and compute metrics in-memory.
                 If False, only save pairs (requires save_pairs=True).
@@ -775,8 +706,6 @@ class ImputationEvaluator:
         """
         self.scenarios = scenarios
         self.num_eval_workers = num_eval_workers
-        self.include_ks = include_ks
-        self.include_wasserstein = include_wasserstein
         self.n_days = n_days
         self.compute_metrics = compute_metrics
         self.save_pairs = save_pairs
@@ -894,8 +823,6 @@ class ImputationEvaluator:
                     method,
                     channel_stds,
                     split_name,
-                    self.include_ks,
-                    self.include_wasserstein,
                     subgroup_mapping=split_subgroup_mapping,
                     window_descriptors=split_window_descriptors,
                     window_day_offsets=split_window_day_offsets,
@@ -928,8 +855,6 @@ class ImputationEvaluator:
         method: ImputationMethod,
         channel_stds: np.ndarray,
         split_name: str,
-        include_ks: bool,
-        include_wasserstein: bool,
         subgroup_mapping: dict[int, dict[str, str]] | None = None,
         window_descriptors: list[list[int]] | None = None,
         window_day_offsets: list[list[int]] | None = None,
@@ -943,8 +868,6 @@ class ImputationEvaluator:
             method: Fitted imputation method.
             channel_stds: Per-channel stds for metric normalization.
             split_name: Name of the split (for logging).
-            include_ks: Whether to compute KS statistic.
-            include_wasserstein: Whether to compute Wasserstein distance.
             subgroup_mapping: Optional mapping from split-local index to demographic
                 attributes for sensitivity analysis.
             window_descriptors: Per-split window descriptors for multi-day evaluation.
@@ -961,11 +884,7 @@ class ImputationEvaluator:
         accumulators = {}
         if compute_metrics:
             accumulators = {
-                name: MetricAccumulator(
-                    channel_stds,
-                    include_ks=include_ks,
-                    include_wasserstein=include_wasserstein,
-                )
+                name: MetricAccumulator(channel_stds)
                 for name in self.scenarios
             }
 
@@ -1000,8 +919,6 @@ class ImputationEvaluator:
                     self.scenarios,
                     channel_stds,
                     split_name,
-                    include_ks,
-                    include_wasserstein,
                     subgroup_mapping,
                     self.n_days,
                     window_descriptors,
@@ -1034,8 +951,6 @@ class ImputationEvaluator:
                                 accumulators,
                                 subgroup_accs,
                                 channel_stds,
-                                include_ks,
-                                include_wasserstein,
                                 pair_writers=pair_writers,
                             )
                             del in_flight[f]
@@ -1059,8 +974,6 @@ class ImputationEvaluator:
                         accumulators,
                         subgroup_accs,
                         channel_stds,
-                        include_ks,
-                        include_wasserstein,
                         pair_writers=pair_writers,
                     )
 
@@ -1153,11 +1066,7 @@ class ImputationEvaluator:
                                 for group_name, group_indices in groups.items():
                                     if group_name not in subgroup_accs[scenario_name][attr]:
                                         subgroup_accs[scenario_name][attr][group_name] = (
-                                            MetricAccumulator(
-                                                channel_stds,
-                                                include_ks=include_ks,
-                                                include_wasserstein=include_wasserstein,
-                                            )
+                                            MetricAccumulator(channel_stds)
                                         )
                                     idx = np.array(group_indices)
                                     subgroup_accs[scenario_name][attr][group_name].update(
@@ -1304,8 +1213,6 @@ class ImputationEvaluator:
         accumulators: dict[str, MetricAccumulator],
         subgroup_accs: dict[str, dict[str, dict[str, MetricAccumulator]]],
         channel_stds: np.ndarray,
-        include_ks: bool,
-        include_wasserstein: bool,
         pair_writers: dict[str, PairWriter] | None = None,
     ) -> None:
         """Merge a batch result (from parallel worker) into the main accumulators."""
@@ -1326,7 +1233,5 @@ class ImputationEvaluator:
                         if group_name not in subgroup_accs[scenario_name][attr]:
                             subgroup_accs[scenario_name][attr][group_name] = MetricAccumulator(
                                 channel_stds,
-                                include_ks=include_ks,
-                                include_wasserstein=include_wasserstein,
                             )
                         subgroup_accs[scenario_name][attr][group_name].merge(sg_acc)
