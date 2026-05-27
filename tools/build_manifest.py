@@ -182,24 +182,42 @@ def _extract_lsm2_arch_from_ckpt(ckpt: dict[str, Any], kind: str) -> dict[str, A
 
 
 def _extract_lsm2_stats_from_ckpt(ckpt: dict[str, Any]) -> dict[str, Any] | None:
-    """Extract normalization stats stored by ``MAEDailyDataModule.state_dict``.
+    """Extract normalization stats stored by the Lightning DataModule.
+
+    Lightning saves DataModule ``state_dict`` under a top-level key matching
+    the DataModule's class name (e.g. ``MAEDailyDataModule``), or — for older
+    PL versions — under the generic ``LightningDataModule`` key. Scan all
+    top-level dict values for one carrying ``normalization_stats``.
 
     Returns a dict matching the public ``normalization_stats.json`` schema
     (``means``, ``stds``, ``channels``, ``epsilon``) or ``None`` if the
     checkpoint doesn't carry stats (older training runs).
     """
-    dm_state = ckpt.get("LightningDataModule") or {}
-    norm = dm_state.get("normalization_stats")
+    norm = None
+    # Direct keys to try first (cheap), then a broader scan.
+    for key in ("LightningDataModule", "datamodule_state_dict"):
+        block = ckpt.get(key)
+        if isinstance(block, dict) and "normalization_stats" in block:
+            norm = block["normalization_stats"]
+            break
+    if norm is None:
+        for key, value in ckpt.items():
+            if isinstance(value, dict) and "normalization_stats" in value:
+                norm = value["normalization_stats"]
+                break
     if norm is None:
         return None
     means = list(norm["mean_prior"])
     stds = list(norm["std_prior"])
-    # Continuous channels 0-6 were normalized at training time; binary
-    # channels 7-18 carry identity stats (mean=0, std=1) — preserved here.
+    channels = norm.get("channels")
+    # The trained-stats dict lists the channels that were *normalized* (the 7
+    # continuous ones). Binary channels carry identity values in the prior.
+    if channels is None:
+        channels = list(range(7))
     return {
         "means": [float(m) for m in means],
         "stds": [float(s) for s in stds],
-        "channels": list(range(7)),
+        "channels": [int(c) for c in channels],
         "epsilon": 1e-8,
     }
 
