@@ -72,7 +72,7 @@ def _build_reference(
     # ``data.daily_hf_dir`` is a different concept (the HF disk path
     # consumed by the evaluator), so we let the imputer resolve its root
     # from explicit ``data_dir=`` configuration or ``MHC_DATA_DIR``.
-    imputer = cls()
+    imputer = cls(version=data_cfg.version)
     return _ImputerMethodAdapter(imputer), None
 
 
@@ -90,6 +90,7 @@ def _build_paper_checkpoint(
     training run themselves — the manifest path is the recommended route.
     """
     runtime_kwargs = {
+        "version": data_cfg.version,
         "device": method_cfg.device,
         "inference_batch_size": method_cfg.inference_batch_size,
     }
@@ -124,6 +125,10 @@ def _build_paper_checkpoint(
         inline = asdict(pypots_cfg)
         inline.pop("model_path", None)
         inline.pop("model_name", None)
+        # PyPOTSMethodConfig.variant is FEDformer-specific and only that wrapper
+        # consumes it; strip it for the other wrappers so they don't reject it.
+        if cls is not FEDformerImputer:
+            inline.pop("variant", None)
         imputer = cls(model_path=pypots_cfg.model_path, **inline, **runtime_kwargs)
 
     return _ImputerMethodAdapter(imputer), None

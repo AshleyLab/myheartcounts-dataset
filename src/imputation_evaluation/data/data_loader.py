@@ -28,7 +28,7 @@ from data.filters.daily_filters import (
 from data.processing.hf_config import DEFAULT_VARIANCE_THRESHOLDS
 from data.transforms.nan_transforms import ZeroToNaNTransform
 
-from .splits import load_split_file, random_split_users
+from .splits import load_split_file
 
 if TYPE_CHECKING:
     from imputation_evaluation.config import DataConfig
@@ -357,15 +357,15 @@ class ImputationDataLoader:
         all_users = list(np.unique(user_ids_arr))
         logger.info(f"Found {len(all_users)} unique users")
 
-        if self.config.split_file:
-            splits = load_split_file(Path(self.config.split_file))
-        else:
-            splits = random_split_users(
-                all_users,
-                self.config.train_ratio,
-                self.config.val_ratio,
-                self.config.split_seed,
+        if not self.config.split_file:
+            raise ValueError(
+                "DataConfig.split_file is required. The random-split fallback "
+                "has been removed because it produced different user splits per "
+                "run, silently breaking cross-pipeline comparisons. Point "
+                "split_file at the canonical sharable_users_seed42_2026 split "
+                "for your dataset version."
             )
+        splits = load_split_file(Path(self.config.split_file))
 
         train_indices = np.where(np.isin(user_ids_arr, np.array(list(splits["train"]))))[0].tolist()
         val_indices = np.where(np.isin(user_ids_arr, np.array(list(splits["validation"]))))[0].tolist()
@@ -424,39 +424,34 @@ class ImputationDataLoader:
         logger.info(f"Found {len(all_users)} unique users")
 
         # Create or load splits
-        if self.config.split_file:
-            split_path = Path(self.config.split_file)
-            logger.info(f"Loading user splits from {split_path}")
-            splits = load_split_file(split_path)
-            # Validate split ratios match config to catch silent mismatches
-            total = sum(len(v) for v in splits.values())
-            if total > 0:
-                actual_train = len(splits.get("train", set())) / total
-                actual_val = len(splits.get("validation", set())) / total
-                if abs(actual_train - self.config.train_ratio) > 0.05:
-                    raise ValueError(
-                        f"Split file train ratio ({actual_train:.2f}) differs from configured "
-                        f"train_ratio ({self.config.train_ratio}). Update the config or use a "
-                        f"different split file to ensure consistency across pipelines."
-                    )
-                if abs(actual_val - self.config.val_ratio) > 0.05:
-                    raise ValueError(
-                        f"Split file val ratio ({actual_val:.2f}) differs from configured "
-                        f"val_ratio ({self.config.val_ratio}). Update the config or use a "
-                        f"different split file to ensure consistency across pipelines."
-                    )
-        else:
-            logger.warning(
-                "No split_file provided — generating random split with "
-                f"train_ratio={self.config.train_ratio}, val_ratio={self.config.val_ratio}. "
-                "For reproducibility across pipelines, use a shared split file."
+        if not self.config.split_file:
+            raise ValueError(
+                "DataConfig.split_file is required. The random-split fallback "
+                "has been removed because it produced different user splits per "
+                "run, silently breaking cross-pipeline comparisons. Point "
+                "split_file at the canonical sharable_users_seed42_2026 split "
+                "for your dataset version."
             )
-            splits = random_split_users(
-                all_users,
-                self.config.train_ratio,
-                self.config.val_ratio,
-                self.config.split_seed,
-            )
+        split_path = Path(self.config.split_file)
+        logger.info(f"Loading user splits from {split_path}")
+        splits = load_split_file(split_path)
+        # Validate split ratios match config to catch silent mismatches
+        total = sum(len(v) for v in splits.values())
+        if total > 0:
+            actual_train = len(splits.get("train", set())) / total
+            actual_val = len(splits.get("validation", set())) / total
+            if abs(actual_train - self.config.train_ratio) > 0.05:
+                raise ValueError(
+                    f"Split file train ratio ({actual_train:.2f}) differs from configured "
+                    f"train_ratio ({self.config.train_ratio}). Update the config or use a "
+                    f"different split file to ensure consistency across pipelines."
+                )
+            if abs(actual_val - self.config.val_ratio) > 0.05:
+                raise ValueError(
+                    f"Split file val ratio ({actual_val:.2f}) differs from configured "
+                    f"val_ratio ({self.config.val_ratio}). Update the config or use a "
+                    f"different split file to ensure consistency across pipelines."
+                )
 
         # Build index mapping using vectorized numpy operations
         logger.info("Building sample indices per split...")

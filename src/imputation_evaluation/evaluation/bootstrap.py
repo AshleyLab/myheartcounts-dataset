@@ -5,10 +5,9 @@ RMSE / MSE / MAE / normalized variants / balanced accuracy are obtained from
 per-user additive sufficient statistics in O(|U|) per iteration. ROC AUC is
 non-decomposable so it uses cluster-weighted Mann-Whitney U via a one-time
 global sort of predictions; per iteration we walk the sorted rows with per-user
-multiplicities. Tied predictions get half-credit, matching sklearn's
-``roc_auc_score``.
+multiplicities. Tied predictions get half-credit.
 
-Algorithm port from the private MHC-benchmark repo. Adds one wrapper
+Adds one wrapper
 (``bootstrap_pairs_dir``) that auto-discovers scenarios/splits + loads
 ``channel_stds.npy`` + per-split manifests so callers don't need to plumb
 those arguments through the runner.
@@ -43,15 +42,15 @@ class UserStats:
     that don't appear in the pairs (no rows) have all zeros and ``has_data=False``.
     """
 
-    user_ids: list[str]                 # length n_users; stable ordering
-    user_idx: dict[str, int]            # user_id -> row in the arrays
-    has_data: np.ndarray                # (C,) bool — channel present in pairs
+    user_ids: list[str]  # length n_users; stable ordering
+    user_idx: dict[str, int]  # user_id -> row in the arrays
+    has_data: np.ndarray  # (C,) bool — channel present in pairs
     # Continuous (channels in CONTINUOUS_CHANNEL_INDICES)
-    n: np.ndarray                       # (n_users, C) int64
-    sse: np.ndarray                     # (n_users, C) float64
-    sae: np.ndarray                     # (n_users, C) float64
+    n: np.ndarray  # (n_users, C) int64
+    sse: np.ndarray  # (n_users, C) float64
+    sae: np.ndarray  # (n_users, C) float64
     # Binary (other channels), threshold 0.5
-    tp: np.ndarray                      # (n_users, C) int64
+    tp: np.ndarray  # (n_users, C) int64
     tn: np.ndarray
     fp: np.ndarray
     fn: np.ndarray
@@ -111,9 +110,7 @@ def compute_user_sufficient_stats(
         u_rows = sample_to_user_row[sidx]
         if (u_rows < 0).any():
             missing = int((u_rows < 0).sum())
-            raise ValueError(
-                f"{ch_file.name}: {missing} rows have sample_idx not in manifest"
-            )
+            raise ValueError(f"{ch_file.name}: {missing} rows have sample_idx not in manifest")
 
         if ch in CONTINUOUS_CHANNEL_INDICES:
             gt_ch = table.column("gt").to_numpy().astype(np.float32)
@@ -151,8 +148,9 @@ def compute_user_sufficient_stats(
     )
 
 
-def _continuous_metrics_from_sums(N: np.ndarray, SSE: np.ndarray, SAE: np.ndarray,
-                                  channel_stds: np.ndarray) -> dict:
+def _continuous_metrics_from_sums(
+    N: np.ndarray, SSE: np.ndarray, SAE: np.ndarray, channel_stds: np.ndarray
+) -> dict:
     """Compute RMSE/MSE/MAE + normalized variants from aggregated sums.
 
     Inputs are shape (B, C) (B = bootstrap iters or 1). Returns dict of (B, C)
@@ -165,14 +163,14 @@ def _continuous_metrics_from_sums(N: np.ndarray, SSE: np.ndarray, SAE: np.ndarra
         stds = np.asarray(channel_stds, dtype=np.float64).reshape(1, -1)
         safe_stds = np.where(stds > 0, stds, 1.0)
         nrmse = rmse / safe_stds
-        nmse = mse / (safe_stds ** 2)
+        nmse = mse / (safe_stds**2)
         nmae = mae / safe_stds
-    return {"rmse": rmse, "mse": mse, "mae": mae,
-            "nrmse": nrmse, "nmse": nmse, "nmae": nmae}
+    return {"rmse": rmse, "mse": mse, "mae": mae, "nrmse": nrmse, "nmse": nmse, "nmae": nmae}
 
 
-def _balanced_accuracy_from_confusion(TP: np.ndarray, TN: np.ndarray,
-                                      FP: np.ndarray, FN: np.ndarray) -> np.ndarray:
+def _balanced_accuracy_from_confusion(
+    TP: np.ndarray, TN: np.ndarray, FP: np.ndarray, FN: np.ndarray
+) -> np.ndarray:
     """Compute balanced accuracy from confusion-matrix sums.
 
     Inputs shape (B, C). Returns (B, C); NaN where a class is empty (matches
@@ -261,7 +259,7 @@ def _bootstrap_continuous_and_binary(
         b1 = min(b0 + chunk, n_boot)
         idx = boot_idx[b0:b1]  # (c, n_users)
 
-        N_b = n_arr[idx].sum(axis=1)         # (c, C) int64
+        N_b = n_arr[idx].sum(axis=1)  # (c, C) int64
         SSE_b = sse_arr[idx].sum(axis=1)
         SAE_b = sae_arr[idx].sum(axis=1)
         cont = _continuous_metrics_from_sums(N_b, SSE_b, SAE_b, channel_stds)
@@ -289,8 +287,12 @@ def _bootstrap_continuous_and_binary(
     balacc_b[:, cont_mask] = np.nan
 
     return {
-        "rmse": rmse_b, "mse": mse_b, "mae": mae_b,
-        "nrmse": nrmse_b, "nmse": nmse_b, "nmae": nmae_b,
+        "rmse": rmse_b,
+        "mse": mse_b,
+        "mae": mae_b,
+        "nrmse": nrmse_b,
+        "nmse": nmse_b,
+        "nmae": nmae_b,
         "balanced_accuracy": balacc_b,
     }
 
@@ -367,7 +369,7 @@ def _bootstrap_auc_one_channel(
         M = np.empty((bs, n_users), dtype=np.float64)
         for j, b in enumerate(range(b0, b1)):
             M[j] = np.bincount(boot_idx[b], minlength=n_users).astype(np.float64)
-        W_pos = M @ S_pos     # (bs, G)
+        W_pos = M @ S_pos  # (bs, G)
         W_neg = M @ S_neg
         cumneg = np.cumsum(W_neg, axis=1)
         cumneg_before = np.empty_like(cumneg)
@@ -434,8 +436,9 @@ def bootstrap_split(
             )
 
     cont_channels = [c for c in CONTINUOUS_CHANNEL_INDICES if stats.has_data[c]]
-    bin_channels = [c for c in range(n_channels)
-                    if c not in CONTINUOUS_CHANNEL_INDICES and stats.has_data[c]]
+    bin_channels = [
+        c for c in range(n_channels) if c not in CONTINUOUS_CHANNEL_INDICES and stats.has_data[c]
+    ]
 
     def _macro(arr_2d: np.ndarray, channels: list[int]) -> np.ndarray:
         if not channels:
@@ -499,7 +502,9 @@ def bootstrap_split(
             ch_metrics["rmse"] = _entry(point_cont["rmse"][0, ch], decomp["rmse"][:, ch])
             ch_metrics["mse"] = _entry(point_cont["mse"][0, ch], decomp["mse"][:, ch])
             ch_metrics["mae"] = _entry(point_cont["mae"][0, ch], decomp["mae"][:, ch])
-            ch_metrics["normalized_rmse"] = _entry(point_cont["nrmse"][0, ch], decomp["nrmse"][:, ch])
+            ch_metrics["normalized_rmse"] = _entry(
+                point_cont["nrmse"][0, ch], decomp["nrmse"][:, ch]
+            )
             ch_metrics["normalized_mse"] = _entry(point_cont["nmse"][0, ch], decomp["nmse"][:, ch])
             ch_metrics["normalized_mae"] = _entry(point_cont["nmae"][0, ch], decomp["nmae"][:, ch])
         else:
@@ -594,7 +599,8 @@ def bootstrap_pairs_dir(
 
     if scenarios is None:
         scenarios = sorted(
-            d.name for d in pairs_dir.iterdir()
+            d.name
+            for d in pairs_dir.iterdir()
             if d.is_dir() and any((d / s).is_dir() for s in splits)
         )
 

@@ -32,6 +32,11 @@ class DataConfig:
 
     daily_hf_dir: str = "data/hf_daily"
     split_file: str | None = None
+    # OpenMHC dataset version this run targets ("xs" or "full"). Threaded
+    # through the registry so the constructed imputer's BaseImputer.__init__
+    # gets a matching version, and the dataset root's dataset_version.json
+    # marker can be cross-checked. No default — must be set in YAML.
+    version: str = "???"
     train_ratio: float = 0.6
     val_ratio: float = 0.1
     split_seed: int = 42
@@ -175,7 +180,9 @@ class PyPOTSMethodConfig:
     moving_avg_window_size: int = 25  # FEDformer
     dropout: float = 0.1  # TimesNet, FEDformer
     apply_nonstationary_norm: bool = False  # TimesNet
-    version: str = "Fourier"  # FEDformer
+    # FEDformer basis flavor — passed to FEDformerImputer as ``variant=``
+    # so it doesn't collide with the OpenMHC dataset version.
+    variant: str = "Fourier"  # FEDformer ("Fourier" or "Wavelets")
     modes: int = 32  # FEDformer
     mode_select: str = "random"  # FEDformer
     trmf_lags: list[int] = field(default_factory=lambda: [1, 2, 3, 4, 5])  # TRMF
