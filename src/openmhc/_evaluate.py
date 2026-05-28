@@ -958,7 +958,9 @@ def evaluate_forecasting(
     from forecasting_evaluation.runner import run_eval
 
     # Pick a sample-index file matching the requested forecasting horizon.
-    sample_index_file = paths.forecasting_sample_index_dir / "sample_index_raw.json"
+    sample_index_file = (
+        paths.forecasting_sample_index_dir / f"sample_index_P_{forecasting_length}_raw.json"
+    )
 
     data_cfg = DataConfig(
         trajectory_hf_dir=str(paths.hourly_trajectory),
