@@ -12,9 +12,12 @@ This module exposes a fast, in-memory lookup for label values and age computatio
 - `LabelTypeError`: raised when a value cannot be converted to its expected type.
 - `LabelValueError`: raised when a value is None or NaN.
 
+## Related accessors
+- [`context.get_context`](../context/README.md) — discoverable wrapper that validates the label is a context variable (not a prediction target).
+
 ## Data sources
 - `labels.json`: per-label → healthCode → `timestamps`/`values`.
-- `enrollment_info.json`: per-healthCode metadata with `birthdate`.
+- `enrollment_info.json`: per-healthCode metadata with de-identified `birth_year`.
 - `label_types.json`: maps each label to its semantic type (`binary`, `ordinal`, `categorical`, `continuous`).
 
 By default the module loads data from the `data/labels/` directory. Override with:
@@ -139,7 +142,7 @@ work                      bool         0.00         1.00         1.00         2
 
 ## Behavior
 - For labels in `labels.json`, the closest timestamp is chosen; ties favor the earlier point.
-- `age` is stored as a static value in `last_labels.json` (whole years at the user's last survey timestamp).
+- `age` is stored as a static value in `last_labels.json` (calendar-year age at the user's last survey timestamp).
 
 Recent local throughput (from `pytest labels/test_api.py -k performance`):
 - Label lookups: ~762,936.5 per second
@@ -150,4 +153,3 @@ Run from repo root:
 ```bash
 pytest tests/test_labels_api.py
 ```
-
