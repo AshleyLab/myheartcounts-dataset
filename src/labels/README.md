@@ -20,6 +20,9 @@ This module exposes a fast, in-memory lookup for label values and age computatio
 - `enrollment_info.json`: per-healthCode metadata with de-identified `birth_year`.
 - `label_types.json`: maps each label to its semantic type (`binary`, `ordinal`, `categorical`, `continuous`).
 
+## Variable dictionary
+See [`data/labels/survey_documentation/INDEX.md`](../../data/labels/survey_documentation/INDEX.md) for a per-variable reference (question text, answer options, observed value distributions, iOS source) covering all 169 labels.
+
 By default the module loads data from the `data/labels/` directory. Override with:
 ```bash
 export LABELS_DATA_PATH=/path/to/labels.json

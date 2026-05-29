@@ -1,0 +1,259 @@
+# MHC Variable Index
+
+169 variables used by the MHC-benchmark project (41 targets + 128 contexts), mapped to their source definitions in the iOS codebase. Counts in this file are the canonical benchmark labels in `data/labels/label_types.json`; the `survey_documentation/` tree contains additional reference docs for related concepts (e.g. `heart_disease`, `vascular`, `Gender`) — see footer for total file count.
+
+- **Filename convention**: `<category>/<raw_identifier>.md`. The `field_` prefix used in the benchmark dataset is stripped from filenames but recorded inside each file.
+- **Role**: target = model prediction target; context = model input feature
+- **Type**: continuous | binary | ordinal | categorical | multi_categorical
+
+## By category
+
+Variables are grouped into 16 semantic subdirectories. Each subdirectory contains its own `summary.md` landing page. The `Labels` column counts entries in `label_types.json`.
+
+| Category | Labels | Contents |
+|----------|--------|----------|
+| [demographics](demographics/summary.md) | 7 | age, sex/gender, race/ethnicity, education, Fitzpatrick skin type |
+| [geography](geography/summary.md) | 2 | country, zip |
+| [anthropometrics](anthropometrics/summary.md) | 4 | weight, BMI_values, BMI_categories, height |
+| [cardiometabolic_labs](cardiometabolic_labs/summary.md) | 9 | BP, cholesterol (HDL/LDL/Total), glucose, diabetes, hypertension, framingham_risk |
+| [cardiovascular_disease_history](cardiovascular_disease_history/summary.md) | 10 | family history, medications, and derived subtype flags (CAD, Afib, CHF, PH, etc.) |
+| [physical_activity](physical_activity/summary.md) | 13 | vigorous/moderate activity, work activity, daily-check activity1/activity2 items |
+| [sleep](sleep/summary.md) | 10 | sleep_time variants, WakeUpTime, GoSleepTime, sleep diagnoses, derived *_categories |
+| [healthkit_watch_metrics](healthkit_watch_metrics/summary.md) | 7 | Watch_RestingHeartRate, VO2Max, HRV, walking HR, stand time, basal energy, respiratory rate |
+| [wellbeing](wellbeing/summary.md) | 7 | ONS wellbeing (satisfaction, worthwhile/happy/worried/depressed), daily happiness |
+| [risk_perception](risk_perception/summary.md) | 4 | riskfactors1–4 (self-rated CVD risk on 5-point scales) |
+| [diet](diet/summary.md) | 7 | fruit, vegetable, fish, grains, sugar_drinks, sodium, alcohol |
+| [tobacco_vaping_cannabis](tobacco_vaping_cannabis/summary.md) | 28 | current / past / onset / quit items across vaping, cigarettes, smokeless, cannabis + product multi-selects |
+| [parq_readiness](parq_readiness/summary.md) | 7 | PAR-Q yes/no gating items (chest pain, dizziness, heart condition, etc.) |
+| [covid_19](covid_19/summary.md) | 16 | COVID test/diagnosis, symptoms, care level, exposure, behaviours |
+| [mindset_measures](mindset_measures/summary.md) | 32 | illness mindset (20) + exercise process mindset (7) + adequacy of activity (5) |
+| [study_metadata](study_metadata/summary.md) | 6 | labwork, device ownership flags, phone_on_user |
+
+Each subdir's `summary.md` contains a one-line description and link for every file in that subdir. The flat tables below remain as a canonical master reference.
+
+## Targets (41)
+
+| Variable | Type | Raw identifier | Source file | Line | Notes |
+|----------|------|----------------|-------------|------|-------|
+| age | continuous | heartAgeDataAge | CardioHealth/TasksAndSteps/HeartAgeControllers/HeartAgeRiskFactorCalculations/APHHeartAgeAndRiskFactors.m | ~62 | Manually entered in Heart Age form |
+| Atrial fibrillation (Afib) | binary | heart_disease | CardioHealth/Resources/JSONs/cardiosurveys/cardio_CVhealth_survey.json | ~126 | Derived from enumeration value (option value=8) |
+| BiologicalSex | binary | Gender | CardioHealth/TasksAndSteps/HeartAgeControllers/HeartAgeRiskFactorCalculations/APHHeartAgeAndRiskFactors.m | ~74 | Male/Female from Heart Age form |
+| BMI_categories | ordinal | (derived) | CardioHealth/Startup/APHAppDelegate.m | ~1337 | Derived from BMI_values (ordinal binning) |
+| BMI_values | continuous | (HealthKit) | CardioHealth/Startup/APHAppDelegate.m | ~1337 | HKQuantityTypeIdentifierBodyMass from HealthKit |
+| blood_pressure_categories | ordinal | (derived) | CardioHealth/Startup/APHAppDelegate.m | ~533,535 | Derived from SystolicBloodPressure and DiastolicBloodPressure (ordinal binning) |
+| CAD | binary | heart_disease | CardioHealth/Resources/JSONs/cardiosurveys/cardio_CVhealth_survey.json | ~101 | Coronary Artery Disease (Coronary Blockage/Stenosis) |
+| Cerebrovascular Disease | binary | vascular | CardioHealth/Resources/JSONs/cardiosurveys/cardio_CVhealth_survey.json | ~164,169 | Stroke or TIA from vascular options |
+| Congenital Heart | binary | heart_disease | CardioHealth/Resources/JSONs/cardiosurveys/cardio_CVhealth_survey.json | ~131 | Congenital Heart Defect (option value=9) |
+| Diabetes | binary | (Heart Age form) | CardioHealth/TasksAndSteps/HeartAgeControllers/HeartAgeRiskFactorCalculations/APHHeartAgeAndRiskFactors.m | ~70 | kHeartAgeTestDataDiabetes |
+| framingham_risk | continuous | (computed) | CardioHealth/TasksAndSteps/HeartAgeControllers/HeartAgeRiskFactorCalculations/APHHeartAgeAndRiskFactors.m | ~80-150 | Calculated from risk factors using Framingham methodology |
+| GoSleepTime_categories | ordinal | GoSleepTime | (derived) | Unknown | Ordinal binning of GoSleepTime |
+| happiness | continuous | feel_worthwhile2 | CardioHealth/Resources/JSONs/cardiosurveys/cardio_wellbeing_survey.json | ~40 | "How about happy?" 0-10 scale |
+| happiness_categories | ordinal | (derived) | Unknown | Unknown | Derived from happiness (ordinal binning) |
+| Heart Failure or CHF | binary | heart_disease | CardioHealth/Resources/JSONs/cardiosurveys/cardio_CVhealth_survey.json | ~121 | Heart Failure or CHF (option value=7) |
+| Hdl | continuous | heartAgeDataHdl | CardioHealth/TasksAndSteps/HeartAgeControllers/HeartAgeRiskFactorCalculations/APHHeartAgeAndRiskFactors.m | ~64 | HDL cholesterol from Heart Age form |
+| Hypertension | binary | (Heart Age form) | CardioHealth/TasksAndSteps/HeartAgeControllers/HeartAgeRiskFactorCalculations/APHHeartAgeAndRiskFactors.m | ~78 | kHeartAgeTestDataHypertension |
+| Ldl | continuous | heartAgeDataLdl | CardioHealth/TasksAndSteps/HeartAgeControllers/HeartAgeRiskFactorCalculations/APHHeartAgeAndRiskFactors.m | ~65 | LDL cholesterol from Heart Age form |
+| Peripheral/Systemic Vascular Disease | binary | vascular | CardioHealth/Resources/JSONs/cardiosurveys/cardio_CVhealth_survey.json | ~184 | Peripheral Vascular Disease (option value=5) |
+| PH | binary | heart_disease | CardioHealth/Resources/JSONs/cardiosurveys/cardio_CVhealth_survey.json | ~136 | Pulmonary Hypertension (option value=11) |
+| cardiovascular_disease | binary | (derived) | CardioHealth/Resources/JSONs/cardiosurveys/cardio_CVhealth_survey.json | ~83 | Derived from heart_disease options |
+| SystolicBloodPressure | continuous | heartAgeDataSystolicBloodPressure | CardioHealth/TasksAndSteps/HeartAgeControllers/HeartAgeRiskFactorCalculations/APHHeartAgeAndRiskFactors.m | ~66 | Systolic BP from Heart Age form |
+| TotalCholesterol | continuous | heartAgeDataTotalCholesterol | CardioHealth/TasksAndSteps/HeartAgeControllers/HeartAgeRiskFactorCalculations/APHHeartAgeAndRiskFactors.m | ~63 | Total cholesterol from Heart Age form |
+| vigorous_act | continuous | vigorous_act | CardioHealth/Resources/JSONs/cardiosurveys/cardio_activitysleep_survey.json | ~137 | Minutes of vigorous activity per week |
+| Watch_BasalEnergyBurned | continuous | (HealthKit) | CardioHealth/Startup/APHAppDelegate.m | ~523 | HKQuantityTypeIdentifierBasalEnergyBurned |
+| Watch_HeartRateVariabilitySDNN | continuous | (HealthKit) | CardioHealth/Startup/APHAppDelegate.m | ~529 | HKQuantityTypeIdentifierHeartRateVariabilitySDNN |
+| Watch_RespiratoryRate | continuous | (HealthKit) | CardioHealth/Startup/APHAppDelegate.m | ~1362 | HKQuantityTypeIdentifierRespiratoryRate |
+| Watch_RestingHeartRate | continuous | (HealthKit) | CardioHealth/Startup/APHAppDelegate.m | ~527 | HKQuantityTypeIdentifierRestingHeartRate |
+| Watch_StandTime | continuous | (HealthKit) | CardioHealth/Startup/APHAppDelegate.m | ~557 | HKQuantityTypeIdentifierAppleStandTime (iOS 13.0+) |
+| Watch_VO2Max | continuous | (HealthKit) | CardioHealth/Startup/APHAppDelegate.m | ~538 | HKQuantityTypeIdentifierVO2Max |
+| Watch_WalkingHeartRateAverage | continuous | (HealthKit) | CardioHealth/Startup/APHAppDelegate.m | ~528 | HKQuantityTypeIdentifierWalkingHeartRateAverage |
+| WakeUpTime_categories | ordinal | WakeUpTime | (derived) | Unknown | Ordinal binning of WakeUpTime |
+| WeightKilograms | continuous | (HealthKit) | CardioHealth/Startup/APHAppDelegate.m | ~524 | HKQuantityTypeIdentifierBodyMass (kg) |
+| feel_worthwhile1 | ordinal | feel_worthwhile1 | CardioHealth/Resources/JSONs/cardiosurveys/cardio_wellbeing_survey.json | ~24 | "Extent things you do are worthwhile" 0-10 scale |
+| feel_worthwhile2 | ordinal | feel_worthwhile2 | CardioHealth/Resources/JSONs/cardiosurveys/cardio_wellbeing_survey.json | ~41 | "How about happy?" 0-10 scale |
+| feel_worthwhile3 | ordinal | feel_worthwhile3 | CardioHealth/Resources/JSONs/cardiosurveys/cardio_wellbeing_survey.json | ~56 | "How about worried?" 0-10 scale |
+| feel_worthwhile4 | ordinal | feel_worthwhile4 | CardioHealth/Resources/JSONs/cardiosurveys/cardio_wellbeing_survey.json | ~72 | "How about depressed?" 0-10 scale |
+| satisfiedwith_life | ordinal | satisfiedwith_life | CardioHealth/Resources/JSONs/cardiosurveys/cardio_wellbeing_survey.json | ~8 | Overall life satisfaction 0-10 scale |
+| sleep_diagnosis1 | binary | sleep_diagnosis1 | CardioHealth/Resources/JSONs/cardiosurveys/cardio_activitysleep_survey.json | ~180 | Sleep disorder diagnosis (yes/no) |
+| sleep_time_categories | ordinal | (derived) | CardioHealth/Resources/JSONs/cardiosurveys/cardio_activitysleep_survey.json | ~167 | Derived from sleep_time (ordinal binning) |
+| work | binary | work | CardioHealth/Resources/JSONs/cardiosurveys/cardio_activitysleep_survey.json | ~9 | Regular work (boolean) |
+
+## Contexts (128)
+
+| Variable | Type | Raw identifier | Source file | Line | Notes |
+|----------|------|----------------|-------------|------|-------|
+| field_Age_heartage | continuous | Age_heartage | CardioHealth/TasksAndSteps/HeartAgeControllers/APHHeartAgeTaskViewController.m | ~100+ | Age entered in Heart Age task |
+| field_BloodGlucose | continuous | BloodGlucose | CardioHealth/TasksAndSteps/HeartAgeControllers/HeartAgeRiskFactorCalculations/APHHeartAgeAndRiskFactors.m | ~68 | Blood glucose value |
+| field_CurrentAge | continuous | (from device) | CardioHealth/TasksAndSteps/HeartAgeControllers/APHHeartAgeTaskViewController.m | ~100+ | Current age from device/survey |
+| field_DiastolicBloodPressure | continuous | heartAgeDataDiastolicBloodPressure | CardioHealth/TasksAndSteps/HeartAgeControllers/HeartAgeRiskFactorCalculations/APHHeartAgeAndRiskFactors.m | ~67 | Diastolic BP |
+| field_GoSleepTime | continuous | GoSleepTime | (derived) | Unknown | Likely from device tracking, not in JSON |
+| field_HeightCentimeters | continuous | (HealthKit) | CardioHealth/Startup/APHAppDelegate.m | ~525 | Height in meters from HealthKit, converted to cm |
+| field_WakeUpTime | continuous | WakeUpTime | (derived) | Unknown | Likely from device tracking, not in JSON |
+| field_atwork | ordinal | atwork | CardioHealth/Resources/JSONs/cardiosurveys/cardio_activitysleep_survey.json | ~28 | Work activity level (5-point scale) |
+| field_country | categorical | country | CardioHealth/Resources/JSONs/cardiosurveys/cardio_wellbeing_survey.json | ~90 | Country of residence (UK/US/HK) |
+| field_education | ordinal | education | CardioHealth/Resources/JSONs/cardiosurveys/cardio_CVhealth_survey.json | ~332 | Education level (7-point scale) |
+| field_ethnicity | ordinal | ethnicity | CardioHealth/Resources/JSONs/cardiosurveys/cardio_CVhealth_survey.json | ~214 | Spanish/Hispanic/Latino (5-point scale) |
+| field_fruit | continuous | fruit | CardioHealth/Resources/JSONs/cardiosurveys/cardio_diet_survey.json | ~7 | Cups of fruit per day |
+| field_grains | continuous | grains | CardioHealth/Resources/JSONs/cardiosurveys/cardio_diet_survey.json | ~50 | Servings of whole grains per day |
+| field_moderate_act | continuous | moderate_act | CardioHealth/Resources/JSONs/cardiosurveys/cardio_activitysleep_survey.json | ~122 | Minutes of moderate activity per week |
+| field_phone_on_user | ordinal | phone_on_user | CardioHealth/Resources/JSONs/cardiosurveys/cardio_daily_check.json | ~12 | Phone/device with user (4-point scale) |
+| field_phys_activity | ordinal | phys_activity | CardioHealth/Resources/JSONs/cardiosurveys/cardio_activitysleep_survey.json | ~69 | Leisure time activity (6-point scale) |
+| field_riskfactors1 | ordinal | riskfactors1 | CardioHealth/Resources/JSONs/cardiosurveys/cardio_wellbeing_survey.json | ~193 | Risk over next 10 years (5-point scale) |
+| field_riskfactors2 | ordinal | riskfactors2 | CardioHealth/Resources/JSONs/cardiosurveys/cardio_wellbeing_survey.json | ~233 | Risk compared to age/sex (5-point scale) |
+| field_riskfactors3 | ordinal | riskfactors3 | CardioHealth/Resources/JSONs/cardiosurveys/cardio_wellbeing_survey.json | ~273 | Lifetime risk (5-point scale) |
+| field_riskfactors4 | ordinal | riskfactors4 | CardioHealth/Resources/JSONs/cardiosurveys/cardio_wellbeing_survey.json | ~313 | Lifetime risk vs. age/sex (5-point scale) |
+| field_sodium | ordinal | sodium | CardioHealth/Resources/JSONs/cardiosurveys/cardio_diet_survey.json | ~78 | Sodium reduction strategies (3-point multi-select) |
+| field_sugar_drinks | continuous | sugar_drinks | CardioHealth/Resources/JSONs/cardiosurveys/cardio_diet_survey.json | ~64 | Beverages with added sugar per week |
+| field_vegetable | continuous | vegetable | CardioHealth/Resources/JSONs/cardiosurveys/cardio_diet_survey.json | ~22 | Cups of vegetables per day |
+| field_fish | continuous | fish | CardioHealth/Resources/JSONs/cardiosurveys/cardio_diet_survey.json | ~36 | Servings of fish per week |
+| alcohol | ordinal | alcohol | CardioHealth/Resources/JSONs/cardiosurveys/cardio_diet_survey.json | ~113 | Alcohol consumption frequency (5-point) |
+| BloodType | categorical | blood_type | CardioHealth/Resources/JSONs/cardiosurveys/cardio_covid_19_survey.json | ~720 | Blood type (A/B/AB/O) |
+| Ethnicity_heartage | categorical | Ethnicity | CardioHealth/TasksAndSteps/HeartAgeControllers/HeartAgeRiskFactorCalculations/APHHeartAgeAndRiskFactors.m | ~73 | Ethnicity from Heart Age (African-American/Other) |
+| FitzpatrickSkinType | categorical | (skin type) | HealthKit `HKCharacteristicTypeIdentifierFitzpatrickSkinType` | n/a | Fitzpatrick skin type (raw I-VI categorical; released as bucketed `{light, medium, dark}` ordinal) |
+| Gender | categorical | Gender | CardioHealth/TasksAndSteps/HeartAgeControllers/HeartAgeRiskFactorCalculations/APHHeartAgeAndRiskFactors.m | ~74 | Gender (Male/Female) |
+| healthcare_worker | categorical | healthcare_worker | CardioHealth/Resources/JSONs/cardiosurveys/cardio_covid_19_survey.json | ~454 | Healthcare position type |
+| activity1_intensity | ordinal | activity1_intensity | CardioHealth/Resources/JSONs/cardiosurveys/cardio_daily_check.json | ~139 | Activity intensity (Light/Moderate/Vigorous) |
+| activity1_type | categorical | activity1_type | CardioHealth/Resources/JSONs/cardiosurveys/cardio_daily_check.json | ~74 | Activity type (Walking/Jogging/Cycling/etc) |
+| activity2_intensity | ordinal | activity2_intensity | CardioHealth/Resources/JSONs/cardiosurveys/cardio_daily_check.json | ~258 | Activity 2 intensity (Light/Moderate/Vigorous) |
+| activity2_type | categorical | activity2_type | CardioHealth/Resources/JSONs/cardiosurveys/cardio_daily_check.json | ~193 | Activity 2 type (Walking/Jogging/Cycling/etc) |
+| chestPain | binary | chestPain | CardioHealth/TasksAndSteps/APHDynamicParQQuizTask.m | ~42 | Chest pain during activity (PAR-Q) |
+| chestPainInLastMonth | binary | chestPainInLastMonth | CardioHealth/TasksAndSteps/APHDynamicParQQuizTask.m | ~43 | Chest pain in past month (PAR-Q) |
+| covid_relatives | binary | relatives | CardioHealth/Resources/JSONs/cardiosurveys/cardio_covid_19_survey.json | ~790 | COVID-positive relatives (yes/no) |
+| currentCannabisSmoking | ordinal | currentCannabisSmoking | CardioHealth/Resources/JSONs/cardiosurveys/cardio_vaping_and_smoking_survey.json | ~855 | Cannabis smoking frequency |
+| currentSmokeless | ordinal | currentSmokeless | CardioHealth/Resources/JSONs/cardiosurveys/cardio_vaping_and_smoking_survey.json | ~472 | Smokeless tobacco use frequency |
+| currentSmoking | ordinal | currentSmoking | CardioHealth/Resources/JSONs/cardiosurveys/cardio_vaping_and_smoking_survey.json | ~240 | Cigarette smoking frequency |
+| currentVaping | ordinal | currentVaping | CardioHealth/Resources/JSONs/cardiosurveys/cardio_vaping_and_smoking_survey.json | ~8 | Vaping nicotine frequency |
+| dizziness | binary | dizziness | CardioHealth/TasksAndSteps/APHDynamicParQQuizTask.m | ~44 | Dizziness/loss of consciousness (PAR-Q) |
+| durationQuitSmokeless | categorical | durationQuitSmokeless | CardioHealth/Resources/JSONs/cardiosurveys/cardio_vaping_and_smoking_survey.json | ~614 | Duration quit smokeless tobacco (codes 1-3 ordered, 4=Never/5=Don't know break ordinality) |
+| durationQuitSmoking | categorical | durationQuitSmoking | CardioHealth/Resources/JSONs/cardiosurveys/cardio_vaping_and_smoking_survey.json | ~387 | Duration quit smoking (same encoding as above) |
+| durationQuitVaping | categorical | durationQuitVaping | CardioHealth/Resources/JSONs/cardiosurveys/cardio_vaping_and_smoking_survey.json | ~155 | Duration quit vaping (same encoding as above) |
+| device_activity_band | binary | device | CardioHealth/Resources/JSONs/cardiosurveys/cardio_day_one.json | ~36 | Activity band/pedometer ownership |
+| device_iphone | binary | device | CardioHealth/Resources/JSONs/cardiosurveys/cardio_day_one.json | ~36 | iPhone ownership |
+| device_other | binary | device | CardioHealth/Resources/JSONs/cardiosurveys/cardio_day_one.json | ~36 | Other device ownership |
+| device_smartwatch | binary | device | CardioHealth/Resources/JSONs/cardiosurveys/cardio_day_one.json | ~36 | Smartwatch/Apple Watch ownership |
+| everQuitSmokeless | binary | everQuitSmokeless | CardioHealth/Resources/JSONs/cardiosurveys/cardio_vaping_and_smoking_survey.json | ~595 | Tried to quit smokeless in past 12 months |
+| everQuitSmoking | binary | everQuitSmoking | CardioHealth/Resources/JSONs/cardiosurveys/cardio_vaping_and_smoking_survey.json | ~368 | Tried to quit smoking in past 12 months |
+| everQuitVaping | binary | everQuitVaping | CardioHealth/Resources/JSONs/cardiosurveys/cardio_vaping_and_smoking_survey.json | ~136 | Tried to quit vaping in past 12 months |
+| family_history | categorical | family_history | CardioHealth/Resources/JSONs/cardiosurveys/cardio_CVhealth_survey.json | ~10 | Family history of early heart disease |
+| heart_disease | categorical | heart_disease | CardioHealth/Resources/JSONs/cardiosurveys/cardio_CVhealth_survey.json | ~83 | Heart disease diagnosis |
+| heartCondition | binary | heartCondition | CardioHealth/TasksAndSteps/APHDynamicParQQuizTask.m | ~41 | Heart condition (PAR-Q) |
+| icu_treated | binary | icu_treated | CardioHealth/Resources/JSONs/cardiosurveys/cardio_covid_19_survey.json | ~331 | Treated in ICU (yes/no) |
+| jointProblem | binary | jointProblem | CardioHealth/TasksAndSteps/APHDynamicParQQuizTask.m | ~45 | Bone/joint problem (PAR-Q) |
+| labwork | binary | labwork | CardioHealth/Resources/JSONs/cardiosurveys/cardio_day_one.json | ~69 | Will have lab work in next 7 days |
+| lastCannabisSmoking | ordinal | lastCannabisSmoking | CardioHealth/Resources/JSONs/cardiosurveys/cardio_vaping_and_smoking_survey.json | ~1001 | Last time smoked cannabis |
+| medications_to_treat | categorical | medications_to_treat | CardioHealth/Resources/JSONs/cardiosurveys/cardio_CVhealth_survey.json | ~44 | Medications for risk factors |
+| onsetCannabisSmoking | continuous | (derived) | Unknown | Unknown | Age of cannabis smoking onset (not in explicit JSON) |
+| onsetSmokeless | continuous | onsetSmokeless | CardioHealth/Resources/JSONs/cardiosurveys/cardio_vaping_and_smoking_survey.json | ~521 | Age first used smokeless tobacco |
+| onsetSmoking | continuous | onsetSmoking | CardioHealth/Resources/JSONs/cardiosurveys/cardio_vaping_and_smoking_survey.json | ~354 | Age smoked first cigarette |
+| onsetVaping | continuous | onsetVaping | CardioHealth/Resources/JSONs/cardiosurveys/cardio_vaping_and_smoking_survey.json | ~122 | Age first vaped |
+| pastCannabisSmoking | ordinal | pastCannabisSmoking | CardioHealth/Resources/JSONs/cardiosurveys/cardio_vaping_and_smoking_survey.json | ~954 | Duration of past cannabis smoking |
+| pastSmokeless | ordinal | pastSmokeless | CardioHealth/Resources/JSONs/cardiosurveys/cardio_vaping_and_smoking_survey.json | ~535 | Used smokeless tobacco in past (yes/no) |
+| pastVaping | ordinal | pastVaping | CardioHealth/Resources/JSONs/cardiosurveys/cardio_vaping_and_smoking_survey.json | ~78 | Vaped in the past (yes/no) |
+| physicallyCapable | binary | physicallyCapable | CardioHealth/TasksAndSteps/APHDynamicParQQuizTask.m | ~47 | Any other reason not to be active (PAR-Q) |
+| prescriptionDrugs | binary | prescriptionDrugs | CardioHealth/TasksAndSteps/APHDynamicParQQuizTask.m | ~46 | Prescription drugs for BP/heart (PAR-Q) |
+| race | categorical | race | CardioHealth/Resources/JSONs/cardiosurveys/cardio_CVhealth_survey.json | ~255 | Race (White/Black/Asian/etc) |
+| readinessQuitSmokeless | continuous | readinessQuitSmokeless | CardioHealth/Resources/JSONs/cardiosurveys/cardio_vaping_and_smoking_survey.json | ~581 | Readiness to quit smokeless (1-10) |
+| readinessQuitSmoking | continuous | readinessQuitSmoking | CardioHealth/Resources/JSONs/cardiosurveys/cardio_vaping_and_smoking_survey.json | ~289 | Readiness to quit smoking (1-10) |
+| readinessQuitVaping | continuous | readinessQuitVaping | CardioHealth/Resources/JSONs/cardiosurveys/cardio_vaping_and_smoking_survey.json | ~57 | Readiness to quit vaping (1-10) |
+| sleep_diagnosis2 | categorical | sleep_diagnosis2 | CardioHealth/Resources/JSONs/cardiosurveys/cardio_activitysleep_survey.json | ~200 | Type of sleep disorder |
+| sleep_time1 | continuous | sleep_time1 | CardioHealth/Resources/JSONs/cardiosurveys/cardio_activitysleep_survey.json | ~152 | Hours of sleep on weekdays |
+| sleep_time2 | continuous | sleep_time | CardioHealth/Resources/JSONs/cardiosurveys/cardio_activitysleep_survey.json | ~167 | Hours of sleep needed to be rested |
+| sleep_time3 | continuous | (derived) | Unknown | Unknown | Likely weekend sleep hours |
+| tobaccoProducts | categorical | tobaccoProducts | CardioHealth/Resources/JSONs/cardiosurveys/cardio_vaping_and_smoking_survey.json | ~699 | Tobacco products used in past week |
+| tobaccoProductsEver | categorical | tobaccoProductsEver | CardioHealth/Resources/JSONs/cardiosurveys/cardio_vaping_and_smoking_survey.json | ~755 | Tobacco products ever used |
+| days_admitted | continuous | days_admitted | CardioHealth/Resources/JSONs/cardiosurveys/cardio_covid_19_survey.json | ~319 | Days hospitalized for COVID |
+| ventilator | binary | ventilator | CardioHealth/Resources/JSONs/cardiosurveys/cardio_covid_19_survey.json | ~354 | Placed on ventilator (yes/no) |
+| zip | categorical | zip | CardioHealth/Resources/JSONs/cardiosurveys/cardio_wellbeing_survey.json | ~177 | Postcode (UK) / zip (US) |
+| cannabisSmoking | ordinal | cannabisSmoking | CardioHealth/Resources/JSONs/cardiosurveys/cardio_vaping_and_smoking_survey.json | ~811 | Cannabis smoking history |
+| cannabis_onset_age | continuous | (derived) | Unknown | Unknown | Age of cannabis onset (may not be explicit) |
+| body_self_healing_in_many_different_circumstances | ordinal | body_self_healing_in_many_different_circumstances | CardioHealth/Resources/JSONs/cardiosurveys/cardio_illness_mindset_measure_inventory_survey.json | ~16 | Body self-healing belief (6-point scale) |
+| chronic_illness_impact | ordinal | chronic_illness_impact | CardioHealth/Resources/JSONs/cardiosurveys/cardio_illness_mindset_measure_inventory_survey.json | ~61 | Chronic illness impact (6-point scale) |
+| chronic_illness_body_meaning | ordinal | chronic_illness_body_meaning | CardioHealth/Resources/JSONs/cardiosurveys/cardio_illness_mindset_measure_inventory_survey.json | ~106 | Body function meaning (6-point scale) |
+| chronic_illness_body_coping | ordinal | chronic_illness_body_coping | CardioHealth/Resources/JSONs/cardiosurveys/cardio_illness_mindset_measure_inventory_survey.json | ~151 | Body coping ability (6-point scale) |
+| chronic_illness_positive_opportunity | ordinal | chronic_illness_positive_opportunity | CardioHealth/Resources/JSONs/cardiosurveys/cardio_illness_mindset_measure_inventory_survey.json | ~196 | Positive life changes opportunity (6-point scale) |
+| chronic_illness_management | ordinal | chronic_illness_management | CardioHealth/Resources/JSONs/cardiosurveys/cardio_illness_mindset_measure_inventory_survey.json | ~241 | Chronic illness manageability (6-point scale) |
+| chronic_illness_body_betrayal | ordinal | chronic_illness_body_betrayal | CardioHealth/Resources/JSONs/cardiosurveys/cardio_illness_mindset_measure_inventory_survey.json | ~286 | Body betrayal feeling (6-point scale) |
+| chronic_illness_more_meaning_in_life | ordinal | chronic_illness_more_meaning_in_life | CardioHealth/Resources/JSONs/cardiosurveys/cardio_illness_mindset_measure_inventory_survey.json | ~331 | Life meaning finding (6-point scale) |
+| chronic_illness_handling | ordinal | chronic_illness_handling | CardioHealth/Resources/JSONs/cardiosurveys/cardio_illness_mindset_measure_inventory_survey.json | ~376 | Chronic illness handling (6-point scale) |
+| body_remarkable_self_healing | ordinal | body_remarkable_self_healing | CardioHealth/Resources/JSONs/cardiosurveys/cardio_illness_mindset_measure_inventory_survey.json | ~421 | Body self-healing properties (6-point scale) |
+| chronic_illness_spoil | ordinal | chronic_illness_spoil | CardioHealth/Resources/JSONs/cardiosurveys/cardio_illness_mindset_measure_inventory_survey.json | ~466 | Chronic illness spoils life (6-point scale) |
+| chronic_illness_challenge | ordinal | chronic_illness_challenge | CardioHealth/Resources/JSONs/cardiosurveys/cardio_illness_mindset_measure_inventory_survey.json | ~511 | Challenge strengthening (6-point scale) |
+| chronic_illness_body_handling | ordinal | chronic_illness_body_handling | CardioHealth/Resources/JSONs/cardiosurveys/cardio_illness_mindset_measure_inventory_survey.json | ~556 | Body handling illness (6-point scale) |
+| chronic_illness_runing_life | ordinal | chronic_illness_runing_life | CardioHealth/Resources/JSONs/cardiosurveys/cardio_illness_mindset_measure_inventory_survey.json | ~601 | Chronic illness ruins life (6-point scale) |
+| chronic_illness_body_management | ordinal | chronic_illness_body_management | CardioHealth/Resources/JSONs/cardiosurveys/cardio_illness_mindset_measure_inventory_survey.json | ~646 | Body design for illness management (6-point scale) |
+| chronic_illness_relatively_normal_life | ordinal | chronic_illness_relatively_normal_life | CardioHealth/Resources/JSONs/cardiosurveys/cardio_illness_mindset_measure_inventory_survey.json | ~691 | Normal life with chronic illness (6-point scale) |
+| chronic_illness_body_failure | ordinal | chronic_illness_body_failure | CardioHealth/Resources/JSONs/cardiosurveys/cardio_illness_mindset_measure_inventory_survey.json | ~736 | Body failure feeling (6-point scale) |
+| chronic_illness_empowering | ordinal | chronic_illness_empowering | CardioHealth/Resources/JSONs/cardiosurveys/cardio_illness_mindset_measure_inventory_survey.json | ~781 | Fighting illness empowering (6-point scale) |
+| body_self_healing_from_most_conditions_and_diseases | ordinal | body_self_healing_from_most_conditions_and_diseases | CardioHealth/Resources/JSONs/cardiosurveys/cardio_illness_mindset_measure_inventory_survey.json | ~826 | Body healing from most conditions (6-point scale) |
+| chronic_illness_body_blame | ordinal | chronic_illness_body_blame | CardioHealth/Resources/JSONs/cardiosurveys/cardio_illness_mindset_measure_inventory_survey.json | ~871 | Body blame for illness (6-point scale) |
+
+## Derived / computed variables (documented, no direct survey field)
+
+These have no single survey field — each is documented in its own `.md` file with derivation details:
+
+- `framingham_risk.md` — Computed in iOS (`APHHeartAgeAndRiskFactors.m` lines ~173-271) using the Framingham ASCVD 10-year risk equation.
+- `BMI_values.md` — HealthKit body mass & height, or `HKQuantityTypeIdentifierBodyMassIndex`.
+- `BMI_categories.md`, `blood_pressure_categories.md`, `WakeUpTime_categories.md`, `GoSleepTime_categories.md`, `happiness_categories.md`, `sleep_time_categories.md` — Post-hoc binning defined in the **MHC-benchmark** repo (bin edges out of scope for this iOS repo).
+- `cardiovascular_disease.md`, `Heart Failure or CHF.md`, `Atrial fibrillation (Afib).md`, `PH.md`, `CAD.md`, `Congenital Heart.md`, `Peripheral-Systemic Vascular Disease.md`, `Cerebrovascular Disease.md` — Binary flags derived from `heart_disease` / `vascular` multi-select options in `cardio_CVhealth_survey.json`. Each file lists the specific option value(s) that trigger a positive flag.
+- `WakeUpTime.md`, `GoSleepTime.md` — Not in survey JSONs; sourced from AppCore user-info profile items (`kAPCUserInfoItemTypeWakeUpTime`, `kAPCUserInfoItemTypeSleepTime` in `APHAppDelegate.m` lines 1435-1436).
+- `FitzpatrickSkinType.md` — Read via `HKCharacteristicTypeIdentifierFitzpatrickSkinType` (APHAppDelegate.m line 1330); not a survey question. Earlier doc revisions misspelled this as `FrickSkinType.md`.
+
+## Notes on count discrepancies (user's spec vs. reality)
+
+- **Chronic-illness mindset battery**: user said 21 items, survey JSON has 20 — all 20 documented.
+- **"Eating-reasons battery (13)"**: no eating-reasons survey exists. The closest match is the combined Exercise Process Mindset (7 items) + Adequacy of Activity Mindset (5 items) = 12 items, all documented. Flagged as a likely mislabel in individual files.
+- **COVID ordinals**: user said 11, actual survey has 13 distinct ordinal items — all 13 documented.
+- **Sleep times (3)**: `sleep_time` (activity-sleep survey, "hours needed to feel rested"), `sleep_time1` (activity-sleep, "weekday hours slept"), `sleep_time_daily` (daily_check survey, daily minutes slept) — 3 distinct items.
+
+## Summary
+
+- **Targets**: 41 (canonical, from `label_types.json`).
+- **Contexts**: 128 (canonical, from `label_types.json`).
+- **Total files in `survey_documentation/`**: 179 variable docs + `INDEX.md` (this file) = 180. The doc tree includes reference markdown for variables that aren't direct benchmark labels (e.g. `Gender`, `BloodType`, `heart_disease`, `vascular`) — these document concepts referenced by derived labels (e.g. CAD, Afib are derived from `heart_disease` enumeration values).
+
+All survey identifiers are exact string matches from JSON survey definitions. Heart Age variables map to Objective-C constants in `APHHeartAgeAndRiskFactors.m` and `APHHeartAgeTaskViewController.m`. HealthKit variables map to `HKQuantityTypeIdentifier`/`HKCharacteristicTypeIdentifier` constants in `APHAppDelegate.m`. PAR-Q variables map to static NSString constants in `APHDynamicParQQuizTask.m`. The `field_` prefix from the benchmark dataset is stripped from all filenames but recorded in each file's frontmatter as the "Benchmark column".
+
+## Redundancy / duplicate analysis
+
+Tiered from most to least redundant.
+
+### Hard duplicates (same underlying data)
+
+- **age ≡ Age_heartage** — both back the Heart Age form's age input (constant `kHeartAgeTestDataAge`); one has role=target, the other role=context.
+- **BiologicalSex ≡ Gender** — both back the same Heart Age constant `kHeartAgeTestDataGender`.
+- **CurrentAge ≈ age** — CurrentAge is the HealthKit-DOB pre-fill that the user confirms as `age`. Usually identical post-confirmation.
+
+### Derived-from-parent (same info, lower resolution)
+
+Each `_categories` target is post-hoc binning of a continuous parent — keep either the continuous parent or the categorical version, not both:
+
+- `BMI_categories` ← `BMI_values`
+- `blood_pressure_categories` ← `SystolicBloodPressure` + `DiastolicBloodPressure`
+- `happiness_categories` ← `happiness`
+- `sleep_time_categories` ← `sleep_time`
+- `WakeUpTime_categories` ← `WakeUpTime`
+- `GoSleepTime_categories` ← `GoSleepTime`
+
+### Union of components
+
+- **cardiovascular_disease** = OR of `CAD`, `Heart Failure or CHF`, `Atrial fibrillation (Afib)`, `PH`, `Congenital Heart`, `Peripheral/Systemic Vascular Disease`, `Cerebrovascular Disease`. Modeling it alongside the subtype flags double-counts.
+
+### Same question, different survey visit (bi-weekly duplication)
+
+Many COVID items appear in both `cardio_covid_19_survey.json` (one-time) and `cardio_covid_19_recurrent_survey.json` (bi-weekly) — same variable, different cadence: `covid`, `covid_serologic`, `symptoms_*`, `severity`, `severity_covid`, `most_intense_care`, `daily_activities`, `days_admitted`, `icu_treated`, `ventilator`. The benchmark probably merges these, so each context variable represents both flavours.
+
+### Overlapping but not identical
+
+- **ethnicity / Ethnicity_heartage / race** — three different codings of overlapping info; `Ethnicity_heartage` is a 2-category Framingham simplification.
+- **tobaccoProducts / tobaccoProductsEver** — past-week vs ever-used; same structure, different horizons.
+- **symptoms_week_preceding / symptoms_past_week** — same checklist, different reference windows.
+- **feel_worthwhile2 vs happiness** — both positive-affect measures, but different surveys and cadences (retrospective ONS yesterday-item vs daily slider).
+- **sleep_time / sleep_time1 / sleep_time_daily** — all sleep duration, but distinct: perceived need / weekday self-report / daily log.
+
+### Near-duplicates inside the mindset battery
+
+Within `mindset_measures/`, several chronic-illness items cover very close semantic territory (by design — multi-item psychometric batteries use near-duplicates for scale reliability, but they carry heavily correlated signal as modeling inputs):
+
+- `body_self_healing_in_many_different_circumstances`, `body_remarkable_self_healing`, `body_self_healing_from_most_conditions_and_diseases` — three items on body self-healing belief.
+- `chronic_illness_handling`, `chronic_illness_body_handling`, `chronic_illness_management`, `chronic_illness_body_management` — four items on "can I/my body handle/manage this illness".
+- `chronic_illness_body_betrayal`, `chronic_illness_body_failure`, `chronic_illness_body_blame` — three "body-has-failed-me" items.
+- `chronic_illness_spoil` vs `chronic_illness_runing_life` — both "illness ruins life".

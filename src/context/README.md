@@ -34,3 +34,7 @@ print(result.matched_timestamp, result.value)
 
 Reads from `data/labels/context_labels.json` via the shared `LabelsStore` in
 `labels.api`. No additional data files.
+
+## Variable dictionary
+
+See [`data/labels/survey_documentation/INDEX.md`](../../data/labels/survey_documentation/INDEX.md) — per-variable reference (question text, answer options, observed value distributions, iOS source) for all 128 context labels.
