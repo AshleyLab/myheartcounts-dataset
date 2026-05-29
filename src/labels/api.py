@@ -6,6 +6,7 @@ import json
 import math
 import os
 import statistics
+import warnings
 from bisect import bisect_left, bisect_right
 from collections import Counter
 from collections.abc import Iterable
@@ -473,10 +474,17 @@ class EnrollmentIndex:
             raise KeyError(f"Unknown healthCode in enrollment: {health_code}")
         birth_year = user.get("birth_year")
         if birth_year is None:
-            # Transition fallback for pre-migration enrollment files.
             birthdate = user.get("birthdate")
             if birthdate is None:
                 raise KeyError(f"No birth_year for healthCode: {health_code}")
+            warnings.warn(
+                "Enrollment file uses legacy 'birthdate' field; deriving "
+                "birth_year from it. Re-export enrollment_info.json with "
+                "the de-identified 'birth_year' field — the 'birthdate' "
+                "fallback will be removed in a future release.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
             return int(pd.Timestamp(birthdate).year)
         return int(birth_year)
 

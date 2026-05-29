@@ -77,19 +77,28 @@ class _DatasetPaths:
 def _ensure_labels_env(labels_dir: Path) -> None:
     """Point the bundled `labels.api` module at the downloaded labels dir.
 
-    `labels.api` reads `LABELS_DATA_PATH` / `CONTEXT_LABELS_PATH` env vars
-    at import time and caches them in module-level Path constants. We set
-    the env vars if the user hasn't, then reload the module if it was
-    already imported (e.g. via ``openmhc.list_tasks()``) so the cached
-    paths reflect the new values.
+    `labels.api` reads its data-file paths from env vars at import time and
+    caches them in module-level Path constants. We set each var if the user
+    hasn't, then reload the module if it was already imported (e.g. via
+    ``openmhc.list_tasks()``) so the cached paths reflect the new values.
+
+    Without this, paths fall back to the repo-local ``data/labels/`` (which
+    ships only schema files), and `enrollment_info.json` / `label_validity.json`
+    silently load as empty — breaking the imputation sensitivity pathway and
+    the default ``return_valid_only=True`` behaviour of ``get_labels``.
     """
+    env_files = {
+        "LABELS_DATA_PATH": "last_labels.json",
+        "CONTEXT_LABELS_PATH": "context_labels.json",
+        "ENROLLMENT_DATA_PATH": "enrollment_info.json",
+        "LABEL_VALIDITY_PATH": "label_validity.json",
+        "HEALTHKIT_DAILY_PATH": "healthkit_daily.json",
+    }
     changed = False
-    if not os.getenv("LABELS_DATA_PATH"):
-        os.environ["LABELS_DATA_PATH"] = str(labels_dir / "last_labels.json")
-        changed = True
-    if not os.getenv("CONTEXT_LABELS_PATH"):
-        os.environ["CONTEXT_LABELS_PATH"] = str(labels_dir / "context_labels.json")
-        changed = True
+    for var, filename in env_files.items():
+        if not os.getenv(var):
+            os.environ[var] = str(labels_dir / filename)
+            changed = True
 
     if changed:
         import importlib
