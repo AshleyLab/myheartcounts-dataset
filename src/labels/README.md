@@ -3,7 +3,7 @@
 This module exposes a fast, in-memory lookup for label values and age computation with automatic type enforcement.
 
 ## Public surface
-- `labels.get_labels(health_code: str, timestamp: pandas.Timestamp, label: str, enforce_type: bool = True) -> LabelResult`
+- `labels.get_labels(health_code: str, timestamp: pandas.Timestamp, label: str, enforce_type: bool = True, return_valid_only: bool = True) -> LabelResult`
 - `labels.LABEL_NAMES`: list of available labels (including `"age"`).
 - `labels.LABEL_TYPES`: dict mapping label names to their semantic types (`binary`, `ordinal`, `categorical`, `continuous`).
 - `labels.get_labels_statistics() -> pandas.DataFrame`: returns statistics for all labels as a DataFrame.
@@ -144,12 +144,12 @@ work                      bool         0.00         1.00         1.00         2
 - For labels in `labels.json`, the closest timestamp is chosen; ties favor the earlier point.
 - `age` is stored as a static value in `last_labels.json` (calendar-year age at the user's last survey timestamp).
 
-Recent local throughput (from `pytest labels/test_api.py -k performance`):
+Recent local throughput (from `PYTHONPATH=src pytest src/labels/test_api.py -k performance`):
 - Label lookups: ~762,936.5 per second
 - Age lookups: ~729,164.1 per second
 
 ## Tests
 Run from repo root:
 ```bash
-pytest tests/test_labels_api.py
+PYTHONPATH=src pytest src/labels/test_api.py
 ```
