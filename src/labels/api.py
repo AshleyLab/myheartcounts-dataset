@@ -455,25 +455,30 @@ class EnrollmentIndex:
         """
         return self._enrollment.get(health_code)
 
-    def get_birthdate(self, health_code: str) -> pd.Timestamp:
-        """Get birthdate for a health code.
+    def get_birth_year(self, health_code: str) -> int:
+        """Get the de-identified birth year for a health code.
 
         Args:
             health_code: Health code identifier.
 
         Returns:
-            Birthdate as a pandas Timestamp.
+            Birth year as an integer.
 
         Raises:
-            KeyError: If health code not found or no birthdate available.
+            KeyError: If the health code is not found or no birth year /
+                birthdate is recorded.
         """
         user = self.get(health_code)
         if user is None:
             raise KeyError(f"Unknown healthCode in enrollment: {health_code}")
-        birthdate = user.get("birthdate")
-        if birthdate is None:
-            raise KeyError(f"No birthdate for healthCode: {health_code}")
-        return pd.Timestamp(birthdate)
+        birth_year = user.get("birth_year")
+        if birth_year is None:
+            # Transition fallback for pre-migration enrollment files.
+            birthdate = user.get("birthdate")
+            if birthdate is None:
+                raise KeyError(f"No birth_year for healthCode: {health_code}")
+            return int(pd.Timestamp(birthdate).year)
+        return int(birth_year)
 
 
 class LabelsStore:

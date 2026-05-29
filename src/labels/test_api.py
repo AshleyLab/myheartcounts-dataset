@@ -1558,3 +1558,51 @@ def test_get_labels_statistics_skips_multi_categorical(tmp_path: Path) -> None:
     assert "field_race" not in df["label"].values
     # sanity: non-multi_categorical labels still appear
     assert "Diabetes" in df["label"].values
+
+
+# ---- Privacy migration (birth_year) tests ---- #
+
+
+def test_get_birth_year_from_birth_year_field(tmp_path: Path) -> None:
+    """When enrollment has 'birth_year', get_birth_year returns it as int."""
+    labels_path = tmp_path / "last_labels.json"
+    enrollment_path = tmp_path / "enrollment_info.json"
+    labels_path.write_text(json.dumps({}))
+    enrollment_path.write_text(json.dumps({"user-123": {"birth_year": 1985}}))
+    api = _load_api_with_paths(labels_path, enrollment_path)
+
+    assert api.STORE.enrollment.get_birth_year("user-123") == 1985
+
+
+def test_get_birth_year_transition_fallback_from_birthdate(tmp_path: Path) -> None:
+    """Legacy 'birthdate' field is accepted: birth year derived from it."""
+    labels_path = tmp_path / "last_labels.json"
+    enrollment_path = tmp_path / "enrollment_info.json"
+    labels_path.write_text(json.dumps({}))
+    enrollment_path.write_text(json.dumps({"user-123": {"birthdate": "1990-05-01"}}))
+    api = _load_api_with_paths(labels_path, enrollment_path)
+
+    assert api.STORE.enrollment.get_birth_year("user-123") == 1990
+
+
+def test_get_birth_year_missing_raises(tmp_path: Path) -> None:
+    """Neither birth_year nor birthdate -> KeyError."""
+    labels_path = tmp_path / "last_labels.json"
+    enrollment_path = tmp_path / "enrollment_info.json"
+    labels_path.write_text(json.dumps({}))
+    enrollment_path.write_text(json.dumps({"user-123": {}}))
+    api = _load_api_with_paths(labels_path, enrollment_path)
+
+    with pytest.raises(KeyError):
+        api.STORE.enrollment.get_birth_year("user-123")
+
+
+def test_get_birthdate_no_longer_present(tmp_path: Path) -> None:
+    """get_birthdate is removed; only get_birth_year exists post-migration."""
+    labels_path = tmp_path / "last_labels.json"
+    enrollment_path = tmp_path / "enrollment_info.json"
+    labels_path.write_text(json.dumps({}))
+    enrollment_path.write_text(json.dumps({"user-123": {"birth_year": 1985}}))
+    api = _load_api_with_paths(labels_path, enrollment_path)
+
+    assert not hasattr(api.STORE.enrollment, "get_birthdate")
