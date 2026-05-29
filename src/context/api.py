@@ -1,6 +1,6 @@
 """Discoverable accessor for MHC context labels.
 
-Context labels (e.g. ``field_smoking``, ``field_race``, ``field_device_iphone``)
+Context labels (e.g. ``field_smokingHistory``, ``field_race``, ``field_device_iphone``)
 are participant-level covariates -- distinct from the prediction targets in
 ``last_labels.json``.  They are queryable via :func:`labels.get_labels` already;
 this module adds a typed entry point that validates the label is in fact a
@@ -13,7 +13,7 @@ Quick start:
     >>> result = get_context(
     ...     health_code="user-123",
     ...     timestamp=pd.Timestamp("2020-01-01"),
-    ...     context_label="field_smoking",
+    ...     context_label="field_smokingHistory",
     ... )
     >>> result.value
     False

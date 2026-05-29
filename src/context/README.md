@@ -1,7 +1,7 @@
 # Context API
 
 Discoverable accessor for context (covariate) labels — participant-level
-variables that aren't prediction targets, e.g. `field_smoking`, `field_race`,
+variables that aren't prediction targets, e.g. `field_smokingHistory`, `field_race`,
 `field_device_iphone`.
 
 ## Public surface
@@ -25,7 +25,7 @@ from context import get_context, CONTEXT_NAMES
 result = get_context(
     health_code="user-123",
     timestamp=pd.Timestamp("2020-01-01"),
-    context_label="field_smoking",
+    context_label="field_smokingHistory",
 )
 print(result.matched_timestamp, result.value)
 ```
