@@ -43,11 +43,12 @@ package-dir = {"" = "src"}
 [tool.setuptools.packages.find]
 where = ["src"]
 include = [
-  "openmhc*",
+  "context*",
   "data*",
   "downstream_evaluation*",
   "imputation_evaluation*",
   "labels*",
+  "openmhc*",
   "utils*",
 ]
 
