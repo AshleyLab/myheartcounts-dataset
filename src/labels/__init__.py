@@ -5,7 +5,9 @@ from .api import (
     DAILY_LABELS,
     LABEL_NAMES,
     LABEL_TYPES,
+    LABEL_TYPES_PATH,
     MULTI_CATEGORICAL_NAMES,
+    ORDINAL_DICTIONARY_PATH,
     TARGET_NAMES,
     LabelResult,
     LabelTypeError,
@@ -18,6 +20,7 @@ from .api import (
     get_labels_statistics,
     get_labels_windowed,
     print_labels_statistics,
+    years_between_birth_year,
 )
 
 __all__ = [
@@ -25,7 +28,9 @@ __all__ = [
     "DAILY_LABELS",
     "LABEL_NAMES",
     "LABEL_TYPES",
+    "LABEL_TYPES_PATH",
     "MULTI_CATEGORICAL_NAMES",
+    "ORDINAL_DICTIONARY_PATH",
     "TARGET_NAMES",
     "LabelResult",
     "LabelTypeError",
@@ -38,4 +43,5 @@ __all__ = [
     "get_labels_statistics",
     "get_labels_windowed",
     "print_labels_statistics",
+    "years_between_birth_year",
 ]

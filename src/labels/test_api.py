@@ -1606,3 +1606,30 @@ def test_get_birthdate_no_longer_present(tmp_path: Path) -> None:
     api = _load_api_with_paths(labels_path, enrollment_path)
 
     assert not hasattr(api.STORE.enrollment, "get_birthdate")
+
+
+def test_years_between_birth_year_basic(tmp_path: Path) -> None:
+    """years_between_birth_year returns calendar-year age."""
+    api = _load_api(tmp_path)
+    assert api.years_between_birth_year(2000, pd.Timestamp("2020-12-31")) == 20
+    assert api.years_between_birth_year(2000, pd.Timestamp("2020-01-01")) == 20
+    assert api.years_between_birth_year(1990, pd.Timestamp("2026-06-15")) == 36
+
+
+def test_years_between_removed(tmp_path: Path) -> None:
+    """years_between (birthdate-based) is removed; use years_between_birth_year."""
+    api = _load_api(tmp_path)
+    assert not hasattr(api, "years_between")
+
+
+def test_vlm_path_exports_present() -> None:
+    """LABEL_TYPES_PATH and ORDINAL_DICTIONARY_PATH are re-exported from labels package."""
+    import labels
+    assert hasattr(labels, "LABEL_TYPES_PATH")
+    assert hasattr(labels, "ORDINAL_DICTIONARY_PATH")
+
+
+def test_years_between_birth_year_export_present() -> None:
+    """years_between_birth_year is re-exported from labels package."""
+    import labels
+    assert hasattr(labels, "years_between_birth_year")

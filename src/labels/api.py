@@ -657,11 +657,9 @@ def _to_epoch_ns(ts: str) -> int:
     return int(pd.Timestamp(ts).value)
 
 
-def years_between(birthdate: pd.Timestamp, at: pd.Timestamp) -> int:
-    """Return whole years elapsed between birthdate and a reference timestamp."""
-    years = at.year - birthdate.year
-    has_had_birthday = (at.month, at.day) >= (birthdate.month, birthdate.day)
-    return years if has_had_birthday else years - 1
+def years_between_birth_year(birth_year: int, at: pd.Timestamp) -> int:
+    """Return calendar-year age from a de-identified birth year."""
+    return at.year - int(birth_year)
 
 
 STORE = LabelsStore(
