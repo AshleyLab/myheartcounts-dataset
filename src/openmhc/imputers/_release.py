@@ -13,6 +13,15 @@ inference time is a single call::
 
     imp = BRITSImputer.from_release("my-release/")
 
+The same call also accepts an ``hf://org/repo[@revision]`` URI to load a
+bundle published on the Hugging Face Hub::
+
+    imp = BRITSImputer.from_release("hf://MyHeartCounts/openmhc-brits-imp")
+    imp = BRITSImputer.from_release("hf://MyHeartCounts/openmhc-brits-imp@v1.0")
+
+Loading from HF requires the optional ``[hf]`` extra
+(``pip install 'openmhc[hf]'``).
+
 Paths inside the manifest are stored *relative to the manifest file* so
 the whole directory is movable. ``normalization_stats`` may be ``null``
 for checkpoints trained on raw (un-normalized) inputs.
@@ -36,6 +45,7 @@ SPEC_VERSION = 2
 # field; v2 adds it. v1 manifests still load via the same code path — the new
 # field is parsed only when present.
 _SUPPORTED_SPEC_VERSIONS = frozenset({1, 2})
+HF_URI_PREFIX = "hf://"
 
 _KNOWN_KINDS = frozenset({
     "brits", "timesnet", "dlinear", "fedformer",
@@ -48,6 +58,18 @@ _KNOWN_KINDS = frozenset({
 # plain Python attribute, so it isn't saved to ``state_dict``. We capture
 # those indices at training time and restore them post-load.
 _FOURIER_MODES_KINDS = frozenset({"fedformer"})
+
+# Only the bundle's payload files are pulled from HF — model cards and any other
+# repo metadata are skipped.
+_HF_ALLOW_PATTERNS = (
+    MANIFEST_FILENAME,
+    "normalization_stats.json",
+    "fourier_modes.json",
+    "*.pypots",
+    "*.ckpt",
+    "*.pt",
+    "*.pth",
+)
 
 
 @dataclass(frozen=True)
@@ -77,8 +99,58 @@ class Manifest:
     fourier_modes_path: Path | None = None
 
 
+def _resolve_hf_manifest(uri: str) -> Path:
+    """Snapshot-download an ``hf://org/repo[@revision]`` bundle.
+
+    The remote bundle layout is the same as a local release directory: a
+    manifest plus its referenced checkpoint and optional normalization
+    stats. Files outside that allowlist (e.g. the model card) are skipped.
+    Caches via ``huggingface_hub``'s own default location
+    (``~/.cache/huggingface/hub``, controllable with ``HF_HOME``).
+
+    Args:
+        uri: An ``hf://org/repo`` or ``hf://org/repo@revision`` URI.
+            ``revision`` may be any git ref (tag, branch, commit) accepted
+            by ``huggingface_hub.snapshot_download``.
+
+    Returns:
+        Absolute path to the downloaded manifest file.
+
+    Raises:
+        ImportError: If ``huggingface_hub`` is not installed.
+        FileNotFoundError: If the downloaded snapshot does not contain a
+            manifest file.
+    """
+    try:
+        from huggingface_hub import snapshot_download
+    except ImportError as exc:
+        raise ImportError(
+            "Loading hf:// release bundles requires huggingface_hub. "
+            "Install it with: pip install 'openmhc[hf]'"
+        ) from exc
+    rest = uri[len(HF_URI_PREFIX):]
+    if "@" in rest:
+        repo_id, revision = rest.split("@", 1)
+    else:
+        repo_id, revision = rest, None
+    local_dir = snapshot_download(
+        repo_id=repo_id,
+        revision=revision,
+        allow_patterns=list(_HF_ALLOW_PATTERNS),
+    )
+    manifest = Path(local_dir) / MANIFEST_FILENAME
+    if not manifest.exists():
+        suffix = f" (revision={revision!r})" if revision else ""
+        raise FileNotFoundError(
+            f"HF repo {repo_id!r}{suffix} contains no {MANIFEST_FILENAME}"
+        )
+    return manifest
+
+
 def _resolve_manifest_path(path: str | Path) -> Path:
-    """Accept either the manifest file itself or a directory containing it."""
+    """Accept the manifest file, a directory containing it, or an ``hf://`` URI."""
+    if isinstance(path, str) and path.startswith(HF_URI_PREFIX):
+        return _resolve_hf_manifest(path)
     p = Path(path)
     if p.is_dir():
         candidate = p / MANIFEST_FILENAME
@@ -96,8 +168,9 @@ def load_manifest(path: str | Path) -> Manifest:
     """Read and validate an openmhc release manifest.
 
     Args:
-        path: Either a manifest file (``openmhc_manifest.json``) or a
-            directory containing one.
+        path: A manifest file (``openmhc_manifest.json``), a directory
+            containing one, or an ``hf://org/repo[@revision]`` URI
+            pointing at a Hugging Face Hub repo.
 
     Returns:
         A :class:`Manifest` with ``checkpoint_path`` and
@@ -267,7 +340,9 @@ class ReleaseLoadableMixin:
         keyword arguments.
 
         Args:
-            path: A release directory or a direct path to a manifest file.
+            path: A release directory, a direct path to a manifest file,
+                or an ``hf://org/repo[@revision]`` URI for a bundle on the
+                Hugging Face Hub.
             **runtime_kwargs: Forwarded to the constructor (e.g.
                 ``device="cuda:0"``). Must not duplicate any key in the
                 manifest's ``arch`` dict.

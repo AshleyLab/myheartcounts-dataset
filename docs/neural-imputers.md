@@ -45,15 +45,21 @@ import-time surface stays minimal.
 import openmhc
 from openmhc.imputers import BRITSImputer
 
-imputer = BRITSImputer.from_release("path/to/openmhc-brits-paper/")
+imputer = BRITSImputer.from_release("hf://MyHeartCounts/openmhc-brits-imp")
 results = openmhc.evaluate_imputation(imputer, version="xs")
 print(results.summary())
 ```
 
-`from_release(...)` reads the bundle's manifest, validates that its `kind`
-matches the wrapper class, and constructs the imputer with the recorded
-architecture hyperparameters and normalization stats. The bundle layout is
-identical across PyPOTS and LSM2.
+`from_release(...)` accepts three forms:
+
+- A local release directory (`"path/to/openmhc-brits-paper/"`)
+- A direct path to a manifest file
+- A `hf://org/repo[@revision]` URI for a bundle on the Hugging Face Hub
+
+It reads the bundle's manifest, validates that its `kind` matches the
+wrapper class, and constructs the imputer with the recorded architecture
+hyperparameters and normalization stats. The bundle layout is identical
+across PyPOTS, LSM2, and local-vs-HF storage.
 
 Runtime knobs (`device`, `inference_batch_size`, `data_dir`, and for LSM2
 `inference_dropout_removal_ratio`) can be passed as kwargs:
@@ -80,6 +86,48 @@ mhc-impute-eval --multirun method=brits,timesnet,dlinear,fedformer \
 
 The CLI copies the release manifest into the run dir so each result is
 traceable to its exact checkpoint and arch.
+
+---
+
+## Hugging Face Hub bundles
+
+Paper-faithful checkpoints are mirrored on the Hugging Face Hub under the
+[`MyHeartCounts`](https://huggingface.co/MyHeartCounts) organization. The
+`hf://` URI scheme is the recommended path for users who don't have W&B
+access; bundles are public and licensed [OpenRAIL][openrail].
+
+```bash
+pip install 'openmhc[pypots,hf]'      # PyPOTS wrappers + HF loader
+pip install 'openmhc[lsm2,hf]'        # LSM2 wrappers + HF loader
+```
+
+| Release | HF repo | Wrapper |
+|---|---|---|
+| BRITS (daily) | `MyHeartCounts/openmhc-brits-imp` | `BRITSImputer` |
+| DLinear (daily) | `MyHeartCounts/openmhc-dlinear-imp` | `DLinearImputer` |
+| DLinear (7-day) | `MyHeartCounts/openmhc-dlinear-7day-imp` | `DLinearImputer` |
+| FEDformer (daily) | `MyHeartCounts/openmhc-fedformer-imp` | `FEDformerImputer` |
+| TimesNet (daily) | `MyHeartCounts/openmhc-timesnet-imp` | `TimesNetImputer` |
+| LSM2 (daily) | `MyHeartCounts/openmhc-lsm2-daily` | `LSM2Imputer` |
+| LSM2 (weekly) | `MyHeartCounts/openmhc-lsm2-weekly` | `LSM2Imputer` |
+| LSM2 (weekly-sparse) | `MyHeartCounts/openmhc-lsm2-weekly-sparse` | `LSM2WeeklySparseImputer` |
+
+The `-imp` suffix on the PyPOTS rows flags those bundles as imputation-only
+fine-tunes. The LSM2 bundles are general-purpose self-supervised encoders
+that happen to support imputation via the wrapper.
+
+Pin a specific revision (once tagged) with `@`:
+
+```python
+BRITSImputer.from_release("hf://MyHeartCounts/openmhc-brits-imp@v1.0")
+```
+
+Snapshots cache via `huggingface_hub`'s default location
+(`~/.cache/huggingface/hub`, controllable via `HF_HOME`). Only the
+manifest, normalization stats, and checkpoint files are downloaded — the
+model card and any other repo metadata are skipped.
+
+[openrail]: https://huggingface.co/blog/open_rlhf
 
 ---
 
