@@ -123,6 +123,15 @@ ARCH_FIELDS_BY_KIND: dict[str, tuple[str, ...]] = {
     ),
 }
 
+# Per-kind YAML→manifest field renames. The PyPOTS YAML for FEDformer uses
+# `version` (matching PyPOTS's own kwarg) for the frequency basis, but the
+# OpenMHC wrapper exposes that as `variant` (its `version` kwarg is reserved
+# for the dataset version). Storing `variant` in the manifest is what makes
+# `from_release` load cleanly.
+_ARCH_FIELD_RENAMES: dict[str, dict[str, str]] = {
+    "fedformer": {"version": "variant"},
+}
+
 # Kinds whose `method.<kind>` YAML block doesn't carry architecture
 # fields — for those, architecture and normalization stats must be
 # extracted from the Lightning checkpoint instead.
@@ -279,8 +288,13 @@ def _resolve_stats(repo_root: Path, stats_path: str | None) -> Path | None:
 
 
 def _extract_arch(pypots_block: dict[str, Any], kind: str) -> dict[str, Any]:
-    """Filter the YAML's pypots block down to fields relevant to ``kind``."""
+    """Filter the YAML's pypots block down to fields relevant to ``kind``.
+
+    Applies the per-kind YAML→manifest rename in :data:`_ARCH_FIELD_RENAMES`
+    so the emitted manifest matches the wrapper's constructor kwargs.
+    """
     fields = ARCH_FIELDS_BY_KIND[kind]
+    renames = _ARCH_FIELD_RENAMES.get(kind, {})
     arch: dict[str, Any] = {}
     for field_name in fields:
         if field_name not in pypots_block:
@@ -288,7 +302,7 @@ def _extract_arch(pypots_block: dict[str, Any], kind: str) -> dict[str, Any]:
                 f"Source config is missing required arch field {field_name!r} "
                 f"for kind={kind!r}"
             )
-        arch[field_name] = pypots_block[field_name]
+        arch[renames.get(field_name, field_name)] = pypots_block[field_name]
     return arch
 
 

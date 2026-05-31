@@ -1,0 +1,7 @@
+# @package model
+# BRITS (Bidirectional Recurrent Imputation for Time Series).
+# Recreates the MHC-benchmark training-time arch (brits.pypots:v19 used these).
+model_name: brits
+n_steps: 1440
+n_features: 19
+rnn_hidden_size: 128

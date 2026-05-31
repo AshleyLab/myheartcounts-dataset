@@ -128,6 +128,7 @@ Submissions must follow the standard evaluation protocol — same split file, ma
 | `src/openmhc/` | Public API (`evaluate_prediction`, `evaluate_imputation`, `evaluate_forecasting`, `download_dataset`, …) |
 | `src/downstream_evaluation/` | Track 1 internals (linear probes, time-window selection, metrics) |
 | `src/imputation_evaluation/` | Track 2 internals (masking scenarios, per-channel metrics) |
+| `src/imputation_training/` | Track 2 training pipeline — `mhc-impute-train` for BRITS/DLinear/TimesNet/FEDformer. See [`docs/neural-imputers.md`](docs/neural-imputers.md#training-your-own-imputer) |
 | `src/forecasting_evaluation/` | Track 3 internals (window cache, point + quantile metrics) |
 | `src/labels/` | Label registry + type lookup |
 | `data/labels/` | Schema-only registry files (label types, ordinal vocab, validity config) |

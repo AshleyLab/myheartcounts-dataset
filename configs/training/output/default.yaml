@@ -1,0 +1,11 @@
+# @package output
+# saving_path: PyPOTS' own per-run dir (it appends <YYYYMMDD_THHMMSS>/<MODEL>.pypots).
+# release_dir: openmhc release bundle (manifest + checkpoint + sidecar). When null,
+#              the runner derives <saving_path>_release.
+saving_path: models/pypots
+model_saving_strategy: best
+release_dir: null
+
+wandb_enabled: false
+wandb_project: openmhc-pypots
+wandb_entity: null

@@ -31,22 +31,40 @@ from pathlib import Path
 from typing import Any
 
 MANIFEST_FILENAME = "openmhc_manifest.json"
-SPEC_VERSION = 1
+SPEC_VERSION = 2
+# Spec versions we can load. v1 lacked the optional ``fourier_modes`` sidecar
+# field; v2 adds it. v1 manifests still load via the same code path — the new
+# field is parsed only when present.
+_SUPPORTED_SPEC_VERSIONS = frozenset({1, 2})
 
 _KNOWN_KINDS = frozenset({
     "brits", "timesnet", "dlinear", "fedformer",
     "lsm2", "lsm2_weekly_sparse",
 })
 
+# Kinds that may carry a Fourier-modes sidecar. The sidecar exists to work
+# around an upstream PyPOTS bug: ``FourierBlock.__init__`` calls
+# ``np.random.shuffle(index)`` and stores the result on ``self.index`` as a
+# plain Python attribute, so it isn't saved to ``state_dict``. We capture
+# those indices at training time and restore them post-load.
+_FOURIER_MODES_KINDS = frozenset({"fedformer"})
+
 
 @dataclass(frozen=True)
 class Manifest:
     """Parsed, path-resolved release manifest.
 
-    ``checkpoint_path`` and ``normalization_stats_path`` are absolute
-    paths resolved against the manifest file's directory. ``arch`` is
-    the dict of training-time architecture kwargs, ready to splat into
-    the wrapper's constructor.
+    ``checkpoint_path``, ``normalization_stats_path``, and
+    ``fourier_modes_path`` are absolute paths resolved against the
+    manifest file's directory. ``arch`` is the dict of training-time
+    architecture kwargs, ready to splat into the wrapper's constructor.
+
+    ``fourier_modes_path`` is only set for kinds that need it
+    (currently ``"fedformer"``) and only for manifests written by a
+    trainer that knows about the upstream PyPOTS index-not-in-state-dict
+    bug. Older manifests (spec_version 1) always have it as ``None``;
+    consumers should fall back to the legacy "re-draw on construct"
+    behaviour in that case.
     """
 
     spec_version: int
@@ -56,6 +74,7 @@ class Manifest:
     normalization_stats_path: Path | None
     provenance: dict[str, Any]
     manifest_path: Path
+    fourier_modes_path: Path | None = None
 
 
 def _resolve_manifest_path(path: str | Path) -> Path:
@@ -95,10 +114,10 @@ def load_manifest(path: str | Path) -> Manifest:
     base = manifest_file.parent
 
     spec_version = raw.get("spec_version")
-    if spec_version != SPEC_VERSION:
+    if spec_version not in _SUPPORTED_SPEC_VERSIONS:
         raise ValueError(
             f"Unsupported manifest spec_version {spec_version!r}; "
-            f"this build understands spec_version={SPEC_VERSION}"
+            f"this build understands {sorted(_SUPPORTED_SPEC_VERSIONS)}"
         )
 
     kind = raw.get("kind")
@@ -126,6 +145,23 @@ def load_manifest(path: str | Path) -> Manifest:
                 f"Manifest references missing stats file: {stats_path}"
             )
 
+    # Spec v2 added an optional ``fourier_modes`` sidecar (FEDformer only).
+    # In v1 manifests the field is simply absent.
+    fourier_rel = raw.get("fourier_modes")
+    if fourier_rel is None:
+        fourier_path: Path | None = None
+    else:
+        if kind not in _FOURIER_MODES_KINDS:
+            raise ValueError(
+                f"Manifest kind {kind!r} cannot carry a 'fourier_modes' sidecar; "
+                f"allowed kinds: {sorted(_FOURIER_MODES_KINDS)}"
+            )
+        fourier_path = (base / fourier_rel).resolve()
+        if not fourier_path.exists():
+            raise FileNotFoundError(
+                f"Manifest references missing fourier_modes sidecar: {fourier_path}"
+            )
+
     arch = raw.get("arch")
     if not isinstance(arch, dict):
         raise ValueError("Manifest field 'arch' must be a dict")
@@ -142,6 +178,7 @@ def load_manifest(path: str | Path) -> Manifest:
         normalization_stats_path=stats_path,
         provenance=dict(provenance),
         manifest_path=manifest_file,
+        fourier_modes_path=fourier_path,
     )
 
 
@@ -152,14 +189,15 @@ def write_manifest(
     arch: dict[str, Any],
     checkpoint: str,
     normalization_stats: str | None = None,
+    fourier_modes: str | None = None,
     provenance: dict[str, Any] | None = None,
     filename: str = MANIFEST_FILENAME,
 ) -> Path:
     """Write a release manifest into ``directory``.
 
-    Paths in ``checkpoint`` and ``normalization_stats`` are stored as-is
-    and interpreted at load time relative to the manifest's directory —
-    typically just filenames pointing at siblings.
+    Paths in ``checkpoint``, ``normalization_stats`` and ``fourier_modes``
+    are stored as-is and interpreted at load time relative to the
+    manifest's directory — typically just filenames pointing at siblings.
 
     Args:
         directory: Release directory; will be created if missing.
@@ -169,6 +207,11 @@ def write_manifest(
         checkpoint: Path to the ``.pypots`` file, relative to ``directory``.
         normalization_stats: Path to the stats JSON, relative to
             ``directory``. ``None`` if the model expects raw inputs.
+        fourier_modes: Path to a Fourier-modes sidecar JSON, relative to
+            ``directory``. Only valid when ``kind == "fedformer"`` — captures
+            the training-time ``FourierBlock.index`` values that PyPOTS
+            does not persist in ``state_dict``. ``None`` to omit
+            (manifest stays spec v1 compatible for non-FEDformer kinds).
         provenance: Optional metadata (training run id, dataset version,
             paper table, etc.) — not interpreted, just stored.
         filename: Manifest filename (defaults to ``openmhc_manifest.json``).
@@ -180,9 +223,14 @@ def write_manifest(
         raise ValueError(
             f"Unknown manifest kind {kind!r}; expected one of {sorted(_KNOWN_KINDS)}"
         )
+    if fourier_modes is not None and kind not in _FOURIER_MODES_KINDS:
+        raise ValueError(
+            f"Manifest kind {kind!r} cannot carry a 'fourier_modes' sidecar; "
+            f"allowed kinds: {sorted(_FOURIER_MODES_KINDS)}"
+        )
     out_dir = Path(directory)
     out_dir.mkdir(parents=True, exist_ok=True)
-    payload = {
+    payload: dict[str, Any] = {
         "spec_version": SPEC_VERSION,
         "kind": kind,
         "checkpoint": checkpoint,
@@ -190,6 +238,8 @@ def write_manifest(
         "arch": dict(arch),
         "provenance": dict(provenance) if provenance else {},
     }
+    if fourier_modes is not None:
+        payload["fourier_modes"] = fourier_modes
     out = out_dir / filename
     out.write_text(json.dumps(payload, indent=2))
     return out
@@ -241,9 +291,17 @@ class ReleaseLoadableMixin:
             if manifest.normalization_stats_path is not None
             else None
         )
+        # Spec v2 may carry a Fourier-modes sidecar for FEDformer; thread it
+        # through as a kwarg so :meth:`FEDformerImputer._post_load` can
+        # restore ``module.index`` after PyPOTS' state_dict load. Other
+        # kinds never see this kwarg (validated by ``load_manifest``).
+        extra_kwargs: dict[str, Any] = {}
+        if manifest.fourier_modes_path is not None:
+            extra_kwargs["fourier_modes_path"] = str(manifest.fourier_modes_path)
         return cls(
             model_path=str(manifest.checkpoint_path),
             normalization_stats_path=stats_path,
             **manifest.arch,
+            **extra_kwargs,
             **runtime_kwargs,
         )

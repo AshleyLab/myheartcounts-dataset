@@ -73,6 +73,7 @@ class _PyPOTSImputerBase(ReleaseLoadableMixin, BaseImputer):
         self._stats = self._load_stats(normalization_stats_path)
         self._model = self._build_model()
         self._model.load(str(self._model_file))
+        self._post_load()
         self.name = f"pypots_{self.model_name}"
 
     # ------------------------------------------------------------------
@@ -84,6 +85,16 @@ class _PyPOTSImputerBase(ReleaseLoadableMixin, BaseImputer):
             "Subclasses must implement `_build_model` to return a PyPOTS model "
             "instantiated with matching architecture hyperparameters."
         )
+
+    def _post_load(self) -> None:
+        """Hook called right after PyPOTS' ``model.load(...)`` returns.
+
+        Default implementation is a no-op. Subclasses override this to
+        restore stochastic-construction-time attributes that PyPOTS does
+        NOT persist in ``state_dict`` — currently only FEDformer's
+        :class:`FourierBlock` (see :class:`FEDformerImputer._post_load`).
+        """
+        return None
 
     # ------------------------------------------------------------------
     # Checkpoint + stats helpers
@@ -354,6 +365,28 @@ class DLinearImputer(_PyPOTSImputerBase):
 class FEDformerImputer(_PyPOTSImputerBase):
     """PyPOTS FEDformer imputer (frequency-enhanced decomposed Transformer).
 
+    .. note::
+
+        FEDformer's ``FourierBlock`` draws ``self.index`` (the frequency
+        bins its trained ``weights1`` parameter is bound to) by calling
+        ``np.random.shuffle`` at construction time and stores the result
+        as a plain Python attribute — NOT a registered buffer. PyPOTS
+        checkpoints therefore lose this index on save. Loading a
+        ``.pypots`` blob in a fresh process re-draws the index against
+        an unknown ``np.random`` state, so the trained weights end up
+        operating on the wrong frequency bins (typically 2–6% NRMSE
+        degradation on the openmhc benchmark).
+
+        OpenMHC works around this with a per-release sidecar JSON: at
+        training time the trainer extracts ``module.index`` for every
+        ``FourierBlock`` and writes them to ``fourier_modes.json`` next
+        to the ``.pypots`` file. The manifest's optional
+        ``fourier_modes`` field points at that sidecar; on load we
+        restore the indices via :meth:`_post_load`. Bundles produced by
+        older trainers (or by users without the sidecar) silently fall
+        back to the legacy "re-draw on construct" behaviour and exhibit
+        the bug.
+
     Args:
         model_path: Path to a ``.pypots`` checkpoint or a directory holding one.
         version: OpenMHC dataset version (``"xs"`` or ``"full"``). Distinct
@@ -368,6 +401,12 @@ class FEDformerImputer(_PyPOTSImputerBase):
             Maps to PyPOTS's own ``version`` kwarg internally.
         modes: Number of frequency modes.
         mode_select: ``"random"`` or ``"low"``.
+        fourier_modes_path: Optional path to a ``fourier_modes.json``
+            sidecar produced at training time. Format:
+            ``{module_dotted_path: list[int]}``. When supplied,
+            :meth:`_post_load` overwrites each ``FourierBlock.index``
+            with the matching entry, undoing the random re-draw. Pass
+            ``None`` (or omit) for bundles that don't carry one.
         device, inference_batch_size, normalization_stats_path, n_steps,
         n_features, data_dir: See :class:`BRITSImputer`.
     """
@@ -388,6 +427,7 @@ class FEDformerImputer(_PyPOTSImputerBase):
         variant: Literal["Fourier", "Wavelets"] = "Fourier",
         modes: int = 32,
         mode_select: Literal["random", "low"] = "random",
+        fourier_modes_path: str | Path | None = None,
         device: str = "cuda",
         inference_batch_size: int = 64,
         normalization_stats_path: str | Path | None = None,
@@ -404,6 +444,9 @@ class FEDformerImputer(_PyPOTSImputerBase):
         self._variant = variant
         self._modes = int(modes)
         self._mode_select = mode_select
+        self._fourier_modes_path = (
+            Path(fourier_modes_path) if fourier_modes_path is not None else None
+        )
         super().__init__(
             model_path,
             version=version,
@@ -433,3 +476,51 @@ class FEDformerImputer(_PyPOTSImputerBase):
             batch_size=self._inference_batch_size,
             device=self._device,
         )
+
+    def _post_load(self) -> None:
+        """Restore the trained FourierBlock indices from the sidecar.
+
+        See the class docstring for why this is necessary. If no
+        ``fourier_modes_path`` was supplied (legacy bundles or direct
+        construction without a sidecar) this is a no-op and the model
+        keeps whatever indices ``FourierBlock.__init__`` happened to
+        draw on this process's RNG state.
+        """
+        if self._fourier_modes_path is None:
+            return
+        if not self._fourier_modes_path.exists():
+            raise FileNotFoundError(
+                f"FEDformer fourier_modes sidecar not found: {self._fourier_modes_path}"
+            )
+        sidecar = json.loads(self._fourier_modes_path.read_text())
+        if not isinstance(sidecar, dict):
+            raise ValueError(
+                f"fourier_modes sidecar at {self._fourier_modes_path} must be a JSON "
+                f"object mapping module dotted paths to index lists; got "
+                f"{type(sidecar).__name__}"
+            )
+        inner = self._model.model  # the underlying nn.Module
+        restored: list[str] = []
+        for name, module in inner.named_modules():
+            if type(module).__name__ != "FourierBlock":
+                continue
+            if name not in sidecar:
+                raise ValueError(
+                    f"FourierBlock {name!r} has no entry in sidecar "
+                    f"{self._fourier_modes_path}. Available keys: {sorted(sidecar)}"
+                )
+            indices = list(sidecar[name])
+            expected = int(module.weights1.shape[-1])
+            if len(indices) != expected:
+                raise ValueError(
+                    f"FourierBlock {name!r}: sidecar has {len(indices)} indices "
+                    f"but weights1 has {expected} slots — wrong sidecar paired "
+                    f"with this checkpoint?"
+                )
+            module.index = indices
+            restored.append(name)
+        if not restored:
+            raise ValueError(
+                "fourier_modes sidecar supplied but the model contains no "
+                "FourierBlock modules — wrong checkpoint paired with this sidecar?"
+            )

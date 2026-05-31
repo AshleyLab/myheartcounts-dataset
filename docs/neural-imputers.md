@@ -137,7 +137,7 @@ minute) and 7-day (10080 minute) eval are both supported; pass the matching
 | `BRITSImputer` | `brits` | `rnn_hidden_size` |
 | `TimesNetImputer` | `timesnet` | `n_layers`, `top_k`, `d_model`, `d_ffn`, `n_kernels`, `dropout`, `apply_nonstationary_norm` |
 | `DLinearImputer` | `dlinear` | `moving_avg_window_size`, `d_model`, `individual` |
-| `FEDformerImputer` | `fedformer` | `n_layers`, `d_model`, `n_heads`, `d_ffn`, `moving_avg_window_size`, `dropout`, `version`, `modes`, `mode_select` |
+| `FEDformerImputer` | `fedformer` | `n_layers`, `d_model`, `n_heads`, `d_ffn`, `moving_avg_window_size`, `dropout`, `variant`, `modes`, `mode_select` |
 
 All four also accept the shared kwargs: `n_steps`, `n_features`, `device`,
 `inference_batch_size`, `normalization_stats_path`, `data_dir`.
@@ -423,3 +423,64 @@ four PyPOTS models (BRITS, TimesNet, DLinear, FEDformer) and the two LSM2
 variants (`LSM2ViT1D`, `WeeklySparseDecoderLSM2`) ship public wrappers. SAITS,
 TimeMixer, TRMF, and others remain private — `from openmhc.imputers import SAITSImputer`
 will fail with `ImportError`.
+
+---
+
+## Training your own imputer
+
+The companion package `imputation_training` ships a full Hydra CLI
+(`mhc-impute-train`) for training any of the four supported PyPOTS
+models on the OpenMHC dataset. The output is a release-bundle directory
+directly consumable by the eval CLI's `method.release_dir=...` flag.
+
+Quick start:
+
+```bash
+mhc-impute-train \
+    model=fedformer \
+    seed=42 \
+    data.version=full \
+    data.daily_hf_dir=/path/to/daily_hf \
+    +data.split_file=/path/to/sharable_users.json \
+    training.epochs=50 \
+    output.release_dir=/path/to/my-fedformer-release
+
+# The trained bundle is consumable by mhc-impute-eval immediately:
+mhc-impute-eval method=fedformer method.release_dir=/path/to/my-fedformer-release ...
+```
+
+The same CLI handles BRITS, DLinear, and TimesNet — just swap
+`model=fedformer` for the model name. See
+[`src/imputation_training/README.md`](../src/imputation_training/README.md)
+for the public Python API, [`configs/training/`](../configs/training/)
+for the YAML schema, and
+[`jobs/sherlock/imputation_train/README.md`](../jobs/sherlock/imputation_train/README.md)
+for the SLURM walkthrough.
+
+### Why FEDformer training needs special handling
+
+PyPOTS's `FourierBlock` contains an upstream bug: each instance calls
+`np.random.shuffle` at construction time to pick which frequency bins
+its `weights1` parameter operates on, but the resulting index list is
+stored as a plain Python attribute and **is not** saved in
+`state_dict`. Loading a `.pypots` checkpoint in a fresh process
+re-draws the indices against an unknown RNG state, so the trained
+weights index into the wrong frequency bins (~2–6% NRMSE degradation
+in our parity audit).
+
+The `imputation_training` pipeline sidesteps this by:
+
+1. Seeding all RNGs deterministically before model construction.
+2. Capturing each trained `FourierBlock.index` to a
+   `fourier_modes.json` sidecar written next to the `.pypots` file in
+   the release bundle. Manifest spec v2 adds an optional
+   `fourier_modes` field that points at the sidecar.
+3. Restoring those indices post-`model.load()` at inference time (see
+   `FEDformerImputer._post_load`).
+
+The result: trained FEDformer models load byte-identical across
+processes, machines, and Python invocations. The fix is
+forward-compatible — older bundles without the sidecar still load via
+the legacy "re-draw on construct" path (and exhibit the bug, as
+before). Bundles published before this fix were spec v1; new bundles
+authored by the training pipeline are spec v2.

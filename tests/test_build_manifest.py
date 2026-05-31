@@ -165,6 +165,59 @@ def test_build_release_refuses_overwrite_without_flag(tmp_path):
     assert fresh.status == "built"
 
 
+def _write_fedformer_config(repo_root: Path, ckpt_relpath: str) -> Path:
+    """Seed a FEDformer eval config carrying the YAML key ``version: Fourier``."""
+    config = {
+        "seed": 42,
+        "method": {
+            "type": "pypots",
+            "pypots": {
+                "model_path": ckpt_relpath,
+                "model_name": "fedformer",
+                "device": "cuda",
+                "inference_batch_size": 400,
+                "normalization_stats_path": "data/processed/normalization_stats.json",
+                "n_steps": 1440,
+                "n_features": 19,
+                "n_layers": 2,
+                "d_model": 512,
+                "n_heads": 8,
+                "d_ffn": 128,
+                "moving_avg_window_size": 25,
+                "dropout": 0.1,
+                # PyPOTS uses 'version' for the frequency basis; build_manifest
+                # must rename it to 'variant' so the OpenMHC wrapper can load.
+                "version": "Fourier",
+                "modes": 32,
+                "mode_select": "random",
+            },
+        },
+        "output": {"experiment_name": "pypots_fedformer"},
+    }
+    eval_run = repo_root / "results/imputation_eval/fedformer_max91d_20260501_121942"
+    eval_run.mkdir(parents=True)
+    cfg = eval_run / "config.yaml"
+    cfg.write_text(yaml.safe_dump(config))
+    return cfg
+
+
+def test_fedformer_renames_version_to_variant(tmp_path):
+    """The YAML's ``version`` field must land in the manifest as ``variant``."""
+    repo, _ = _seed_private_repo(tmp_path)
+    cfg = _write_fedformer_config(
+        repo, "models/pypots/brits/20260409_T005730/BRITS_epoch5_MAE0.0945.pypots"
+    )
+    result = build_manifest.build_release(
+        cfg, source_repo=repo, output_dir=tmp_path / "releases", release_name="fedformer-test"
+    )
+    assert result.status == "built", result.reason
+
+    manifest = json.loads((result.release_dir / "openmhc_manifest.json").read_text())
+    assert manifest["kind"] == "fedformer"
+    assert manifest["arch"]["variant"] == "Fourier"
+    assert "version" not in manifest["arch"]
+
+
 def test_manifest_round_trips_through_load_manifest(tmp_path):
     """An emitted manifest is loadable via openmhc.imputers.load_manifest."""
     from openmhc.imputers import load_manifest

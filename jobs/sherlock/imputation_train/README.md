@@ -1,0 +1,176 @@
+# Sherlock imputer-training runner
+
+End-to-end SLURM workflow for training PyPOTS imputers (BRITS, DLinear,
+TimesNet, FEDformer) on the OpenMHC dataset, producing release bundles
+the eval CLI consumes directly.
+
+The canonical worked example is **retraining FEDformer with the
+FourierBlock-index sidecar fix** — see `run_fedformer_train.sbatch`.
+The same pipeline works for the other three models by passing
+`model=brits|dlinear|timesnet` to `mhc-impute-train`.
+
+## Layout
+
+```
+jobs/sherlock/imputation_train/
+├── _common.sh                       # sourced env (venv + paths)
+├── run_fedformer_train.sbatch       # FEDformer retrain (1-2 GPU-days)
+└── README.md                        # this file
+```
+
+## Why this exists
+
+PyPOTS' `FourierBlock` (used by FEDformer) calls `np.random.shuffle` at
+construction time and stores the resulting frequency-mode indices on a
+plain Python attribute that **is not** saved in the model `state_dict`.
+Loading a `.pypots` checkpoint in a fresh process re-draws the indices
+against an unknown `np.random` state — the trained `weights1` then
+operates on the wrong frequency bins (we measured ~2–6% NRMSE
+degradation on the OpenMHC parity audit).
+
+The OpenMHC training pipeline (`src/imputation_training/`) sidesteps
+this by:
+
+1. Seeding `random`, `numpy`, and `torch` **before** model construction
+   (see `imputation_training.seeding.seed_everything`).
+2. Extracting each trained `FourierBlock.index` value and writing them
+   to a `fourier_modes.json` sidecar in the release bundle (see
+   `imputation_training.release.write_release`).
+3. Restoring those indices post-`model.load()` at inference time (see
+   `openmhc.imputers.pypots.FEDformerImputer._post_load`).
+
+The result: trained FEDformer models load byte-identical across
+processes, machines, and Python invocations.
+
+## Prerequisites
+
+1. **OpenMHC venv** at `/scratch/users/schuetzn/envs/openmhc/` (same one
+   the eval pipeline uses).
+2. **Dataset cache** at
+   `/scratch/users/schuetzn/.myheartcounts-dataset-cache/data-full/`
+   with `processed/daily_hf/`, `processed/normalization_stats.json`,
+   and `splits/sharable_users_seed42_2026.json`. Same cache the eval
+   pipeline reads.
+3. **GPU access** to the `gpu` partition. The sbatch requests
+   Tesla-family cards explicitly to avoid the consumer-RTX-3090
+   "GPU is lost" failures we hit during eval.
+
+## How to use
+
+### Train FEDformer (the worked example)
+
+```bash
+sbatch jobs/sherlock/imputation_train/run_fedformer_train.sbatch
+```
+
+That submits one ~48h GPU job. Watch progress with `squeue -u $USER`
+and `tail -f /scratch/users/schuetzn/logs/openmhc/train_fedformer_*.out`.
+
+When training finishes, a release bundle appears at
+`/scratch/users/schuetzn/openmhc-imputation-train/releases/fedformer_<timestamp>/`
+containing:
+
+```
+fedformer_<timestamp>/
+├── model.pypots              # trained weights
+├── normalization_stats.json  # copied from the dataset cache
+├── fourier_modes.json        # ← the per-FourierBlock indices that fix the bug
+└── openmhc_manifest.json     # spec_version=2
+```
+
+### Swap into the eval pipeline + verify parity
+
+```bash
+# Point the FEDformer eval sbatch at the new release dir
+sed -i \
+  "s|method.release_dir=\${RELEASES}/fedformer|method.release_dir=/scratch/users/schuetzn/openmhc-imputation-train/releases/fedformer_<timestamp>|" \
+  jobs/sherlock/imputation_eval/run_fedformer.sbatch
+
+# Re-run FEDformer eval
+sbatch jobs/sherlock/imputation_eval/run_fedformer.sbatch
+
+# Once that completes
+python jobs/sherlock/imputation_eval/verify_parity.py --methods fedformer
+```
+
+Expected outcome: all FEDformer rows fall within the strict 1%
+tolerance against the MHC-benchmark reference (vs the 2–6% spread we
+observed with the original buggy checkpoint).
+
+### Train a different model
+
+The `mhc-impute-train` CLI accepts any of `model=brits|dlinear|timesnet|fedformer`.
+For example, to train DLinear:
+
+```bash
+source jobs/sherlock/imputation_train/_common.sh
+mhc-impute-train \
+  model=dlinear \
+  seed=42 \
+  data.version=full \
+  data.daily_hf_dir="${DAILY_HF_DIR}" \
+  +data.split_file="${SPLIT_FILE}" \
+  training.epochs=50 \
+  output.release_dir=${RELEASES_ROOT}/dlinear_$(date +%Y%m%d_%H%M%S)
+```
+
+(Wrap that in a `run_dlinear_train.sbatch` if you want SLURM dispatch —
+copy `run_fedformer_train.sbatch` and change `model=...`.)
+
+## Smoke test (interactive, ~5 min on `sh_dev`)
+
+Before committing 48h of GPU time, validate the pipeline end-to-end on
+the tiny `xs` dataset:
+
+```bash
+sh_dev -t 1:00:00 -p gpu --gres=gpu:1
+source jobs/sherlock/imputation_train/_common.sh
+export MHC_DATA_DIR=/scratch/users/schuetzn/.myheartcounts-dataset-cache/data-xs
+
+mhc-impute-train \
+  model=fedformer \
+  seed=42 \
+  data=default \
+  data.version=xs \
+  data.daily_hf_dir=${MHC_DATA_DIR}/processed/daily_hf \
+  +data.split_file=${MHC_DATA_DIR}/splits/sharable_users_seed42_2026_xs.json \
+  data.batch_size=32 \
+  h5_export.output_dir=${H5_CACHE}/xs \
+  training.epochs=1 \
+  training.batch_size=4 \
+  output.saving_path=${RUNS_ROOT}/_smoke/fedformer_xs \
+  output.release_dir=${RELEASES_ROOT}/_smoke/fedformer_xs
+
+# Verify the FourierBlock-restore round-trip works
+python -c "
+from openmhc.imputers import FEDformerImputer
+imp1 = FEDformerImputer.from_release('${RELEASES_ROOT}/_smoke/fedformer_xs', version='xs', device='cpu')
+imp2 = FEDformerImputer.from_release('${RELEASES_ROOT}/_smoke/fedformer_xs', version='xs', device='cpu')
+got = {name: m.index for name, m in imp1._model.model.named_modules() if type(m).__name__ == 'FourierBlock'}
+got2 = {name: m.index for name, m in imp2._model.model.named_modules() if type(m).__name__ == 'FourierBlock'}
+assert got == got2, 'Sidecar restore inconsistent across loads!'
+print(f'OK: {len(got)} FourierBlocks load identical indices across processes')
+"
+```
+
+If the smoke test passes, submit the full job with confidence.
+
+## Resource notes
+
+| field | value | rationale |
+|---|---|---|
+| partition | `gpu` | only place with GPU access on Sherlock |
+| time | `48:00:00` | FEDformer typically converges in 20-30 epochs (~1d on V100); 2d budget for safety |
+| cpus-per-task | `8` | DataLoader workers + H5 export parallelism |
+| mem | `96G` | covers H5 export buffering + PyPOTS training-time buffers |
+| gpus | `1` | PyPOTS doesn't support multi-GPU |
+| constraint | `GPU_BRD:TESLA&(GPU_MEM:32GB\|GPU_MEM:48GB\|GPU_MEM:80GB)` | V100 32GB / L40S 48GB / H100 80GB — avoid consumer RTX 3090 which causes silent requeues |
+
+## Open items (not blockers)
+
+- W&B artifact upload is opt-in via `output.wandb_enabled=true`; off by
+  default. If you want the trained `.pypots` file pushed to a W&B
+  artifact registry, set `output.wandb_project` and
+  `output.wandb_entity` and pass `output.wandb_enabled=true`.
+- This pipeline trains a single seed per run. If you want
+  multi-seed ablations, use Hydra's `--multirun seed=42,43,44`.

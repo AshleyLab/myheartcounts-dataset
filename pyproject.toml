@@ -50,6 +50,7 @@ hydra = [
 
 [project.scripts]
 mhc-impute-eval = "imputation_evaluation.hydra.cli:main"
+mhc-impute-train = "imputation_training.hydra.cli:main"
 mhc-forecast-eval = "forecasting_evaluation.hydra.cli:main"
 # mhc-downstream-eval is deferred: the public ``downstream_evaluation`` package
 # ships configs + ``create_model`` but no runner yet (orchestration lives in
@@ -70,6 +71,7 @@ include = [
   "data*",
   "downstream_evaluation*",
   "imputation_evaluation*",
+  "imputation_training*",
   "forecasting_evaluation*",
   "eval_hydra*",
   "labels*",

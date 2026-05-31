@@ -1,0 +1,26 @@
+# @package model
+# FEDformer — Fourier-domain attention imputer.
+# Matches the MHC-benchmark training config (fedformer.pypots:v31 used these).
+#
+# IMPORTANT: ``mode_select=random`` triggers an upstream PyPOTS bug where
+# the trained ``FourierBlock.index`` values are not persisted in the
+# checkpoint state_dict. The openmhc training pipeline works around this
+# by capturing the indices to a ``fourier_modes.json`` sidecar in the
+# release bundle (see imputation_training.release.write_release). The
+# corresponding restoration happens in
+# openmhc.imputers.pypots.FEDformerImputer._post_load. Without that
+# sidecar, loading in a fresh process re-draws the indices against an
+# unknown np.random state and the trained weights operate on the wrong
+# frequency bins (~2-6% NRMSE degradation).
+model_name: fedformer
+n_steps: 1440
+n_features: 19
+n_layers: 2
+d_model: 512
+n_heads: 8
+d_ffn: 128
+moving_avg_window_size: 25
+dropout: 0.1
+version: Fourier            # PyPOTS's own field — exposed via 'variant' at inference
+modes: 32
+mode_select: random
