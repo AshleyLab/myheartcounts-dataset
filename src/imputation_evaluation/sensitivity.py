@@ -12,7 +12,7 @@ from collections import Counter
 
 import pandas as pd
 
-from labels.api import STORE, LabelsStore, years_between
+from labels.api import STORE, LabelsStore, years_between_birth_year
 
 logger = logging.getLogger(__name__)
 
@@ -39,24 +39,24 @@ def get_user_demographics(
     store: LabelsStore,
     user_ids: list[str],
 ) -> dict[str, dict[str, object]]:
-    """Look up birthdate and biological sex for each user.
+    """Look up birth year and biological sex for each user.
 
     Args:
         store: Labels store for data access.
         user_ids: Unique user identifiers (health codes).
 
     Returns:
-        Dict mapping user_id -> {"birthdate": pd.Timestamp | None, "sex": str}.
+        Dict mapping user_id -> {"birth_year": int | None, "sex": str}.
         Sex is "male", "female", or "unknown".
     """
     demographics: dict[str, dict[str, object]] = {}
 
     for uid in user_ids:
-        birthdate = None
+        birth_year = None
         sex = "unknown"
 
         try:
-            birthdate = store.enrollment.get_birthdate(uid)
+            birth_year = store.enrollment.get_birth_year(uid)
         except KeyError:
             pass
 
@@ -75,7 +75,7 @@ def get_user_demographics(
         except (KeyError, LookupError):
             pass
 
-        demographics[uid] = {"birthdate": birthdate, "sex": sex}
+        demographics[uid] = {"birth_year": birth_year, "sex": sex}
 
     return demographics
 
@@ -135,15 +135,15 @@ def build_subgroup_mapping(
             user_id = all_user_ids[global_idx]
             date_str = all_dates[global_idx]
 
-            demo = user_demographics.get(user_id, {"birthdate": None, "sex": "unknown"})
+            demo = user_demographics.get(user_id, {"birth_year": None, "sex": "unknown"})
 
             # Compute age group
             age_group = "unknown"
-            birthdate = demo["birthdate"]
-            if birthdate is not None:
+            birth_year = demo["birth_year"]
+            if birth_year is not None:
                 try:
                     sample_date = pd.Timestamp(date_str)
-                    age = years_between(birthdate, sample_date)
+                    age = years_between_birth_year(birth_year, sample_date)
                     age_group = bin_age(age, age_bins)
                 except Exception:
                     pass

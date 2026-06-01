@@ -3,7 +3,7 @@
 This module exposes a fast, in-memory lookup for label values and age computation with automatic type enforcement.
 
 ## Public surface
-- `labels.get_labels(health_code: str, timestamp: pandas.Timestamp, label: str, enforce_type: bool = True) -> LabelResult`
+- `labels.get_labels(health_code: str, timestamp: pandas.Timestamp, label: str, enforce_type: bool = True, return_valid_only: bool = True) -> LabelResult`
 - `labels.LABEL_NAMES`: list of available labels (including `"age"`).
 - `labels.LABEL_TYPES`: dict mapping label names to their semantic types (`binary`, `ordinal`, `categorical`, `continuous`).
 - `labels.get_labels_statistics() -> pandas.DataFrame`: returns statistics for all labels as a DataFrame.
@@ -12,10 +12,16 @@ This module exposes a fast, in-memory lookup for label values and age computatio
 - `LabelTypeError`: raised when a value cannot be converted to its expected type.
 - `LabelValueError`: raised when a value is None or NaN.
 
+## Related accessors
+- [`context.get_context`](../context/README.md) — discoverable wrapper that validates the label is a context variable (not a prediction target).
+
 ## Data sources
 - `labels.json`: per-label → healthCode → `timestamps`/`values`.
-- `enrollment_info.json`: per-healthCode metadata with `birthdate`.
+- `enrollment_info.json`: per-healthCode metadata with de-identified `birth_year`.
 - `label_types.json`: maps each label to its semantic type (`binary`, `ordinal`, `categorical`, `continuous`).
+
+## Variable dictionary
+See [`data/labels/survey_documentation/INDEX.md`](../../data/labels/survey_documentation/INDEX.md) for a per-variable reference (question text, answer options, observed value distributions, iOS source) covering all 169 labels.
 
 By default the module loads data from the `data/labels/` directory. Override with:
 ```bash
@@ -139,15 +145,14 @@ work                      bool         0.00         1.00         1.00         2
 
 ## Behavior
 - For labels in `labels.json`, the closest timestamp is chosen; ties favor the earlier point.
-- `age` is stored as a static value in `last_labels.json` (whole years at the user's last survey timestamp).
+- `age` is stored as a static value in `last_labels.json` (calendar-year age at the user's last survey timestamp).
 
-Recent local throughput (from `pytest labels/test_api.py -k performance`):
+Recent local throughput (from `PYTHONPATH=src pytest src/labels/test_api.py -k performance`):
 - Label lookups: ~762,936.5 per second
 - Age lookups: ~729,164.1 per second
 
 ## Tests
 Run from repo root:
 ```bash
-pytest tests/test_labels_api.py
+PYTHONPATH=src pytest src/labels/test_api.py
 ```
-
