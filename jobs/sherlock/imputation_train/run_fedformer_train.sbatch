@@ -3,9 +3,13 @@
 # sidecar capture, producing a release bundle that loads byte-identical
 # across processes (fixing the upstream PyPOTS bug).
 #
-# Resource budget mirrors MHC-benchmark's original FEDformer training
-# (configs/pypots/fedformer.yaml + jobs/.../train_pypots.sbatch).
-# Expect ~1-2 GPU-days on a V100/A100.
+# Hyperparameters match the published paper checkpoint exactly —
+# W&B run MHC_Dataset/mhc-pypots-fedformer/runs/ouqezdi7
+# (artifact ``fedformer:v31``). See
+# configs/training/training/fedformer_paper.yaml for the source of truth.
+#
+# Resource budget: 48h is the Sherlock ``gpu`` partition cap; the paper
+# run on Stanford simurgh used 64G mem + 1 GPU.
 #
 # Expected output: a release bundle at
 #   $RELEASES_ROOT/fedformer_<timestamp>/
@@ -17,7 +21,7 @@
 #SBATCH --partition=gpu
 #SBATCH --time=48:00:00
 #SBATCH --cpus-per-task=8
-#SBATCH --mem=96G
+#SBATCH --mem=64G
 #SBATCH --gpus=1
 # Tesla-family GPUs only — consumer RTX 3090s on Sherlock occasionally
 # throw "GPU is lost" NVML errors that cause silent SLURM requeues
@@ -37,6 +41,7 @@ RELEASE_DIR="${RELEASES_ROOT}/fedformer_${TS}"
 
 mhc-impute-train \
   model=fedformer \
+  training=fedformer_paper \
   seed=42 \
   data.version=full \
   data.daily_hf_dir="${DAILY_HF_DIR}" \
@@ -44,12 +49,6 @@ mhc-impute-train \
   data.batch_size=500 \
   data.num_workers=4 \
   h5_export.output_dir="${H5_CACHE}" \
-  training.epochs=50 \
-  training.batch_size=64 \
-  training.patience=10 \
-  training.optimizer_lr=0.001 \
-  training.device=cuda \
-  training.num_workers=4 \
   output.saving_path="${SAVING_PATH}" \
   output.release_dir="${RELEASE_DIR}"
 

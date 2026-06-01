@@ -160,11 +160,29 @@ If the smoke test passes, submit the full job with confidence.
 | field | value | rationale |
 |---|---|---|
 | partition | `gpu` | only place with GPU access on Sherlock |
-| time | `48:00:00` | FEDformer typically converges in 20-30 epochs (~1d on V100); 2d budget for safety |
+| time | `48:00:00` | Sherlock `gpu` partition cap; paper run on Stanford simurgh logged its checkpoint at epoch 12 (well under 48h) |
 | cpus-per-task | `8` | DataLoader workers + H5 export parallelism |
-| mem | `96G` | covers H5 export buffering + PyPOTS training-time buffers |
+| mem | `64G` | matches the paper run's sbatch (Stanford simurgh) |
 | gpus | `1` | PyPOTS doesn't support multi-GPU |
 | constraint | `GPU_BRD:TESLA&(GPU_MEM:32GB\|GPU_MEM:48GB\|GPU_MEM:80GB)` | V100 32GB / L40S 48GB / H100 80GB — avoid consumer RTX 3090 which causes silent requeues |
+
+## Paper-checkpoint provenance
+
+The values used by `run_fedformer_train.sbatch` (model arch in
+`configs/training/model/fedformer.yaml`, training hyperparams in
+`configs/training/training/fedformer_paper.yaml`) come from the W&B run
+that produced the published artifact `fedformer:v31`:
+
+- Run: `MHC_Dataset/mhc-pypots-fedformer/runs/ouqezdi7` (created
+  2026-03-10, standalone — not part of any sweep)
+- Best val MAE: 0.1706 logged at epoch 12
+
+Notable: the W&B run's hyperparameters were CLI overrides at training
+time and do **not** match either snapshot of MHC-benchmark's
+`configs/pypots/fedformer.yaml` (whose `d_ffn`/`modes`/`batch_size`
+were different both before and after the paper run). Anyone reading the
+old repo's `configs/pypots/fedformer.yaml` to reproduce the bundle will
+be misled — the W&B run is the only authoritative source.
 
 ## Open items (not blockers)
 

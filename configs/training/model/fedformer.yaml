@@ -1,6 +1,13 @@
 # @package model
 # FEDformer — Fourier-domain attention imputer.
-# Matches the MHC-benchmark training config (fedformer.pypots:v31 used these).
+#
+# Arch values match the published paper checkpoint exactly — W&B run
+# MHC_Dataset/mhc-pypots-fedformer/runs/ouqezdi7 (artifact ``fedformer:v31``,
+# created 2026-03-10). These do NOT match either snapshot of
+# MHC-benchmark's ``configs/pypots/fedformer.yaml``; they were CLI
+# overrides at training time. Pair with
+# ``configs/training/training/fedformer_paper.yaml`` for the matching
+# training hyperparams (epochs=50, batch_size=128, optimizer_lr=0.002).
 #
 # IMPORTANT: ``mode_select=random`` triggers an upstream PyPOTS bug where
 # the trained ``FourierBlock.index`` values are not persisted in the
