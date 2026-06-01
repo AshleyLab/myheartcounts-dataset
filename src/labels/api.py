@@ -6,7 +6,6 @@ import json
 import math
 import os
 import statistics
-import warnings
 from bisect import bisect_left, bisect_right
 from collections import Counter
 from collections.abc import Iterable
@@ -457,7 +456,7 @@ class EnrollmentIndex:
         return self._enrollment.get(health_code)
 
     def get_birth_year(self, health_code: str) -> int:
-        """Get the de-identified birth year for a health code.
+        """Get birth year for a health code.
 
         Args:
             health_code: Health code identifier.
@@ -466,27 +465,28 @@ class EnrollmentIndex:
             Birth year as an integer.
 
         Raises:
-            KeyError: If the health code is not found or no birth year /
-                birthdate is recorded.
+            KeyError: If health code not found or no birth year available.
         """
         user = self.get(health_code)
         if user is None:
             raise KeyError(f"Unknown healthCode in enrollment: {health_code}")
         birth_year = user.get("birth_year")
         if birth_year is None:
+            # Transition fallback for pre-migration enrollment fixtures/files.
             birthdate = user.get("birthdate")
             if birthdate is None:
                 raise KeyError(f"No birth_year for healthCode: {health_code}")
-            warnings.warn(
-                "Enrollment file uses legacy 'birthdate' field; deriving "
-                "birth_year from it. Re-export enrollment_info.json with "
-                "the de-identified 'birth_year' field — the 'birthdate' "
-                "fallback will be removed in a future release.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
             return int(pd.Timestamp(birthdate).year)
         return int(birth_year)
+
+    def get_birthdate(self, health_code: str) -> pd.Timestamp:
+        """Get a synthetic birthdate for compatibility.
+
+        Enrollment data stores only birth year.  This method returns January 1
+        of that year so legacy consumers that expect a Timestamp keep running;
+        the returned month/day is not the user's real birth month/day.
+        """
+        return pd.Timestamp(year=self.get_birth_year(health_code), month=1, day=1)
 
 
 class LabelsStore:
@@ -663,6 +663,13 @@ def _pair_sorted(timestamps: Iterable[str], values: Iterable[Any]) -> list[tuple
 
 def _to_epoch_ns(ts: str) -> int:
     return int(pd.Timestamp(ts).value)
+
+
+def years_between(birthdate: pd.Timestamp, at: pd.Timestamp) -> int:
+    """Return whole years elapsed between birthdate and a reference timestamp."""
+    years = at.year - birthdate.year
+    has_had_birthday = (at.month, at.day) >= (birthdate.month, birthdate.day)
+    return years if has_had_birthday else years - 1
 
 
 def years_between_birth_year(birth_year: int, at: pd.Timestamp) -> int:

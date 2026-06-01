@@ -1597,15 +1597,15 @@ def test_get_birth_year_missing_raises(tmp_path: Path) -> None:
         api.STORE.enrollment.get_birth_year("user-123")
 
 
-def test_get_birthdate_no_longer_present(tmp_path: Path) -> None:
-    """get_birthdate is removed; only get_birth_year exists post-migration."""
+def test_get_birthdate_returns_synthetic_jan_1(tmp_path: Path) -> None:
+    """get_birthdate is a compat shim returning Jan 1 of the de-identified birth year."""
     labels_path = tmp_path / "last_labels.json"
     enrollment_path = tmp_path / "enrollment_info.json"
     labels_path.write_text(json.dumps({}))
     enrollment_path.write_text(json.dumps({"user-123": {"birth_year": 1985}}))
     api = _load_api_with_paths(labels_path, enrollment_path)
 
-    assert not hasattr(api.STORE.enrollment, "get_birthdate")
+    assert api.STORE.enrollment.get_birthdate("user-123") == pd.Timestamp("1985-01-01")
 
 
 def test_years_between_birth_year_basic(tmp_path: Path) -> None:
@@ -1616,10 +1616,12 @@ def test_years_between_birth_year_basic(tmp_path: Path) -> None:
     assert api.years_between_birth_year(1990, pd.Timestamp("2026-06-15")) == 36
 
 
-def test_years_between_removed(tmp_path: Path) -> None:
-    """years_between (birthdate-based) is removed; use years_between_birth_year."""
+def test_years_between_basic(tmp_path: Path) -> None:
+    """years_between returns whole years elapsed, respecting month/day."""
     api = _load_api(tmp_path)
-    assert not hasattr(api, "years_between")
+    assert api.years_between(pd.Timestamp("2000-05-15"), pd.Timestamp("2020-12-31")) == 20
+    assert api.years_between(pd.Timestamp("2000-05-15"), pd.Timestamp("2020-05-14")) == 19
+    assert api.years_between(pd.Timestamp("2000-05-15"), pd.Timestamp("2020-05-15")) == 20
 
 
 def test_vlm_path_exports_present() -> None:
