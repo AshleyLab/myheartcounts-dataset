@@ -26,7 +26,10 @@
 # Tesla-family GPUs only — consumer RTX 3090s on Sherlock occasionally
 # throw "GPU is lost" NVML errors that cause silent SLURM requeues
 # (see jobs/sherlock/imputation_eval/run_timesnet.sbatch for context).
-#SBATCH --constraint=GPU_BRD:TESLA&(GPU_MEM:32GB|GPU_MEM:48GB|GPU_MEM:80GB)
+# Paper config peaks at ~10 GB VRAM in the openmhc venv (measured via
+# scripts/dev/_fedformer_vram_probe.py), so any Tesla GPU >=16 GB fits.
+# No GPU_MEM filter needed — keeps the queue depth small.
+#SBATCH --constraint=GPU_BRD:TESLA
 #SBATCH --output=/scratch/users/schuetzn/logs/openmhc/train_fedformer_%j.out
 #SBATCH --error=/scratch/users/schuetzn/logs/openmhc/train_fedformer_%j.err
 

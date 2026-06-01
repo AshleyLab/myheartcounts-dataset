@@ -164,7 +164,7 @@ If the smoke test passes, submit the full job with confidence.
 | cpus-per-task | `8` | DataLoader workers + H5 export parallelism |
 | mem | `64G` | matches the paper run's sbatch (Stanford simurgh) |
 | gpus | `1` | PyPOTS doesn't support multi-GPU |
-| constraint | `GPU_BRD:TESLA&(GPU_MEM:32GB\|GPU_MEM:48GB\|GPU_MEM:80GB)` | V100 32GB / L40S 48GB / H100 80GB — avoid consumer RTX 3090 which causes silent requeues |
+| constraint | `GPU_BRD:TESLA` | Paper config peaks at ~10 GB VRAM (probed via `scripts/dev/_fedformer_vram_probe.py`), so any Tesla GPU >=16 GB fits. Avoiding consumer RTX cards which cause silent requeues. |
 
 ## Paper-checkpoint provenance
 
