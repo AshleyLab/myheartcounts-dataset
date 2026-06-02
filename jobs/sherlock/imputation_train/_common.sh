@@ -28,6 +28,16 @@ export LOGS=/scratch/users/schuetzn/logs/openmhc
 export HYDRA_FULL_ERROR=1
 export WANDB_DIR=/scratch/users/schuetzn/wandb_data/openmhc
 
+# Pull WANDB_API_KEY from ~/.netrc so wandb.init() works in batch jobs without
+# a TTY login. (Matches MHC-benchmark/jobs/.../train_pypots.sbatch.)
+if [ -z "${WANDB_API_KEY:-}" ] && [ -f "$HOME/.netrc" ]; then
+    WANDB_KEY=$(awk '/machine api\.wandb\.ai/{found=1;next} found && /password/{print $2;exit}' \
+        "$HOME/.netrc" 2>/dev/null || true)
+    if [ -n "${WANDB_KEY:-}" ]; then
+        export WANDB_API_KEY="$WANDB_KEY"
+    fi
+fi
+
 mkdir -p "$TRAIN_BASE" "$H5_CACHE" "$RUNS_ROOT" "$RELEASES_ROOT" "$LOGS" "$WANDB_DIR"
 
 # --- venv activation ----------------------------------------------------------

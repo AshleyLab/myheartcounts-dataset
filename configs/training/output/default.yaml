@@ -6,6 +6,6 @@ saving_path: models/pypots
 model_saving_strategy: best
 release_dir: null
 
-wandb_enabled: false
+wandb_enabled: true
 wandb_project: openmhc-pypots
 wandb_entity: null

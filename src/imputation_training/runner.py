@@ -43,6 +43,39 @@ from imputation_training.seeding import seed_everything
 logger = logging.getLogger(__name__)
 
 
+def _maybe_init_wandb(config: PyPOTSTrainingConfig) -> Any | None:
+    """Initialize a W&B run if ``output.wandb_enabled`` is true.
+
+    Uses ``sync_tensorboard=True`` so PyPOTS' own TensorBoard scalars
+    (train/MAE, validating/MAE) stream into the W&B run with no extra
+    logging hooks. Authentication comes from ``WANDB_API_KEY`` or
+    ``~/.netrc`` — the caller is responsible for one of those being set.
+
+    Returns the wandb ``Run`` (or ``None`` if disabled / library missing).
+    Failure to init is logged but never raised — training is the
+    important thing; observability is best-effort.
+    """
+    if not config.output.wandb_enabled:
+        return None
+    try:
+        import wandb
+    except ImportError:
+        logger.warning("output.wandb_enabled=true but `wandb` not installed; skipping.")
+        return None
+    try:
+        run = wandb.init(
+            project=config.output.wandb_project,
+            entity=config.output.wandb_entity,
+            config=asdict(config),
+            sync_tensorboard=True,
+        )
+    except Exception as exc:  # noqa: BLE001 - wandb raises various error types
+        logger.warning("wandb.init failed (%s); continuing without W&B.", exc)
+        return None
+    logger.info("W&B run: %s", run.url)
+    return run
+
+
 def _find_trained_checkpoint(saving_path: str | Path) -> Path:
     """Locate the ``.pypots`` checkpoint PyPOTS just wrote.
 
@@ -82,6 +115,10 @@ def run_training(config: PyPOTSTrainingConfig) -> Path:
     """
     # ---- 1. Seed --------------------------------------------------------
     seed_everything(config.seed)
+
+    # ---- 1.5. W&B (must come before model creation so sync_tensorboard
+    # ----       picks up PyPOTS' TensorBoard scalars from epoch 1). -----
+    wandb_run = _maybe_init_wandb(config)
 
     # ---- 2. H5 export ---------------------------------------------------
     h5_dir = h5_cache_subdir(config.h5_export.output_dir, config.data, config.h5_export)
@@ -152,4 +189,13 @@ def run_training(config: PyPOTSTrainingConfig) -> Path:
         },
     )
     logger.info("Done. Release bundle: %s", bundle)
+
+    # ---- 6. W&B finish --------------------------------------------------
+    if wandb_run is not None:
+        try:
+            wandb_run.summary["release_dir"] = str(bundle)
+            wandb_run.finish()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("wandb.finish failed (%s); ignoring.", exc)
+
     return bundle
