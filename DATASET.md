@@ -59,15 +59,14 @@ $MHC_DATA_DIR/
 ├── labels/                       # Track 1
 │   ├── last_labels.json          # participant-level outcome labels
 │   ├── context_labels.json       # participant-level covariates
-│   ├── label_validity.json       # which (user, label) pairs pass validity
-│   └── clip_dates.json           # per-task date clipping (longitudinal labels — optional)
+│   └── label_validity.json       # which (user, label) pairs pass validity
 ├── splits/
 │   └── sharable_users_seed42_2026.json   # canonical user-level splits
 ├── processed/                    # Tracks 1 + 2
 │   ├── daily_hourly_hf/          # daily ×24h sensor tensors (HuggingFace Arrow) — Track 1
 │   ├── daily_hf/                 # daily ×1440min sensor tensors (HuggingFace Arrow) — Track 2
 │   ├── window_index_w7_s7_d5.parquet         # 7-day weekly window index — Track 1
-│   ├── weekly_labels_lookup_stride7.parquet  # weekly labels lookup — Track 1
+│   ├── weekly_labels_lookup_stride7_windowed.parquet  # weekly labels lookup (per-task forward window baked in) — Track 1
 │   ├── daily_labels_lookup.parquet           # daily labels lookup — Track 1
 │   └── normalization_stats_hourly.json       # global z-score statistics
 ├── hourly_trajectory/            # Track 3 — hourly-resolution per-user trajectories

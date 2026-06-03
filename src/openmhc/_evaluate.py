@@ -7,7 +7,6 @@ structured results.
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import tempfile
@@ -43,7 +42,6 @@ class _DatasetPaths:
     weekly_labels_lookup: Path
     splits_file: Path
     norm_stats: Path
-    clip_dates: Path
     labels_dir: Path
     hourly_trajectory: Path
     forecasting_sample_index_dir: Path
@@ -64,10 +62,9 @@ class _DatasetPaths:
             daily_hourly_hf=root / "processed" / "daily_hourly_hf",
             daily_hf=root / "processed" / "daily_hf",
             window_index=root / "processed" / "window_index_w7_s7_d5.parquet",
-            weekly_labels_lookup=root / "processed" / "weekly_labels_lookup_stride7.parquet",
+            weekly_labels_lookup=root / "processed" / "weekly_labels_lookup_stride7_windowed.parquet",
             splits_file=root / "splits" / "sharable_users_seed42_2026.json",
             norm_stats=root / "processed" / "normalization_stats_hourly.json",
-            clip_dates=root / "labels" / "clip_dates.json",
             labels_dir=root / "labels",
             hourly_trajectory=root / "hourly_trajectory",
             forecasting_sample_index_dir=root / "forecasting_sample_index",
@@ -146,7 +143,7 @@ def evaluate_prediction(
     paths = _DatasetPaths.resolve(data_dir)
     _ensure_labels_env(paths.labels_dir)
 
-    from downstream_evaluation.config import ClassifierConfig, parse_time_windows
+    from downstream_evaluation.config import ClassifierConfig
     from downstream_evaluation.data.splits import load_split_file
     from downstream_evaluation.evaluation.metrics import (
         compute_binary_metrics,
@@ -171,26 +168,15 @@ def evaluate_prediction(
     split_file = paths.splits_file
     window_index_path = paths.window_index
     labels_path = paths.weekly_labels_lookup
-    clip_dates_path = paths.clip_dates
 
     # Load user splits.
     split_users = load_split_file(split_file)
 
-    # Load labels.
+    # Load labels (embedded-temporal windowed lookup: non-sentinel cells already
+    # encode validity + the per-task forward window, so no eval-time coverage
+    # filter or clip-date windowing is applied here).
     labels_df = pd.read_parquet(labels_path)
-
-    # Apply coverage filter (min 5 valid days).
     valid_indices = None
-    if "n_valid_days" in labels_df.columns:
-        mask = labels_df["n_valid_days"].values >= 5
-        valid_indices = np.where(mask)[0]
-        labels_df = labels_df.iloc[valid_indices].reset_index(drop=True)
-
-    # Load clip dates.
-    all_clip_dates: dict = {}
-    if clip_dates_path.exists():
-        with open(clip_dates_path) as f:
-            all_clip_dates = json.load(f)
 
     # Load dataset (on-the-fly weekly from daily_hourly_hf + window index).
     from data.datasets.indexed_week_dataset import load_indexed_week_dataset
@@ -211,7 +197,7 @@ def evaluate_prediction(
     )
 
     # Build a lightweight store for aggregation.
-    from downstream_evaluation.feature_store import WeekFeatureStore, _StoreMetadata
+    from downstream_evaluation.feature_store import SegmentFeatureStore, _StoreMetadata
 
     segment_starts_ns = (
         pd.to_datetime(segment_starts.tolist()).astype("int64").values
@@ -229,19 +215,20 @@ def evaluate_prediction(
         n_samples=features.shape[0],
         segment_type="weekly",
     )
-    store = WeekFeatureStore(
+    store = SegmentFeatureStore(
         features, user_ids, segment_starts, segment_starts_ns, store_meta, n_valid_hours
     )
 
     del hf_dataset
 
-    # Evaluate: iterate over tasks with "full" time window and linear probes.
-    time_windows = parse_time_windows("full,before_label")
-
+    # Uniform linear probes across task types, so a method's score reflects its
+    # representation rather than the choice of probe: LogReg (binary/multiclass),
+    # K-1 binary LogReg-Ordinal (ordinal), OLS (regression). The per-task temporal
+    # scope is baked into the windowed lookup, so there is no eval-time time window.
     clf_mapping = {
         "binary": ["logistic_regression"],
-        "ordinal": ["ordinal_logit_at"],
-        "regression": ["ridge_cv"],
+        "ordinal": ["logreg_ordinal"],
+        "regression": ["linear_regression"],
         "multiclass": ["logistic_regression"],
     }
 
@@ -259,99 +246,95 @@ def evaluate_prediction(
         if not classifiers:
             continue
 
-        for tw in time_windows:
-            if tw.needs_clip_dates and task_name not in all_clip_dates:
+        for clf_type in classifiers:
+            if task_name not in labels_df.columns:
+                logger.warning(
+                    "Task %s missing from labels lookup, skipping", task_name
+                )
+                break
+            task_labels = labels_df[task_name].values
+            try:
+                splits = store.aggregate_for_task(
+                    task_labels,
+                    task_type,
+                    split_users,
+                    pooling_method="mean",
+                )
+            except Exception as e:
+                logger.warning("Task %s failed aggregation: %s", task_name, e)
                 continue
 
-            clip = all_clip_dates.get(task_name)
+            # aggregate_for_task returns a 4-tuple (X, y, user_ids, n_weeks)
+            # under "train"/"val"/"test" keys (split file used "validation").
+            X_train, y_train, *_ = splits["train"]
+            X_val, y_val, *_ = splits["val"]
+            X_test, y_test, *_ = splits["test"]
 
-            for clf_type in classifiers:
-                if task_name not in labels_df.columns:
-                    logger.warning(
-                        "Task %s missing from labels lookup, skipping", task_name
-                    )
-                    break
-                task_labels = labels_df[task_name].values
-                try:
-                    splits = store.aggregate_for_task(
-                        task_labels,
-                        task_type,
-                        clip,
-                        tw,
-                        split_users,
-                        pooling_method="mean",
-                    )
-                except Exception as e:
-                    logger.warning(
-                        "Task %s/%s failed aggregation: %s", task_name, tw.name, e
-                    )
-                    continue
+            if len(X_train) == 0 or len(X_test) == 0:
+                logger.warning("Task %s: empty split, skipping", task_name)
+                continue
 
-                # Current signature returns 4-tuple (X, y, user_ids, n_weeks)
-                # under "train"/"val"/"test" keys (split file used "validation").
-                X_train, y_train, *_ = splits["train"]
-                X_val, y_val, *_ = splits["val"]
-                X_test, y_test, *_ = splits["test"]
+            # Encoder embeddings go to a PCA-50 linear probe with no feature
+            # scaler: the embeddings are already layer-normalised, and PCA-50
+            # fixes the probe input dimensionality so encoders with different
+            # output sizes are compared on equal footing.
+            clf_config = ClassifierConfig(
+                type=clf_type, use_scaler=False, pca_n_components=50
+            )
+            clf = create_model(clf_config, random_state=seed, task_type=task_type)
 
-                if len(X_train) == 0 or len(X_test) == 0:
-                    logger.warning("Task %s: empty split, skipping", task_name)
-                    continue
+            # NaN handling for sklearn.
+            for X in [X_train, X_val, X_test]:
+                np.nan_to_num(X, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
 
-                clf_config = ClassifierConfig(type=clf_type, use_scaler=True)
-                clf = create_model(clf_config, random_state=seed, task_type=task_type)
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", category=RuntimeWarning)
+                clf.fit(X_train, y_train)
 
-                # NaN handling for sklearn.
-                for X in [X_train, X_val, X_test]:
-                    np.nan_to_num(X, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
+                row = {
+                    "task": task_name,
+                    "task_type": task_type,
+                    "classifier": clf_type,
+                    "n_train": len(X_train),
+                    "n_test": len(X_test),
+                }
 
-                with warnings.catch_warnings():
-                    warnings.filterwarnings("ignore", category=RuntimeWarning)
-                    clf.fit(X_train, y_train)
+                if task_type == "binary":
+                    test_prob = clf.predict_proba(X_test)[:, 1]
+                    m = compute_binary_metrics(y_test, test_prob)
+                    row["metric"] = "auroc"
+                    row["value"] = m["auroc"]
+                    records.append(row)
+                    binary_aurocs.append(m["auroc"])
+                    records.append({
+                        **row,
+                        "metric": "auprc",
+                        "value": m["auprc"],
+                    })
 
-                    row = {
-                        "task": task_name,
-                        "task_type": task_type,
-                        "classifier": clf_type,
-                        "n_train": len(X_train),
-                        "n_test": len(X_test),
-                    }
+                elif task_type == "ordinal":
+                    test_pred = clf.predict(X_test)
+                    m = compute_ordinal_metrics(y_test, test_pred)
+                    for metric_name in ("spearman_r", "qwk", "mae_ordinal"):
+                        records.append(
+                            {**row, "metric": metric_name, "value": m[metric_name]}
+                        )
 
-                    if task_type == "binary":
-                        test_prob = clf.predict_proba(X_test)[:, 1]
-                        m = compute_binary_metrics(y_test, test_prob)
-                        row["metric"] = "auroc"
-                        row["value"] = m["auroc"]
-                        records.append(row)
-                        binary_aurocs.append(m["auroc"])
-                        records.append({
-                            **row,
-                            "metric": "auprc",
-                            "value": m["auprc"],
-                        })
+                elif task_type == "multiclass":
+                    test_pred = clf.predict(X_test)
+                    m = compute_multiclass_metrics(y_test, test_pred)
+                    for metric_name in ("accuracy", "f1_macro"):
+                        records.append(
+                            {**row, "metric": metric_name, "value": m[metric_name]}
+                        )
 
-                    elif task_type == "ordinal":
-                        test_pred = clf.predict(X_test)
-                        m = compute_ordinal_metrics(y_test, test_pred)
-                        for metric_name in ("spearman_r", "qwk", "mae_ordinal"):
-                            records.append(
-                                {**row, "metric": metric_name, "value": m[metric_name]}
-                            )
-
-                    elif task_type == "multiclass":
-                        test_pred = clf.predict(X_test)
-                        m = compute_multiclass_metrics(y_test, test_pred)
-                        for metric_name in ("accuracy", "f1_macro"):
-                            records.append(
-                                {**row, "metric": metric_name, "value": m[metric_name]}
-                            )
-
-                    elif task_type == "regression":
-                        test_pred = clf.predict(X_test)
-                        m = compute_regression_metrics(y_test, test_pred)
-                        for metric_name in ("mse", "mae", "pearson_r", "r2"):
-                            records.append(
-                                {**row, "metric": metric_name, "value": m[metric_name]}
-                            )
+                elif task_type == "regression":
+                    test_pred = clf.predict(X_test)
+                    m = compute_regression_metrics(y_test, test_pred)
+                    for metric_name in ("mse", "mae", "pearson_r", "r2"):
+                        records.append(
+                            {**row, "metric": metric_name, "value": m[metric_name]}
+                        )
 
     global_score = float(np.mean(binary_aurocs)) if binary_aurocs else 0.0
 

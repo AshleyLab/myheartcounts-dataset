@@ -7,11 +7,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import mord
 import numpy as np
 from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
-from sklearn.linear_model import ElasticNetCV, LinearRegression, LogisticRegression, RidgeCV
+from sklearn.linear_model import ElasticNetCV, LinearRegression, LogisticRegression
 from sklearn.pipeline import Pipeline, make_pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC, SVR
@@ -87,18 +86,81 @@ class XGBOrdinalWrapper(BaseEstimator, ClassifierMixin):
         return probs
 
     def predict(self, X):
-        """Predict ordinal class labels based on the predicted probabilities.
+        """Predict ordinal class labels by argmax over the class probabilities
+        reconstructed from threshold outputs via differencing, as in
+        Frank & Hall (2001).
+        """
+        return self.predict_proba(X).argmax(axis=1).astype(int)
+
+
+class LogRegOrdinalWrapper(BaseEstimator, ClassifierMixin):
+    """LogisticRegression K-1 binary decomposition for ordinal targets.
+
+    Mirrors ``XGBOrdinalWrapper`` but uses LogisticRegression as the base
+    estimator, so linear-probe methods use the same ordinal meta-strategy as the
+    tree-based methods — isolating the linear-vs-tree comparison from the
+    ordinal-strategy comparison. Trains K-1 binary classifiers for K ordinal
+    levels (Frank & Hall cumulative-link decomposition).
+    """
+
+    def __init__(self, params, random_state=None):
+        """Initialize the wrapper.
+
+        Args:
+            params: Hyperparameters passed to each LogisticRegression classifier.
+            random_state: Random seed shared by all K-1 classifiers.
+        """
+        self.params = params
+        self.random_state = random_state
+        self.clfs = []
+        self.levels = None
+
+    def fit(self, X, y):
+        """Fit K-1 binary LogisticRegression classifiers for K ordinal levels.
+
+        Args:
+            X: Feature matrix of shape (n_samples, n_features).
+            y: Ordinal target vector of shape (n_samples,).
+
+        Returns:
+            self: The fitted wrapper.
+        """
+        self.levels = np.sort(np.unique(y))
+        self.clfs = []
+        for i in range(len(self.levels) - 1):
+            binary_y = (y > self.levels[i]).astype(int)
+            clf = LogisticRegression(**self.params, random_state=self.random_state)
+            clf.fit(X, binary_y)
+            self.clfs.append(clf)
+        return self
+
+    def predict_proba(self, X):
+        """Convert the K-1 threshold probabilities into K class probabilities.
 
         Args:
             X: Feature matrix of shape (n_samples, n_features).
 
         Returns:
-            preds: Array of shape (n_samples,) containing predicted ordinal class labels.
+            Array of shape (n_samples, K) of per-level class probabilities.
         """
-        # For ordinal, the expected value is the sum of probabilities
-        # of being above each threshold
         thresh_probs = np.column_stack([c.predict_proba(X)[:, 1] for c in self.clfs])
-        return np.round(np.sum(thresh_probs, axis=1)).astype(int)
+        probs = np.zeros((X.shape[0], len(self.levels)))
+        probs[:, 0] = 1 - thresh_probs[:, 0]
+        for i in range(1, len(self.levels) - 1):
+            probs[:, i] = thresh_probs[:, i - 1] - thresh_probs[:, i]
+        probs[:, -1] = thresh_probs[:, -1]
+        return probs
+
+    def predict(self, X):
+        """Predict ordinal labels as the argmax of the class probabilities.
+
+        Args:
+            X: Feature matrix of shape (n_samples, n_features).
+
+        Returns:
+            Array of shape (n_samples,) of predicted ordinal labels.
+        """
+        return self.predict_proba(X).argmax(axis=1).astype(int)
 
 
 class RobustStandardScaler(StandardScaler):
@@ -202,11 +264,6 @@ def create_model(
             max_iter=params.max_iter,
             random_state=random_state,
         )
-    elif clf_type == "ridge_cv":
-        params = config.ridge_cv
-        clf = RidgeCV(
-            cv=params.cv,
-        )
     elif clf_type == "svr":
         params = config.svr
         clf = SVR(
@@ -261,27 +318,32 @@ def create_model(
         # Pass your dictionary directly into the wrapper
         clf = XGBOrdinalWrapper(params=params.__dict__)
 
-    # all threshold ordinal regression from mord package, which is more efficient than statsmodels' OrderedModel for large datasets
-    elif clf_type == "ordinal_logit_at":
-        params = config.ordinal_logit_at
-        clf = mord.LogisticAT(
-            alpha=params.alpha,  # Regularization strength
-            max_iter=params.max_iter,  # Optimization iterations
-            verbose=0,
+    elif clf_type == "logreg_ordinal":
+        # K-1 binary decomposition using LogisticRegression — mirrors xgboost_ordinal
+        # so linear-probe methods use the same ordinal meta-strategy as tree methods.
+        # Inherits hyperparameters from the configured linear probe.
+        params = config.logistic_regression
+        solver = params.solver
+        n_jobs = params.n_jobs if solver == "liblinear" else 1
+        lr_kwargs = dict(
+            max_iter=params.max_iter,
+            class_weight=params.class_weight,
+            C=params.C,
+            solver=solver,
+            n_jobs=n_jobs,
         )
-    elif clf_type == "ordinal_logit_ridge":
-        params = config.ordinal_logit_ridge
-        clf = mord.OrdinalRidge(
-            alpha=params.alpha,  # Regularization strength
-            fit_intercept=params.fit_intercept,
-        )
+        clf = LogRegOrdinalWrapper(params=lr_kwargs, random_state=random_state)
+
     else:
         raise ValueError(f"Unknown model type: {clf_type}")
 
     # Build pipeline: [scaler] → [L2 norm] → [PCA] → classifier
     # XGBoost is tree-based (scale-invariant) and handles NaN natively;
     # a scaler would propagate NaN into mean_/scale_, corrupting features.
-    is_xgb = hasattr(clf, "get_xgb_params")
+    # Detect by config type, not hasattr: the ordinal wrapper IS XGBoost but does
+    # not expose get_xgb_params, so a hasattr check would mis-route it into the
+    # scaler that the bare classifier/regressor cells correctly skip.
+    is_xgb = clf_type.startswith("xgboost")
     steps: list = []
 
     if config.use_scaler and not is_xgb:

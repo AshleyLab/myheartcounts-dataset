@@ -34,7 +34,7 @@ Labels lookups are **index-aligned** with their respective HF datasets and must 
 ```
 src/downstream_evaluation/
 ├── config.py                    # Dataclass-based configuration schema
-├── feature_store.py             # WeekFeatureStore: extract-once, reuse features
+├── feature_store.py             # SegmentFeatureStore: extract-once, reuse features
 ├── README.md                    # This file
 ├── data/
 │   ├── aggregation.py           # Segment-to-user pooling (mean, coverage-weighted)

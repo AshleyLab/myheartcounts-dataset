@@ -10,11 +10,11 @@ Supports two segment types controlled by DataConfig.segment_type:
 
 Typical usage:
     # Phase 1: build (once per feature_type)
-    store = WeekFeatureStore.build(hf_dataset, feature_config, split_users, seed=42)
+    store = SegmentFeatureStore.build(hf_dataset, feature_config, split_users, seed=42)
     store.save("results/stores/stat_simple.npz")
 
-    # Phase 2: evaluate (per task x time_window x classifier)
-    splits = store.aggregate_for_task(labels_col, clip_dates, time_window, split_users)
+    # Phase 2: evaluate (per task x classifier)
+    splits = store.aggregate_for_task(labels_col, task_type, split_users)
     X_train, y_train, uids_train = splits["train"]
 """
 
@@ -35,7 +35,6 @@ from downstream_evaluation.config import (
     EncoderFeatureConfig,
     FeatureConfig,
     MultiRocketConfig,
-    TimeWindow,
 )
 
 if TYPE_CHECKING:
@@ -46,10 +45,6 @@ logger = logging.getLogger(__name__)
 # Sentinel values for missing labels in the parquet
 _MISSING_INT = -1
 _MISSING_FLOAT = -1.0
-
-# Seconds per segment type
-_SECONDS_PER_WEEK = 7 * 24 * 3600
-_SECONDS_PER_DAY = 24 * 3600
 
 # Hours per segment type (for coverage weighting)
 _HOURS_PER_SEGMENT = {"weekly": 168, "daily": 24}
@@ -71,15 +66,13 @@ class _StoreMetadata:
     checkpoint_path: str | None = None  # SSL checkpoint (encoder features only)
 
 
-class WeekFeatureStore:
+class SegmentFeatureStore:
     """Stores segment-level features (weekly or daily) for the entire dataset.
 
-    After building, provides fast time-windowed, per-task aggregation
-    to user-level feature vectors.
-
-    Despite the class name, this store handles both weekly and daily segments.
-    The segment_type is tracked in metadata and affects time window filtering
-    and coverage weighting.
+    After building, provides fast per-task aggregation to user-level feature
+    vectors: for each task, a user's segments whose label cell is non-sentinel
+    (the lookup's baked IC + per-task window) are pooled. ``segment_type``
+    ("weekly"/"daily") is tracked in metadata and affects coverage weighting.
     """
 
     def __init__(
@@ -120,7 +113,7 @@ class WeekFeatureStore:
 
         segment_label = self.metadata.segment_type
         logger.info(
-            f"WeekFeatureStore: {self.n_samples} {segment_label} samples, "
+            f"SegmentFeatureStore: {self.n_samples} {segment_label} samples, "
             f"{self.feature_dim}D features, "
             f"{len(self._user_to_indices)} unique users"
         )
@@ -148,7 +141,7 @@ class WeekFeatureStore:
         seed: int = 42,
         dataset_dir: str | None = None,
         segment_type: str = "weekly",
-    ) -> WeekFeatureStore:
+    ) -> SegmentFeatureStore:
         """Extract segment-level features for all samples in one pass.
 
         Args:
@@ -163,7 +156,7 @@ class WeekFeatureStore:
                 and how time windows are interpreted.
 
         Returns:
-            Populated WeekFeatureStore.
+            Populated SegmentFeatureStore.
         """
         t0 = time.time()
 
@@ -232,7 +225,7 @@ class WeekFeatureStore:
 
         elapsed = time.time() - t0
         logger.info(
-            f"WeekFeatureStore built in {elapsed:.1f}s: "
+            f"SegmentFeatureStore built in {elapsed:.1f}s: "
             f"{features.shape[0]} {segment_type} samples, {features.shape[1]}D"
         )
 
@@ -393,7 +386,7 @@ class WeekFeatureStore:
 
         np.savez_compressed(path, **save_dict)
         file_size_mb = path.stat().st_size / (1024 * 1024)
-        logger.info(f"WeekFeatureStore saved to {path} ({file_size_mb:.1f} MB)")
+        logger.info(f"SegmentFeatureStore saved to {path} ({file_size_mb:.1f} MB)")
 
     @classmethod
     def load(
@@ -401,7 +394,7 @@ class WeekFeatureStore:
         path: str | Path,
         expected_dataset_dir: str | None = None,
         expected_checkpoint_path: str | None = None,
-    ) -> WeekFeatureStore:
+    ) -> SegmentFeatureStore:
         """Load a feature store from a .npz file.
 
         Args:
@@ -412,7 +405,7 @@ class WeekFeatureStore:
                 built from a different checkpoint (encoder features only).
 
         Returns:
-            Loaded WeekFeatureStore.
+            Loaded SegmentFeatureStore.
         """
         path = Path(path)
         if not path.exists():
@@ -422,7 +415,7 @@ class WeekFeatureStore:
             if not path.exists():
                 raise FileNotFoundError(f"Feature store not found: {path}")
 
-        logger.info(f"Loading WeekFeatureStore from {path}...")
+        logger.info(f"Loading SegmentFeatureStore from {path}...")
         data = np.load(path, allow_pickle=True)
 
         features = data["features"]
@@ -486,25 +479,22 @@ class WeekFeatureStore:
         self,
         task_labels: np.ndarray | pd.Series,
         task_type: str,
-        clip_dates: dict[str, str] | None,
-        time_window: TimeWindow,
         split_users: dict[str, set[str]],
         pooling_method: str = "mean",
     ) -> dict[str, tuple[np.ndarray, np.ndarray, np.ndarray, int]]:
         """Aggregate week-level features to user-level for a single task.
 
-        For each user in each split:
-        1. Check valid label (not sentinel)
-        2. Filter weeks by time window (using clip_dates as reference)
-        3. Pool surviving week features (mean or coverage-weighted mean)
-        4. Return per-split (X, y, user_ids, n_weeks_total)
+        For each user in each split, pool exactly the segments whose own label
+        cell is non-sentinel and return per-split (X, y, user_ids, n_weeks). The
+        per-task forward window is baked into the labels lookup at build time, so
+        segment-level label validity already encodes "wearable day inside the
+        task window" — there is no separate temporal filter here (the mask is
+        both the cohort/IC and the temporal scope/TC).
 
         Args:
             task_labels: (N,) array of labels aligned with the store, where
                 -1 (int) or -1.0 (float) indicates missing.
             task_type: "binary", "ordinal", or "continuous".
-            clip_dates: {user_id: label_date_iso} for this task, or None.
-            time_window: Which weeks to include.
             split_users: {"train": set, "validation": set, "test": set}.
             pooling_method: "mean" for simple mean, "cov_weighted_mean" for
                 coverage-weighted mean (each week weighted by n_valid_hours/168).
@@ -529,13 +519,6 @@ class WeekFeatureStore:
             )
             use_cov_weights = False
 
-        # Pre-compute clip date nanoseconds for fast comparison
-        clip_ns = None
-        if clip_dates and time_window.needs_clip_dates:
-            clip_ns = {}
-            for uid, date_str in clip_dates.items():
-                clip_ns[uid] = pd.Timestamp(date_str).value  # nanoseconds
-
         # Determine missing sentinel based on dtype
         is_float = np.issubdtype(task_labels.dtype, np.floating)
 
@@ -559,26 +542,18 @@ class WeekFeatureStore:
                 if indices is None:
                     continue
 
-                # Check label validity (take first non-missing label for this user)
-                label = task_labels[indices[0]]
-                if is_float and (np.isnan(label) or label == _MISSING_FLOAT):
-                    continue
-                if not is_float and label == _MISSING_INT:
-                    continue
-
-                # Apply time window filter
-                if time_window.is_full or clip_ns is None:
-                    # "full" condition — use all weeks
-                    week_indices = indices
+                # The in-window valid segments are exactly the non-sentinel label
+                # cells (per-task forward window baked into the lookup at build
+                # time) — both the cohort (IC) and the temporal scope (TC).
+                seg_labels = task_labels[indices]
+                if is_float:
+                    valid = ~(np.isnan(seg_labels) | (seg_labels == _MISSING_FLOAT))
                 else:
-                    ref_ns = clip_ns.get(uid)
-                    if ref_ns is None:
-                        # No clip date for this user — skip (can't apply window)
-                        continue
-                    week_indices = self._filter_weeks_by_window(indices, ref_ns, time_window)
-
-                if len(week_indices) == 0:
+                    valid = seg_labels != _MISSING_INT
+                week_indices = [idx for idx, ok in zip(indices, valid) if ok]
+                if not week_indices:
                     continue
+                label = task_labels[week_indices[0]]
 
                 # Pool features across surviving segments
                 if use_cov_weights:
@@ -620,155 +595,3 @@ class WeekFeatureStore:
         logger.debug(f"Aggregated: train={n_train}, val={n_val}, test={n_test} users")
 
         return results
-
-    def aggregate_for_segment_recovery(
-        self,
-        task_labels: np.ndarray | pd.Series,
-        split_users: dict[str, set[str]],
-        person_mean_center: bool = False,
-    ) -> dict[str, tuple[np.ndarray, np.ndarray, np.ndarray, int]]:
-        """Pair each segment's features with its own label (same-segment recovery).
-
-        For every user-segment with a valid label, emit one
-        ``(features, label, user_id)`` example — one prediction per populated
-        segment (i.e. one per ISO week for weekly segments). Use this to
-        evaluate representation recovery: *"does the week's embedding preserve
-        enough information to recover the week's aggregated outcome?"*
-
-        Contrast with ``aggregate_for_task``, which mean-pools all of a user's
-        segments into a single cross-sectional feature per user.
-
-        Label validity is assumed pre-applied: segments with missing sentinels
-        (``-1`` / ``-1.0``) are skipped. Splits are user-level.
-
-        Args:
-            task_labels: ``(N,)`` array aligned with the store. Each segment
-                has its own label. Missing = ``-1`` (int) or ``-1.0`` (float).
-            split_users: ``{"train", "validation", "test"} -> set[user_id]``.
-            person_mean_center: If True, subtract each user's mean feature
-                vector and mean label from their samples — isolates within-
-                person variation from between-person trait (needed for
-                honest representation-recovery metrics when ICC is high).
-
-        Returns:
-            ``{"train", "val", "test"} -> (X, y, user_ids, n_samples)``.
-            ``n_samples`` equals ``X.shape[0]`` (one sample per populated,
-            valid-label segment in the split).
-        """
-        if isinstance(task_labels, pd.Series):
-            task_labels = task_labels.values
-
-        is_float = np.issubdtype(task_labels.dtype, np.floating)
-        missing_sentinel = _MISSING_FLOAT if is_float else _MISSING_INT
-
-        def _is_missing(lbl) -> bool:
-            if is_float:
-                return bool(np.isnan(lbl)) or lbl == missing_sentinel
-            return lbl == missing_sentinel
-
-        def _valid_indices(user_indices: list[int]) -> list[int]:
-            return [i for i in user_indices if not _is_missing(task_labels[i])]
-
-        # Pre-compute per-user feature/label means (used only if centering)
-        user_feat_mean: dict[str, np.ndarray] = {}
-        user_label_mean: dict[str, float] = {}
-        if person_mean_center:
-            for uid, indices in self._user_to_indices.items():
-                valid = _valid_indices(indices)
-                if not valid:
-                    continue
-                user_feat_mean[uid] = self.features[valid].mean(axis=0)
-                user_label_mean[uid] = float(np.mean([float(task_labels[i]) for i in valid]))
-
-        split_name_map = {"train": "train", "val": "validation", "test": "test"}
-        results: dict[str, tuple[np.ndarray, np.ndarray, np.ndarray, int]] = {}
-
-        for out_key, split_key in split_name_map.items():
-            split_user_set = split_users.get(split_key, set())
-            X_list: list[np.ndarray] = []
-            y_list: list[float] = []
-            uid_list: list[str] = []
-
-            for uid in sorted(split_user_set):
-                indices = self._user_to_indices.get(uid)
-                if not indices:
-                    continue
-
-                mu_feat = user_feat_mean.get(uid) if person_mean_center else None
-                mu_label = user_label_mean.get(uid, 0.0) if person_mean_center else 0.0
-
-                for idx in indices:
-                    label = task_labels[idx]
-                    if _is_missing(label):
-                        continue
-
-                    feat = self.features[idx]
-                    y_val = float(label)
-                    if mu_feat is not None:
-                        feat = feat - mu_feat
-                        y_val -= mu_label
-
-                    X_list.append(feat)
-                    y_list.append(y_val)
-                    uid_list.append(uid)
-
-            if X_list:
-                X = np.stack(X_list)
-                y = np.asarray(y_list, dtype=np.float32)
-                uids = np.asarray(uid_list, dtype=object)
-            else:
-                X = np.empty((0, self.feature_dim), dtype=np.float32)
-                y = np.empty(0, dtype=np.float32)
-                uids = np.empty(0, dtype=object)
-
-            results[out_key] = (X, y, uids, X.shape[0])
-
-        logger.info(
-            "Segment-recovery aggregation: train=%d, val=%d, test=%d samples "
-            "(person_mean_center=%s)",
-            results["train"][0].shape[0],
-            results["val"][0].shape[0],
-            results["test"][0].shape[0],
-            person_mean_center,
-        )
-
-        return results
-
-    def _filter_weeks_by_window(
-        self,
-        indices: list[int],
-        ref_ns: int,
-        time_window: TimeWindow,
-    ) -> list[int]:
-        """Filter segment indices by time window relative to reference date.
-
-        The time window's max_weeks_before/after are interpreted in the
-        segment's native unit: weeks for weekly segments, weeks for daily
-        segments (i.e., the window is always specified in weeks regardless
-        of segment type).
-
-        Args:
-            indices: Dataset indices for this user's segments.
-            ref_ns: Reference date as nanoseconds since epoch.
-            time_window: Window parameters (always in weeks).
-
-        Returns:
-            Filtered list of indices.
-        """
-        seg_ns = self.segment_starts_ns[indices]
-
-        # Time window is always specified in weeks, regardless of segment type
-        ns_per_week = _SECONDS_PER_WEEK * 1_000_000_000
-
-        if time_window.max_weeks_before is not None:
-            lower_bound = ref_ns - time_window.max_weeks_before * ns_per_week
-        else:
-            lower_bound = -np.inf
-
-        if time_window.max_weeks_after is not None:
-            upper_bound = ref_ns + time_window.max_weeks_after * ns_per_week
-        else:
-            upper_bound = np.inf
-
-        mask = (seg_ns >= lower_bound) & (seg_ns <= upper_bound)
-        return [indices[i] for i, keep in enumerate(mask) if keep]

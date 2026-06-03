@@ -13,30 +13,71 @@ import numpy as np
 
 @runtime_checkable
 class Encoder(Protocol):
-    """Protocol for health-prediction encoders.
+    """Protocol for health-prediction encoders — the model contract for Surface 1
+    (external submissions) and the bundled Surface-2 baselines alike.
 
-    Encode weekly sensor tensors into fixed-size embeddings.
+    An encoder maps **one participant's eligible wearable data** — already filtered
+    to the task's cohort and temporal window by the benchmark (IC + TC) — to a
+    single fixed-size embedding. The benchmark then fits a *uniform* linear probe
+    on the embeddings and scores it, so a model's result reflects its representation
+    rather than its choice of probe. The same protocol is implemented by external
+    encoders and by the baselines (MAE, SSL, Toto, Chronos-2, ...).
+
+    Optionally set ``input_granularity`` to choose how the benchmark hands you each
+    participant's data (default ``"series"``):
+
+      - ``"series"`` — the eligible continuous hourly series ``(T, 38)``; window it
+        however you like (5h, 2048h, ...). The general default.
+      - ``"daily"``  — eligible daily segments  ``(n_segments, 24, 38)``.
+      - ``"weekly"`` — eligible weekly segments ``(n_segments, 168, 38)``.
+
+    In every case channels 0-18 are z-scored sensor values and 19-37 the
+    missingness masks (1 = missing, 0 = observed).
 
     Example:
         >>> class MyEncoder:
-        ...     def encode(self, weekly_tensors: np.ndarray) -> np.ndarray:
-        ...         # weekly_tensors: (B, 168, 38)
-        ...         # Returns: (B, D) embeddings
-        ...         return weekly_tensors[:, :, :19].mean(axis=1)
+        ...     input_granularity = "series"
+        ...     def encode(self, data: np.ndarray) -> np.ndarray:
+        ...         # data: (T, 38) — this participant's eligible hourly series
+        ...         return my_network(data).mean(axis=0)   # -> (D,)
     """
 
-    def encode(self, weekly_tensors: np.ndarray) -> np.ndarray:
-        """Map weekly sensor data to fixed-size embeddings.
+    def encode(self, data: np.ndarray) -> np.ndarray:
+        """Map one participant's eligible data to a 1-D float32 embedding.
 
         Args:
-            weekly_tensors: Array of shape (B, 168, 38).
-                Columns 0-18 are z-scored sensor values (19 channels, hourly).
-                Columns 19-37 are missingness masks (1 = missing, 0 = observed).
+            data: the participant's eligible data at ``input_granularity`` (see the
+                class docstring). Only in-cohort, in-window data is included, so it
+                may be pooled / windowed freely.
 
         Returns:
-            Array of shape (B, D) where D is any embedding dimensionality.
-            Must be float32.
+            A 1-D float32 embedding ``(D,)`` of any dimensionality.
         """
+        ...
+
+
+@runtime_checkable
+class Predictor(Protocol):
+    """Protocol for end-to-end prediction models that own their classifier head.
+
+    Unlike :class:`Encoder` (which returns a representation for the benchmark's
+    uniform probe), a ``Predictor`` fits on the cohort's eligible data + labels and
+    returns one prediction per participant; the benchmark scores those directly.
+    Used by end-to-end baselines (e.g. GRU-D, MultiRocket). Set ``input_granularity``
+    as for :class:`Encoder` (default ``"series"``).
+
+    Example:
+        >>> class MyPredictor:
+        ...     def fit(self, data, labels): ...            # data: list of per-participant arrays
+        ...     def predict(self, data) -> np.ndarray: ...   # (n,) predictions, aligned with data
+    """
+
+    def fit(self, data: list[np.ndarray], labels: np.ndarray) -> None:
+        """Fit on the train cohort: per-participant eligible data + aligned labels."""
+        ...
+
+    def predict(self, data: list[np.ndarray]) -> np.ndarray:
+        """Return one prediction per participant, aligned with ``data``."""
         ...
 
 

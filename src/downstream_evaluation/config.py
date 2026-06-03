@@ -532,22 +532,6 @@ class OrderedLogitConfig:
 
 
 @dataclass
-class OrderedLogitATConfig:
-    """Ordered Logit AT hyperparameters."""
-
-    max_iter: int = 500
-    alpha: float = 0.2  # Regularization parameter
-
-
-@dataclass
-class OrderedLogitRidgeConfig:
-    """Ordered Logit Ridge hyperparameters."""
-
-    fit_intercept: bool = True
-    alpha: float = 0.2  # Regularization parameter
-
-
-@dataclass
 class SVMConfig:
     """SVM hyperparameters."""
 
@@ -585,17 +569,6 @@ class ElasticNetConfig:
     n_alphas: int = 100  # Number of alphas along the regularization path
     cv: int = 5  # Number of cross-validation folds
     max_iter: int = 1000
-
-
-@dataclass
-class RidgeCVConfig:
-    """RidgeCV (L2-regularized regression, alpha chosen by CV).
-
-    Unlike ElasticNet, Ridge never zeroes out coefficients entirely, making it
-    more robust for high-dimensional / weak-signal regression tasks.
-    """
-
-    cv: int = 5  # Number of cross-validation folds
 
 
 @dataclass
@@ -674,14 +647,12 @@ class ClassifierConfig:
         "svm",
         "random_forest_classifier",
         "elastic_net",
-        "ridge_cv",
         "xgboost_classifier",
         "linear_regression",
         "svr",
         "random_forest_regressor",
         "xgboost_regressor",
-        "ordinal_logit_at",
-        "ordinal_logit_ridge",
+        "logreg_ordinal",
         "xgboost_ordinal",
     ] = "logistic_regression"
     use_scaler: bool = True
@@ -694,7 +665,6 @@ class ClassifierConfig:
     random_forest_classifier: RandomForestConfig = field(default_factory=RandomForestConfig)
     linear_regression: LinearRegressionConfig = field(default_factory=LinearRegressionConfig)
     elastic_net: ElasticNetConfig = field(default_factory=ElasticNetConfig)
-    ridge_cv: RidgeCVConfig = field(default_factory=RidgeCVConfig)
     svr: SVRConfig = field(default_factory=SVRConfig)
     random_forest_regressor: RandomForestRegressorConfig = field(
         default_factory=RandomForestRegressorConfig
@@ -702,10 +672,6 @@ class ClassifierConfig:
     xgboost_classifier: XGBClassifierConfig = field(default_factory=XGBClassifierConfig)
     xgboost_regressor: XGBRegressorConfig = field(default_factory=XGBRegressorConfig)
     xgboost_ordinal: XGBOrdinalConfig = field(default_factory=XGBOrdinalConfig)
-    ordinal_logit_at: OrderedLogitATConfig = field(default_factory=OrderedLogitATConfig)
-    ordinal_logit_ridge: OrderedLogitRidgeConfig = field(
-        default_factory=OrderedLogitRidgeConfig
-    )
 
 
 @dataclass
@@ -761,8 +727,8 @@ class DownstreamEvalConfig:
 DEFAULT_CLASSIFIERS_BY_TASK_TYPE: dict[str, list[str]] = {
     "binary": ["logistic_regression", "xgboost_classifier"],
     "multiclass": ["logistic_regression"],
-    "ordinal": ["ordinal_logit_at"],
-    "regression": ["ridge_cv"],
+    "ordinal": ["logreg_ordinal"],
+    "regression": ["linear_regression"],
 }
 
 

@@ -17,7 +17,7 @@ Quick start:
 
 from openmhc._constants import MASKING_SCENARIOS, SENSOR_CHANNELS
 from openmhc._dataset import data_dir, download_dataset
-from openmhc._protocols import Encoder, Forecaster, Imputer
+from openmhc._protocols import Encoder, Forecaster, Imputer, Predictor
 from openmhc._results import (
     ForecastingResults,
     ImputationResults,
@@ -27,6 +27,7 @@ from openmhc._results import (
 __all__ = [
     # Protocols
     "Encoder",
+    "Predictor",
     "Imputer",
     "Forecaster",
     # Evaluation functions
