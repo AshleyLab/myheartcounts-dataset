@@ -27,3 +27,10 @@ env/
 .cache/
 data/.hf_cache/
 data/processed/
+
+# Eval build artifacts (regenerated from raw; never commit)
+results/
+logs/
+eval_*.csv
+__pycache__/
+*.pyc

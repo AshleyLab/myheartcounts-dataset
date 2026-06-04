@@ -63,8 +63,12 @@ class Predictor(Protocol):
     Unlike :class:`Encoder` (which returns a representation for the benchmark's
     uniform probe), a ``Predictor`` fits on the cohort's eligible data + labels and
     returns one prediction per participant; the benchmark scores those directly.
-    Used by end-to-end baselines (e.g. GRU-D, MultiRocket). Set ``input_granularity``
+    Used by end-to-end models (e.g. GRU-D, MultiRocket). Set ``input_granularity``
     as for :class:`Encoder` (default ``"series"``).
+
+    This is the *public* contract — plain per-participant arrays in, predictions out.
+    The benchmark adapts it to its internal engine. (Bundled baselines implement the
+    richer internal model interface directly, so they can key by user / task.)
 
     Example:
         >>> class MyPredictor:

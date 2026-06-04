@@ -40,6 +40,7 @@ class _DatasetPaths:
     daily_hf: Path
     window_index: Path
     weekly_labels_lookup: Path
+    daily_labels_lookup: Path
     splits_file: Path
     norm_stats: Path
     labels_dir: Path
@@ -63,6 +64,7 @@ class _DatasetPaths:
             daily_hf=root / "processed" / "daily_hf",
             window_index=root / "processed" / "window_index_w7_s7_d5.parquet",
             weekly_labels_lookup=root / "processed" / "weekly_labels_lookup_stride7_windowed.parquet",
+            daily_labels_lookup=root / "processed" / "daily_labels_lookup.parquet",
             splits_file=root / "splits" / "sharable_users_seed42_2026.json",
             norm_stats=root / "processed" / "normalization_stats_hourly.json",
             labels_dir=root / "labels",
@@ -143,19 +145,11 @@ def evaluate_prediction(
     paths = _DatasetPaths.resolve(data_dir)
     _ensure_labels_env(paths.labels_dir)
 
-    from downstream_evaluation.config import ClassifierConfig
     from downstream_evaluation.data.splits import load_split_file
-    from downstream_evaluation.evaluation.metrics import (
-        compute_binary_metrics,
-        compute_multiclass_metrics,
-        compute_ordinal_metrics,
-        compute_regression_metrics,
-        get_task_type,
-    )
-    from downstream_evaluation.models.registry import create_model
+    from downstream_evaluation.evaluation.metrics import get_task_type
+    from downstream_evaluation.runner import EvalConfig, run_eval
     from labels.api import TARGET_NAMES
 
-    # Resolve tasks.
     if tasks == "all":
         task_list = sorted(TARGET_NAMES)
     elif isinstance(tasks, str):
@@ -163,181 +157,49 @@ def evaluate_prediction(
     else:
         task_list = list(tasks)
 
-    # Resolve paths.
-    daily_hourly_dir = paths.daily_hourly_hf
-    split_file = paths.splits_file
-    window_index_path = paths.window_index
-    labels_path = paths.weekly_labels_lookup
+    split_users = load_split_file(paths.splits_file)
 
-    # Load user splits.
-    split_users = load_split_file(split_file)
-
-    # Load labels (embedded-temporal windowed lookup: non-sentinel cells already
-    # encode validity + the per-task forward window, so no eval-time coverage
-    # filter or clip-date windowing is applied here).
-    labels_df = pd.read_parquet(labels_path)
-    valid_indices = None
-
-    # Load dataset (on-the-fly weekly from daily_hourly_hf + window index).
-    from data.datasets.indexed_week_dataset import load_indexed_week_dataset
-
-    hf_dataset = load_indexed_week_dataset(
-        daily_hourly_hf_dir=str(daily_hourly_dir),
-        window_index_path=str(window_index_path),
-        window_size=7,
+    # Both surfaces run through the one engine (mirrors evaluate_imputation →
+    # run_eval): an external encoder exposes ``encode``; a bundled baseline exposes
+    # ``encode_cohort``/``fit``. run_eval selects the path, applies the uniform
+    # PCA-50 + linear probe, and reports the primary metric per task type. The
+    # per-task temporal scope is baked into the windowed lookup (no eval-time knob).
+    cfg = EvalConfig(
+        data_dir=str(paths.root), split_users=split_users, tasks=task_list, seed=seed
     )
-    logger.info("Loaded IndexedWeekDataset: %d windows", len(hf_dataset))
+    results = run_eval(cfg, encoder)
 
-    if valid_indices is not None:
-        hf_dataset = hf_dataset.select(valid_indices)
-
-    # Extract features using the user's encoder.
-    features, user_ids, segment_starts = _extract_encoder_features(
-        encoder, hf_dataset, split_users, seed
-    )
-
-    # Build a lightweight store for aggregation.
-    from downstream_evaluation.feature_store import SegmentFeatureStore, _StoreMetadata
-
-    segment_starts_ns = (
-        pd.to_datetime(segment_starts.tolist()).astype("int64").values
-    )
-
-    n_valid_hours = (
-        np.array(hf_dataset["n_valid_hours"], dtype=np.int32)
-        if "n_valid_hours" in hf_dataset.column_names
-        else None
-    )
-
-    store_meta = _StoreMetadata(
-        feature_type="custom_encoder",
-        feature_dim=features.shape[1],
-        n_samples=features.shape[0],
-        segment_type="weekly",
-    )
-    store = SegmentFeatureStore(
-        features, user_ids, segment_starts, segment_starts_ns, store_meta, n_valid_hours
-    )
-
-    del hf_dataset
-
-    # Uniform linear probes across task types, so a method's score reflects its
-    # representation rather than the choice of probe: LogReg (binary/multiclass),
-    # K-1 binary LogReg-Ordinal (ordinal), OLS (regression). The per-task temporal
-    # scope is baked into the windowed lookup, so there is no eval-time time window.
-    clf_mapping = {
-        "binary": ["logistic_regression"],
-        "ordinal": ["logreg_ordinal"],
-        "regression": ["linear_regression"],
-        "multiclass": ["logistic_regression"],
+    # Flatten the engine's ``{task: {metric: value, n_test}}`` into long-format
+    # records; the global score is the mean test AUPRC over binary tasks (AUPRC is
+    # the primary binary metric).
+    probe_by_type = {
+        "binary": "logistic_regression",
+        "multiclass": "logistic_regression",
+        "ordinal": "logreg_ordinal",
+        "regression": "linear_regression",
     }
-
     records: list[dict] = []
-    binary_aurocs: list[float] = []
-
-    for task_name in task_list:
-        try:
-            task_type = get_task_type(task_name)
-        except ValueError:
-            logger.warning("Unknown task %s, skipping", task_name)
+    binary_primary: list[float] = []
+    for task_name, task_metrics in results.items():
+        if task_name == "config":
             continue
-
-        classifiers = clf_mapping.get(task_type, [])
-        if not classifiers:
-            continue
-
-        for clf_type in classifiers:
-            if task_name not in labels_df.columns:
-                logger.warning(
-                    "Task %s missing from labels lookup, skipping", task_name
-                )
-                break
-            task_labels = labels_df[task_name].values
-            try:
-                splits = store.aggregate_for_task(
-                    task_labels,
-                    task_type,
-                    split_users,
-                    pooling_method="mean",
-                )
-            except Exception as e:
-                logger.warning("Task %s failed aggregation: %s", task_name, e)
+        task_type = get_task_type(task_name)
+        n_test = task_metrics.get("n_test")
+        for metric_name, value in task_metrics.items():
+            if metric_name == "n_test":
                 continue
+            records.append({
+                "task": task_name,
+                "task_type": task_type,
+                "classifier": probe_by_type.get(task_type),
+                "metric": metric_name,
+                "value": value,
+                "n_test": n_test,
+            })
+        if task_type == "binary" and "auprc" in task_metrics:
+            binary_primary.append(task_metrics["auprc"])
 
-            # aggregate_for_task returns a 4-tuple (X, y, user_ids, n_weeks)
-            # under "train"/"val"/"test" keys (split file used "validation").
-            X_train, y_train, *_ = splits["train"]
-            X_val, y_val, *_ = splits["val"]
-            X_test, y_test, *_ = splits["test"]
-
-            if len(X_train) == 0 or len(X_test) == 0:
-                logger.warning("Task %s: empty split, skipping", task_name)
-                continue
-
-            # Encoder embeddings go to a PCA-50 linear probe with no feature
-            # scaler: the embeddings are already layer-normalised, and PCA-50
-            # fixes the probe input dimensionality so encoders with different
-            # output sizes are compared on equal footing.
-            clf_config = ClassifierConfig(
-                type=clf_type, use_scaler=False, pca_n_components=50
-            )
-            clf = create_model(clf_config, random_state=seed, task_type=task_type)
-
-            # NaN handling for sklearn.
-            for X in [X_train, X_val, X_test]:
-                np.nan_to_num(X, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
-
-            with warnings.catch_warnings():
-                warnings.filterwarnings("ignore", category=RuntimeWarning)
-                clf.fit(X_train, y_train)
-
-                row = {
-                    "task": task_name,
-                    "task_type": task_type,
-                    "classifier": clf_type,
-                    "n_train": len(X_train),
-                    "n_test": len(X_test),
-                }
-
-                if task_type == "binary":
-                    test_prob = clf.predict_proba(X_test)[:, 1]
-                    m = compute_binary_metrics(y_test, test_prob)
-                    row["metric"] = "auroc"
-                    row["value"] = m["auroc"]
-                    records.append(row)
-                    binary_aurocs.append(m["auroc"])
-                    records.append({
-                        **row,
-                        "metric": "auprc",
-                        "value": m["auprc"],
-                    })
-
-                elif task_type == "ordinal":
-                    test_pred = clf.predict(X_test)
-                    m = compute_ordinal_metrics(y_test, test_pred)
-                    for metric_name in ("spearman_r", "qwk", "mae_ordinal"):
-                        records.append(
-                            {**row, "metric": metric_name, "value": m[metric_name]}
-                        )
-
-                elif task_type == "multiclass":
-                    test_pred = clf.predict(X_test)
-                    m = compute_multiclass_metrics(y_test, test_pred)
-                    for metric_name in ("accuracy", "f1_macro"):
-                        records.append(
-                            {**row, "metric": metric_name, "value": m[metric_name]}
-                        )
-
-                elif task_type == "regression":
-                    test_pred = clf.predict(X_test)
-                    m = compute_regression_metrics(y_test, test_pred)
-                    for metric_name in ("mse", "mae", "pearson_r", "r2"):
-                        records.append(
-                            {**row, "metric": metric_name, "value": m[metric_name]}
-                        )
-
-    global_score = float(np.mean(binary_aurocs)) if binary_aurocs else 0.0
-
+    global_score = float(np.mean(binary_primary)) if binary_primary else 0.0
     return PredictionResults(records=records, global_score=global_score)
 
 

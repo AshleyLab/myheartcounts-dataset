@@ -1,30 +1,25 @@
 """Evaluation metrics for downstream tasks.
 
-Supports binary classification, multiclass classification, and regression tasks.
-Regression metrics: MSE, MAE, Pearson correlation, R².
+One primary metric per task type — the headline reporting metric and nothing else:
 
-All metric functions return bootstrap standard errors (suffix ``_se``) alongside
-point estimates.  The bootstrap resamples the test set 1000 times with
-replacement and reports ``std(metric_values)`` as the SE.
+  - binary      → AUPRC
+  - multiclass  → accuracy
+  - ordinal     → Spearman's rho
+  - regression  → Pearson r
+
+Each returns the point estimate plus its bootstrap standard error (suffix
+``_se``): the bootstrap resamples the test set 1000 times with replacement and
+reports ``std(metric_values)``. Secondary metrics (AUROC, QWK, MAE, F1, MSE, R²)
+are intentionally not computed — they are not reported and only add cost.
 """
 
 from __future__ import annotations
 
-import warnings
 from collections.abc import Callable
 
 import numpy as np
 from scipy.stats import pearsonr, spearmanr
-from sklearn.metrics import (
-    accuracy_score,
-    average_precision_score,
-    cohen_kappa_score,
-    f1_score,
-    mean_absolute_error,
-    mean_squared_error,
-    r2_score,
-    roc_auc_score,
-)
+from sklearn.metrics import accuracy_score, average_precision_score, r2_score
 
 from labels.api import LABEL_NAMES, LABEL_TYPES
 
@@ -100,37 +95,15 @@ def get_task_type(task_name: str) -> str:
 
 
 def compute_binary_metrics(y_true: np.ndarray, y_prob: np.ndarray) -> dict[str, float]:
-    """Compute AUROC and AUPRC for binary classification.
+    """AUPRC (primary binary metric) + bootstrap SE.
 
     Args:
         y_true: Ground truth binary labels (N,).
-        y_prob: Predicted probabilities for positive class (N,).
-
-    Returns:
-        Dictionary with 'auroc', 'auprc', and their bootstrap SEs.
+        y_prob: Predicted probabilities/scores for the positive class (N,).
     """
-    nan_result = {
-        "auroc": float("nan"),
-        "auprc": float("nan"),
-        "auroc_se": float("nan"),
-        "auprc_se": float("nan"),
-    }
-
-    # Handle edge cases
-    if len(np.unique(y_true)) < 2:
-        return nan_result
-
-    # Check for NaN/Inf in predictions
-    if np.isnan(y_prob).any() or np.isinf(y_prob).any():
-        return nan_result
-
-    # Clip probabilities to valid range to handle numerical issues
+    if len(np.unique(y_true)) < 2 or np.isnan(y_prob).any() or np.isinf(y_prob).any():
+        return {"auprc": float("nan"), "auprc_se": float("nan")}
     y_prob = np.clip(y_prob, 1e-10, 1.0 - 1e-10)
-
-    def _auroc(yt, yp):
-        if len(np.unique(yt)) < 2:
-            return np.nan
-        return roc_auc_score(yt, yp)
 
     def _auprc(yt, yp):
         if len(np.unique(yt)) < 2:
@@ -138,82 +111,42 @@ def compute_binary_metrics(y_true: np.ndarray, y_prob: np.ndarray) -> dict[str, 
         return average_precision_score(yt, yp)
 
     return {
-        "auroc": float(roc_auc_score(y_true, y_prob)),
         "auprc": float(average_precision_score(y_true, y_prob)),
-        "auroc_se": bootstrap_se(y_true, y_prob, _auroc),
         "auprc_se": bootstrap_se(y_true, y_prob, _auprc),
     }
 
 
 def compute_multiclass_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, float]:
-    """Compute accuracy and macro F1 for multiclass classification.
+    """Accuracy (primary multiclass metric) + bootstrap SE."""
 
-    Args:
-        y_true: Ground truth class labels (N,).
-        y_pred: Predicted class labels (N,).
+    def _acc(yt, yp):
+        return accuracy_score(yt, yp)
 
-    Returns:
-        Dictionary with 'accuracy' and 'f1_macro' metrics.
-    """
     return {
         "accuracy": float(accuracy_score(y_true, y_pred)),
-        "f1_macro": float(f1_score(y_true, y_pred, average="macro", zero_division=0)),
+        "accuracy_se": bootstrap_se(y_true, y_pred, _acc),
     }
 
 
 def compute_ordinal_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, float]:
-    """Compute Spearman's Rho, Quadratic Weighted Kappa, and MAE for ordinal data.
-
-    Args:
-        y_true: Ground truth ordinal labels (N,).
-        y_pred: Predicted ordinal labels (N,).
-
-    Returns:
-        Dictionary with 'spearman_r', 'qwk', 'mae_ordinal', and their bootstrap SEs.
-    """
+    """Spearman's rho (primary ordinal metric) + bootstrap SE."""
 
     def _spearman(yt, yp):
         if len(np.unique(yt)) < 2 or len(np.unique(yp)) < 2:
             return np.nan
         return spearmanr(yt, yp)[0]
 
-    def _qwk(yt, yp):
-        return cohen_kappa_score(yt, yp, weights="quadratic")
-
-    def _mae(yt, yp):
-        return mean_absolute_error(yt, yp)
-
-    # 1. Spearman Rank Correlation
     spearman_val, _ = spearmanr(y_true, y_pred)
-
-    # 2. Quadratic Weighted Kappa (QWK)
-    qwk_val = cohen_kappa_score(y_true, y_pred, weights="quadratic")
-
-    # 3. Mean Absolute Error (MAE)
-    mae_val = mean_absolute_error(y_true, y_pred)
-
     return {
         "spearman_r": float(spearman_val),
-        "qwk": float(qwk_val),
-        "mae_ordinal": float(mae_val),
         "spearman_r_se": bootstrap_se(y_true, y_pred, _spearman),
-        "qwk_se": bootstrap_se(y_true, y_pred, _qwk),
-        "mae_ordinal_se": bootstrap_se(y_true, y_pred, _mae),
     }
 
 
 def compute_regression_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, float]:
-    """Compute MSE, MAE, Pearson correlation, and R² for regression.
-
-    Args:
-        y_true: Ground truth values (N,).
-        y_pred: Predicted values (N,).
-
-    Returns:
-        Dictionary with 'mse', 'mae', 'pearson_r', 'r2', and their bootstrap SEs.
-    """
-    # Epsilon threshold for "zero variance" — guards against float-precision
-    # residuals when y_true/y_pred are effectively constant after centering.
+    """Pearson r (primary regression metric) + bootstrap SE."""
+    # Epsilon threshold for "zero variance" — guards float-precision residuals when
+    # y_true/y_pred are effectively constant after centering (Pearson r → NaN).
     _VAR_EPS = 1e-12
 
     def _pearson(yt, yp):
@@ -221,51 +154,13 @@ def compute_regression_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict[s
             return np.nan
         return pearsonr(yt, yp)[0]
 
-    def _mse(yt, yp):
-        return mean_squared_error(yt, yp)
-
-    def _mae(yt, yp):
-        return mean_absolute_error(yt, yp)
-
-    def _r2(yt, yp):
-        if np.var(yt) < _VAR_EPS:
-            return np.nan
-        return r2_score(yt, yp)
-
-    # Handle edge case of constant predictions or true values
-    if np.var(y_pred) < _VAR_EPS:
-        warnings.warn(
-            "Predictions are constant (zero variance). Pearson correlation will be NaN.",
-            UserWarning,
-            stacklevel=2,
-        )
-        pearson_r = float("nan")
-    elif np.var(y_true) < _VAR_EPS:
-        warnings.warn(
-            "True values are constant (zero variance). Pearson correlation will be NaN.",
-            UserWarning,
-            stacklevel=2,
-        )
+    if np.var(y_pred) < _VAR_EPS or np.var(y_true) < _VAR_EPS:
         pearson_r = float("nan")
     else:
-        pearson_r, _ = pearsonr(y_true, y_pred)
-        pearson_r = float(pearson_r)
-
-    # R² — only undefined when y_true is constant (SS_tot = 0)
-    if np.var(y_true) < _VAR_EPS:
-        r2 = float("nan")
-    else:
-        r2 = float(r2_score(y_true, y_pred))
-
+        pearson_r = float(pearsonr(y_true, y_pred)[0])
     return {
-        "mse": float(mean_squared_error(y_true, y_pred)),
-        "mae": float(mean_absolute_error(y_true, y_pred)),
         "pearson_r": pearson_r,
-        "r2": r2,
-        "mse_se": bootstrap_se(y_true, y_pred, _mse),
-        "mae_se": bootstrap_se(y_true, y_pred, _mae),
         "pearson_r_se": bootstrap_se(y_true, y_pred, _pearson),
-        "r2_se": bootstrap_se(y_true, y_pred, _r2),
     }
 
 

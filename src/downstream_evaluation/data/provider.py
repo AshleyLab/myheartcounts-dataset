@@ -59,6 +59,7 @@ class TaskData:
     user_ids: np.ndarray
     labels: np.ndarray
     eligible_indices: list[np.ndarray]
+    dates: list | None = None  # per-user eligible segment dates (daily) / week_starts (weekly)
     inputs: list | None = None
 
 
@@ -114,12 +115,12 @@ class TaskDataProvider:
 
         # loc preserves the lookup's RangeIndex, so grp.index gives the original
         # row positions (== indices into the row-aligned segment data).
-        sub = self._lookup.loc[valid, ["user_id", task]]
+        sub = self._lookup.loc[valid, ["user_id", self._date_col, task]]
         index: dict[str, tuple] = {}
         for uid, grp in sub.groupby("user_id", sort=False):
             raw = grp[task].iloc[0]
             label = float(raw) if is_float else int(raw)
-            index[str(uid)] = (label, grp.index.to_numpy())
+            index[str(uid)] = (label, grp.index.to_numpy(), grp[self._date_col].to_numpy())
         self._index_cache[task] = index
         return index
 
@@ -143,6 +144,7 @@ class TaskDataProvider:
         users = sorted(u for u in self._split_users.get(split_key, set()) if u in index)
         labels = np.array([index[u][0] for u in users])
         eligible = [index[u][1] for u in users]
+        dates = [index[u][2] for u in users]
         return TaskData(
             task=task,
             split=split_key,
@@ -150,4 +152,5 @@ class TaskDataProvider:
             user_ids=np.array(users, dtype=object),
             labels=labels,
             eligible_indices=eligible,
+            dates=dates,
         )
