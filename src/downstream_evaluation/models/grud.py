@@ -323,6 +323,7 @@ class GRUD:
         self._trainer = None
         self._segments = None  # {uid: (n_segs, 24, 19)} with NaN at missing
         self._task_types: dict[str, str] = {}
+        self._reg_stats: dict[str, tuple[float, float]] = {}  # task -> (mean, std)
 
     def _load_segments(self):
         if self._segments is not None:
@@ -371,6 +372,9 @@ class GRUD:
             for t in self._tasks:
                 if t in reg_tasks:
                     val = labels[t].get(u, np.nan)
+                    if not np.isnan(val) and t in self._reg_stats:
+                        mu, sd = self._reg_stats[t]
+                        val = (float(val) - mu) / sd  # train-split z-score
                     y_by_task[t].extend([float(val)] * len(segs))
                 else:
                     val = labels[t].get(u, MISSING_LABEL)
@@ -411,6 +415,17 @@ class GRUD:
                 else:  # binary
                     cls_n[t] = 2
 
+        # Train-split z-score stats for regression targets. Raw-scale MSE (age² ≈
+        # 2500 vs CE ≈ 0.7) would dominate the averaged multi-task loss and starve
+        # every head; the golden normalizes targets for training and reverses at
+        # predict. Pearson r is linear-invariant, so the reverse is cosmetic.
+        for t in reg_tasks:
+            y = train_td_labels[t].astype(float)
+            y = y[~np.isnan(y)]
+            mu = float(y.mean()) if len(y) else 0.0
+            sd = float(y.std()) if len(y) and y.std() > 1e-8 else 1.0
+            self._reg_stats[t] = (mu, sd)
+
         train_ds = self._build_split(provider, "train", cls_n, reg_tasks, ord_n)
         val_ds = self._build_split(provider, "validation", cls_n, reg_tasks, ord_n)
         device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -437,6 +452,10 @@ class GRUD:
         ds = _UserDataset(
             np.concatenate(Xs, axis=0), dummy, np.asarray(uids, dtype=object), self._tasks
         )
-        pred_by_user = dict(zip(ds.user_ids, self._trainer.predict(ds, task, self._task_types[task])))
+        preds = self._trainer.predict(ds, task, self._task_types[task])
+        if self._task_types[task] == "regression" and task in self._reg_stats:
+            mu, sd = self._reg_stats[task]
+            preds = preds * sd + mu  # reverse the train-split z-score
+        pred_by_user = dict(zip(ds.user_ids, preds))
         return np.array([pred_by_user.get(str(u), 0.0) for u in task_data.user_ids], dtype=np.float64)
 

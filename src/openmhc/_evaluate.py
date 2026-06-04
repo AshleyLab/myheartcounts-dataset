@@ -10,7 +10,6 @@ from __future__ import annotations
 import logging
 import os
 import tempfile
-import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -21,7 +20,7 @@ if TYPE_CHECKING:
     from openmhc._protocols import Encoder, Imputer
 
 from openmhc._dataset import data_dir as _resolve_default_data_dir
-from openmhc._results import PredictionResults, ImputationResults
+from openmhc._results import ForecastingResults, ImputationResults, PredictionResults
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +47,7 @@ class _DatasetPaths:
     forecasting_sample_index_dir: Path
 
     @classmethod
-    def resolve(cls, override: str | Path | None = None) -> "_DatasetPaths":
+    def resolve(cls, override: str | Path | None = None) -> _DatasetPaths:
         """Build the paths bundle from an explicit override or the default.
 
         Resolution order matches :func:`openmhc.data_dir`:
@@ -140,8 +139,6 @@ def evaluate_prediction(
         A PredictionResults instance with per-task metrics and a global score
         (mean AUROC across binary tasks).
     """
-    import pandas as pd
-
     paths = _DatasetPaths.resolve(data_dir)
     _ensure_labels_env(paths.labels_dir)
 
@@ -201,124 +198,6 @@ def evaluate_prediction(
 
     global_score = float(np.mean(binary_primary)) if binary_primary else 0.0
     return PredictionResults(records=records, global_score=global_score)
-
-
-def _extract_encoder_features(
-    encoder: Encoder,
-    hf_dataset,
-    split_users: dict[str, set[str]],
-    seed: int,
-    batch_size: int = 64,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Extract features from all samples using the user's encoder.
-
-    Normalizes sensor values using training-set statistics, constructs
-    (168, 38) tensors, and calls `encoder.encode()` in batches.
-
-    Args:
-        encoder: Object implementing the Encoder protocol.
-        hf_dataset: HuggingFace dataset with `values`, `mask`, `user_id`,
-            and timestamp columns.
-        split_users: Mapping of split name to set of user ID strings. The
-            "train" split is used to compute normalization statistics.
-        seed: Random seed for sampling training statistics.
-        batch_size: Number of samples per encoding batch.
-
-    Returns:
-        A tuple of (features, user_ids, segment_starts) where:
-            - features: float32 array of shape (N, D).
-            - user_ids: object array of shape (N,) with user ID strings.
-            - segment_starts: object array of shape (N,) with ISO timestamp
-              strings.
-    """
-    from tqdm import tqdm
-
-    N = len(hf_dataset)
-    user_ids = np.array(hf_dataset["user_id"], dtype=object)
-
-    # Determine timestamp column.
-    if "week_start" in hf_dataset.column_names:
-        segment_starts = np.array(hf_dataset["week_start"], dtype=object)
-    elif "date" in hf_dataset.column_names:
-        segment_starts = np.array(hf_dataset["date"], dtype=object)
-    else:
-        segment_starts = np.array([""] * N, dtype=object)
-
-    # Compute normalization stats from training set.
-    train_users = split_users.get("train", set())
-    train_mask = np.array([uid in train_users for uid in user_ids])
-
-    logger.info(
-        "Computing normalization stats from %d training samples...", train_mask.sum()
-    )
-    n_channels = 19
-    sums = np.zeros(n_channels, dtype=np.float64)
-    sq_sums = np.zeros(n_channels, dtype=np.float64)
-    counts = np.zeros(n_channels, dtype=np.float64)
-
-    train_indices = np.where(train_mask)[0]
-    stats_n = min(len(train_indices), 10000)
-    rng = np.random.RandomState(seed)
-    stats_indices = (
-        rng.choice(train_indices, stats_n, replace=False) if stats_n > 0 else []
-    )
-
-    for idx in stats_indices:
-        vals = np.array(hf_dataset[int(idx)]["values"], dtype=np.float32)
-        mask = np.array(hf_dataset[int(idx)]["mask"], dtype=np.float32)
-        if vals.ndim == 2:
-            vals_ch = vals[:, :n_channels]
-            mask_ch = mask[:, :n_channels]
-        else:
-            continue
-        observed = mask_ch > 0.5
-        for c in range(n_channels):
-            obs = vals_ch[:, c][observed[:, c]]
-            if len(obs) > 0:
-                sums[c] += obs.sum()
-                sq_sums[c] += (obs**2).sum()
-                counts[c] += len(obs)
-
-    means = np.where(counts > 0, sums / counts, 0.0).astype(np.float32)
-    stds = np.where(
-        counts > 1,
-        np.sqrt((sq_sums / counts) - (sums / counts) ** 2),
-        1.0,
-    ).astype(np.float32)
-    stds = np.maximum(stds, 1e-6)
-
-    # Extract features in batches.
-    all_features: list[np.ndarray] = []
-
-    for start in tqdm(range(0, N, batch_size), desc="Encoding", unit="batch"):
-        end = min(start + batch_size, N)
-        batch_tensors = np.zeros((end - start, 168, 38), dtype=np.float32)
-
-        for i, idx in enumerate(range(start, end)):
-            row = hf_dataset[int(idx)]
-            vals = np.array(row["values"], dtype=np.float32)
-            mask = np.array(row["mask"], dtype=np.float32)
-
-            T = min(vals.shape[0], 168)
-            vals_ch = vals[:T, :n_channels]
-            mask_ch = mask[:T, :n_channels]
-
-            # Z-score normalize.
-            observed = mask_ch > 0.5
-            normalized = np.where(observed, (vals_ch - means) / stds, np.nan)
-
-            batch_tensors[i, :T, :n_channels] = normalized
-            batch_tensors[i, :T, n_channels : 2 * n_channels] = 1.0 - mask_ch
-
-        embeddings = encoder.encode(batch_tensors)
-        all_features.append(np.asarray(embeddings, dtype=np.float32))
-
-    features = np.concatenate(all_features, axis=0)
-    logger.info(
-        "Extracted %dD features for %d samples", features.shape[1], features.shape[0]
-    )
-
-    return features, user_ids, segment_starts
 
 
 # ---------------------------------------------------------------------------
@@ -526,7 +405,7 @@ def evaluate_forecasting(
     data_dir: str | Path | None = None,
     seed: int = 42,
     max_samples: int | None = None,
-) -> "ForecastingResults":
+) -> ForecastingResults:
     """Run forecasting evaluation (Track 3) with a custom forecaster.
 
     Args:

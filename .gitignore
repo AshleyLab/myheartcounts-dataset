@@ -34,3 +34,6 @@ logs/
 eval_*.csv
 __pycache__/
 *.pyc
+
+# Internal cluster scaffolding (run via openmhc.evaluate_prediction, not these)
+jobs/

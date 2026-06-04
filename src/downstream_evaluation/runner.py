@@ -18,56 +18,17 @@ at the granularity it declares via ``input_granularity`` (default series).
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
 
+from downstream_evaluation.config import EvalConfig, TemporalWindowConfig
 from downstream_evaluation.data.binder import SegmentBinder
 from downstream_evaluation.data.provider import LOOKUP_BY_GRANULARITY, TaskDataProvider
 from downstream_evaluation.evaluation.evaluator import DownstreamEvaluator
 
 logger = logging.getLogger(__name__)
 
-
-@dataclass
-class TemporalWindowConfig:
-    """Per-task forward window (weeks) — the before-label window every method shares.
-
-    A task's eligible region runs from the start of a user's data up to ``label +
-    weeks_after(task)`` weeks. This is baked into the prebuilt ``*_windowed`` label
-    lookups the cohort methods read, and applied live by the from-raw window builders
-    (Toto/Chronos-2). Keeping it here makes it the single source of truth: the runner
-    owns the policy, and any from-raw model is handed the window rather than redefining
-    it. age/BiologicalSex widen to 156 (the cohort-asymmetry TC expansion).
-    """
-
-    default_weeks_after: int = 52
-    task_weeks_after: dict[str, int] = field(
-        default_factory=lambda: {"age": 156, "BiologicalSex": 156}
-    )
-
-    def weeks_after(self, task: str) -> int:
-        """Forward-window length (weeks) for ``task``."""
-        return self.task_weeks_after.get(task, self.default_weeks_after)
-
-
-@dataclass
-class EvalConfig:
-    """Config for the prediction engine.
-
-    Args:
-        data_dir: dataset root (its ``processed/`` holds the lookups + sensor data).
-        split_users: ``{"train"/"validation"/"test": [user_id, ...]}``.
-        tasks: tasks to evaluate.
-        seed: random_state for the probe / model.
-        pca_n_components: PCA dim for the encoder probe (``None`` to disable).
-        temporal: the per-task forward-window policy (handed to from-raw models).
-    """
-
-    data_dir: str
-    split_users: dict
-    tasks: list[str] = field(default_factory=list)
-    seed: int = 42
-    pca_n_components: int | None = 50
-    temporal: TemporalWindowConfig = field(default_factory=TemporalWindowConfig)
+# Re-export the config here too, so ``from ...runner import EvalConfig`` keeps working
+# (the config canonically lives in config.py, mirroring the imputation track).
+__all__ = ["EvalConfig", "TemporalWindowConfig", "run_eval"]
 
 
 def run_eval(config: EvalConfig, model) -> dict[str, dict]:

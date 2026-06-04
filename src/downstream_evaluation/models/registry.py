@@ -9,12 +9,10 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 from sklearn.base import BaseEstimator, ClassifierMixin
-from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
-from sklearn.linear_model import ElasticNetCV, LinearRegression, LogisticRegression
+from sklearn.linear_model import LinearRegression, LogisticRegression
 from sklearn.pipeline import Pipeline, make_pipeline
 from sklearn.preprocessing import StandardScaler
-from sklearn.svm import SVC, SVR
-from xgboost import XGBClassifier, XGBRegressor
+from xgboost import XGBClassifier
 
 if TYPE_CHECKING:
     from downstream_evaluation.config import ClassifierConfig
@@ -229,24 +227,6 @@ def create_model(
             n_jobs=n_jobs,
             random_state=random_state,
         )
-    elif clf_type == "svm":
-        params = config.svm
-        clf = SVC(
-            kernel=params.kernel,
-            C=params.C,
-            class_weight=params.class_weight,
-            probability=params.probability,
-            random_state=random_state,
-        )
-    elif clf_type == "random_forest_classifier":
-        params = config.random_forest_classifier
-        clf = RandomForestClassifier(
-            n_estimators=params.n_estimators,
-            max_depth=params.max_depth,
-            class_weight=params.class_weight,
-            n_jobs=params.n_jobs,
-            random_state=random_state,
-        )
     elif clf_type == "linear_regression":
         params = config.linear_regression
         clf = LinearRegression(
@@ -255,69 +235,6 @@ def create_model(
             n_jobs=params.n_jobs,
             positive=params.positive,
         )
-    elif clf_type == "elastic_net":
-        params = config.elastic_net
-        clf = ElasticNetCV(
-            l1_ratio=params.l1_ratio,
-            n_alphas=params.n_alphas,
-            cv=params.cv,
-            max_iter=params.max_iter,
-            random_state=random_state,
-        )
-    elif clf_type == "svr":
-        params = config.svr
-        clf = SVR(
-            kernel=params.kernel,
-            C=params.C,
-            epsilon=params.epsilon,
-        )
-    elif clf_type == "random_forest_regressor":
-        params = config.random_forest_regressor
-        clf = RandomForestRegressor(
-            n_estimators=params.n_estimators,
-            max_depth=params.max_depth,
-            n_jobs=params.n_jobs,
-            random_state=random_state,
-        )
-    elif clf_type == "xgboost_classifier":
-        params = config.xgboost_classifier
-        xgb_kwargs: dict = dict(
-            n_estimators=params.n_estimators,
-            max_depth=params.max_depth,
-            learning_rate=params.learning_rate,
-            min_child_weight=params.min_child_weight,
-            gamma=params.gamma,
-            subsample=params.subsample,
-            colsample_bytree=params.colsample_bytree,
-            reg_alpha=params.reg_alpha,
-            reg_lambda=params.reg_lambda,
-            n_jobs=params.n_jobs,
-            eval_metric=params.eval_metric,
-            random_state=random_state,
-        )
-        if params.scale_pos_weight is not None:
-            xgb_kwargs["scale_pos_weight"] = params.scale_pos_weight
-        clf = XGBClassifier(**xgb_kwargs)
-    elif clf_type == "xgboost_regressor":
-        params = config.xgboost_regressor
-        clf = XGBRegressor(
-            n_estimators=params.n_estimators,
-            max_depth=params.max_depth,
-            learning_rate=params.learning_rate,
-            subsample=params.subsample,
-            colsample_bytree=params.colsample_bytree,
-            reg_alpha=params.reg_alpha,
-            reg_lambda=params.reg_lambda,
-            n_jobs=params.n_jobs,
-            objective=params.objective,
-            random_state=random_state,
-        )
-
-    elif clf_type == "xgboost_ordinal":
-        params = config.xgboost_ordinal
-        # Pass your dictionary directly into the wrapper
-        clf = XGBOrdinalWrapper(params=params.__dict__)
-
     elif clf_type == "logreg_ordinal":
         # K-1 binary decomposition using LogisticRegression — mirrors xgboost_ordinal
         # so linear-probe methods use the same ordinal meta-strategy as tree methods.
@@ -337,16 +254,10 @@ def create_model(
     else:
         raise ValueError(f"Unknown model type: {clf_type}")
 
-    # Build pipeline: [scaler] → [L2 norm] → [PCA] → classifier
-    # XGBoost is tree-based (scale-invariant) and handles NaN natively;
-    # a scaler would propagate NaN into mean_/scale_, corrupting features.
-    # Detect by config type, not hasattr: the ordinal wrapper IS XGBoost but does
-    # not expose get_xgb_params, so a hasattr check would mis-route it into the
-    # scaler that the bare classifier/regressor cells correctly skip.
-    is_xgb = clf_type.startswith("xgboost")
+    # Build pipeline: [scaler] → [L2 norm] → [PCA] → classifier.
     steps: list = []
 
-    if config.use_scaler and not is_xgb:
+    if config.use_scaler:
         scaler_type = getattr(config, "scaler_type", "robust")
         if scaler_type == "standard":
             steps.append(StandardScaler())

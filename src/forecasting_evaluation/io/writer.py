@@ -7,12 +7,8 @@ import logging
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import yaml
-
-if TYPE_CHECKING:
-    from downstream_evaluation.config import DownstreamEvalConfig, OutputConfig
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +16,7 @@ logger = logging.getLogger(__name__)
 class ResultsWriter:
     """Write evaluation results to JSON/CSV files."""
 
-    def __init__(self, config: OutputConfig, full_config: DownstreamEvalConfig):
+    def __init__(self, config, full_config):
         """Initialize results writer.
 
         Args:

@@ -6,15 +6,15 @@ data loading and splitting infrastructure.
 """
 
 # Lazy imports to avoid requiring sklearn at module load time
-__all__ = ["DownstreamEvalConfig", "DownstreamEvaluator"]
+__all__ = ["EvalConfig", "DownstreamEvaluator"]
 
 
 def __getattr__(name: str):
     """Lazy import to avoid sklearn dependency at module load."""
-    if name == "DownstreamEvalConfig":
-        from downstream_evaluation.config import DownstreamEvalConfig
+    if name == "EvalConfig":
+        from downstream_evaluation.config import EvalConfig
 
-        return DownstreamEvalConfig
+        return EvalConfig
     elif name == "DownstreamEvaluator":
         from downstream_evaluation.evaluation.evaluator import DownstreamEvaluator
 

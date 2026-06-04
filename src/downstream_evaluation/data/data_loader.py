@@ -17,7 +17,6 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import datasets as hf_ds
 import numpy as np
@@ -25,9 +24,6 @@ import pandas as pd
 
 from downstream_evaluation.data.splits import load_split_file
 from labels.api import LABEL_TYPES
-
-if TYPE_CHECKING:
-    from downstream_evaluation.config import DataConfig
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +113,7 @@ class DownstreamDataLoader:
     with the task label column attached.
     """
 
-    def __init__(self, config: DataConfig):
+    def __init__(self, config):
         """Initialize data loader.
 
         Args:
