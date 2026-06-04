@@ -58,6 +58,12 @@ _PAPER_CHECKPOINT_CLASSES: dict[str, type] = {
     "brits": BRITSImputer,
     "timesnet": TimesNetImputer,
     "dlinear": DLinearImputer,
+    # ``dlinear_weekly`` is a 7-day-window variant of DLinear. It reuses the
+    # same ``DLinearImputer`` class — the difference lives in the release
+    # manifest's ``arch.n_steps`` (10080 vs 1440) and the harness running with
+    # ``data.n_days=7``. Manifest ``kind`` stays ``"dlinear"`` so
+    # ``from_release`` validation passes against ``DLinearImputer.model_name``.
+    "dlinear_weekly": DLinearImputer,
     "fedformer": FEDformerImputer,
     "lsm2": LSM2Imputer,
     "lsm2_weekly_sparse": LSM2WeeklySparseImputer,
@@ -72,7 +78,13 @@ def _build_reference(
     # ``data.daily_hf_dir`` is a different concept (the HF disk path
     # consumed by the evaluator), so we let the imputer resolve its root
     # from explicit ``data_dir=`` configuration or ``MHC_DATA_DIR``.
-    imputer = cls(version=data_cfg.version)
+    extra: dict[str, Any] = {}
+    # Mode-family imputers (mode, temporal_mode, personalized_mode) accept a
+    # ``decimal_precision`` knob that controls value-rounding before tallying.
+    # Thread it through so a user override on the CLI actually takes effect.
+    if cls in {ModeImputer, TemporalModeImputer, PersonalizedModeImputer}:
+        extra["decimal_precision"] = method_cfg.decimal_precision
+    imputer = cls(version=data_cfg.version, **extra)
     return _ImputerMethodAdapter(imputer), None
 
 
@@ -89,11 +101,20 @@ def _build_paper_checkpoint(
     ``method.lsm2`` blocks. Users must keep arch params in sync with the
     training run themselves — the manifest path is the recommended route.
     """
-    runtime_kwargs = {
+    runtime_kwargs: dict[str, Any] = {
         "version": data_cfg.version,
         "device": method_cfg.device,
         "inference_batch_size": method_cfg.inference_batch_size,
     }
+    # LSM2 family accepts an ``inference_dropout_removal_ratio`` runtime knob
+    # that overrides the value baked into the checkpoint. Forward it whenever
+    # the user supplied a non-None value so CLI overrides (e.g.
+    # ``method.lsm2.inference_dropout_removal_ratio=0.0``) actually take
+    # effect through both the release-dir and inline-arch code paths.
+    if cls in {LSM2Imputer, LSM2WeeklySparseImputer}:
+        ratio = method_cfg.lsm2.inference_dropout_removal_ratio
+        if ratio is not None:
+            runtime_kwargs["inference_dropout_removal_ratio"] = ratio
     if method_cfg.release_dir:
         manifest = load_manifest(method_cfg.release_dir)
         imputer = cls.from_release(method_cfg.release_dir, **runtime_kwargs)

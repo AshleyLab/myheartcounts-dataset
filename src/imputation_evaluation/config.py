@@ -215,6 +215,7 @@ class MethodConfig:
         "brits",
         "timesnet",
         "dlinear",
+        "dlinear_weekly",
         "fedformer",
         "personalized_mean",
         "personalized_mode",
