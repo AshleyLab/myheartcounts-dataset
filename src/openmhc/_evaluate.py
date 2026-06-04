@@ -621,6 +621,7 @@ def evaluate_imputation(
     data_dir: str | Path | None = None,
     seed: int = 42,
     *,
+    n_days: int = 1,
     bootstrap: bool | dict = False,
 ) -> ImputationResults:
     """Run imputation evaluation with a custom imputer.
@@ -633,7 +634,10 @@ def evaluate_imputation(
     Args:
         imputer: Object implementing ``impute(data, observed_mask,
             target_mask, *, sample_indices=None, user_ids=None,
-            dates=None)`` per the ``Imputer`` protocol.
+            dates=None, day_offsets=None)`` per the ``Imputer`` protocol.
+            ``day_offsets`` is only forwarded when ``n_days > 1``; it carries
+            per-window calendar-day deltas (``-1`` for padded slots) for
+            calendar-aware models (e.g. RoPE day embeddings).
         version: ``"full"`` (11,894-user leaderboard split) or ``"xs"``
             (593-user reviewer subset). Required — cross-checked against
             the dataset root's ``dataset_version.json`` marker.
@@ -645,6 +649,14 @@ def evaluate_imputation(
             etc.) are derived from this root.
         seed: Random seed for mask generation (XS only; full always uses
             pre-computed masks).
+        n_days: Number of consecutive days per evaluation window (1-7).
+            Defaults to ``1`` (single-day windows — matches the historical
+            behavior and all daily models). Setting ``n_days=7`` enables
+            multi-day windows required by weekly models like
+            ``LSM2WeeklySparseImputer`` and any 7-day PyPOTS variant. The
+            internal harness assembles non-overlapping per-user windows from
+            the daily HF dataset; the imputer receives tensors of shape
+            ``(B, 19, n_days * 1440)``.
         bootstrap: Opt-in participant-level cluster bootstrap. ``False``
             (default) skips it. ``True`` enables with defaults
             (``n_boot=1000, ci_level=0.95, seed=42, include_auc=True``).
@@ -742,6 +754,7 @@ def evaluate_imputation(
         num_workers=0,
         num_eval_workers=1,
         pin_memory=False,
+        n_days=n_days,
     )
 
     eval_cfg = EvalConfig(
@@ -827,11 +840,13 @@ class _ImputerMethodAdapter:
             self._fwd_sample_indices = accepts_anything or "sample_indices" in params
             self._fwd_user_ids = accepts_anything or "user_ids" in params
             self._fwd_dates = accepts_anything or "dates" in params
+            self._fwd_day_offsets = accepts_anything or "day_offsets" in params
         except (TypeError, ValueError):
             # Built-in or C-extension impute: forward everything.
             self._fwd_sample_indices = True
             self._fwd_user_ids = True
             self._fwd_dates = True
+            self._fwd_day_offsets = True
 
     @property
     def name(self) -> str:
@@ -901,6 +916,9 @@ class _ImputerMethodAdapter:
                 forward["user_ids"] = [self._current_user_ids[int(i)] for i in si]
             if self._fwd_dates:
                 forward["dates"] = [self._current_dates[int(i)] for i in si]
+        day_offsets = kwargs.get("day_offsets")
+        if self._fwd_day_offsets and day_offsets is not None:
+            forward["day_offsets"] = np.asarray(day_offsets)
         return self._imputer.impute(**forward)
 
 

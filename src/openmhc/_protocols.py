@@ -85,16 +85,19 @@ class Imputer(Protocol):
         sample_indices: np.ndarray | None = None,
         user_ids: list[str] | None = None,
         dates: list[str] | None = None,
+        day_offsets: np.ndarray | None = None,
     ) -> np.ndarray:
         """Impute artificially masked positions.
 
         Args:
-            data: Sensor values of shape (N, 19, 1440) with NaN at both
+            data: Sensor values of shape (N, 19, T) with NaN at both
                 naturally missing positions and artificially masked
-                positions.
-            observed_mask: Binary mask of shape (N, 19, 1440). 1 =
+                positions. ``T = 1440`` for daily evaluation (the default);
+                ``T = n_days * 1440`` when the caller sets ``n_days > 1``
+                in ``evaluate_imputation`` (1-7).
+            observed_mask: Binary mask of shape (N, 19, T). 1 =
                 originally observed, 0 = naturally missing.
-            target_mask: Binary mask of shape (N, 19, 1440). 1 = positions
+            target_mask: Binary mask of shape (N, 19, T). 1 = positions
                 to impute (always a subset of ``observed_mask``).
             sample_indices: Optional split-local indices, shape (N,).
                 Useful for any implementation that keeps per-sample state.
@@ -102,10 +105,21 @@ class Imputer(Protocol):
                 sample. Used by personalized methods.
             dates: Optional list of N ISO date strings (``YYYY-MM-DD``),
                 one per sample.
+            day_offsets: Optional int64 array of shape ``(N, n_days)``,
+                only forwarded when ``n_days > 1``. Each row gives the
+                calendar-day deltas of that window's day slots from the
+                first non-padded day; ``-1`` marks left-padded slots that
+                have no real data. Used by calendar-aware models (e.g.
+                RoPE day embeddings in ``LSM2WeeklySparseImputer``) to
+                encode real-world gaps between days in a non-contiguous
+                window. Declaring this kwarg in your ``impute`` signature
+                opts your imputer in — the harness inspects the signature
+                once and only forwards declared kwargs.
 
         Returns:
-            Array of shape (N, 19, 1440) with imputed values at
-            ``target_mask == 1`` positions. Must be float32.
+            Array of shape (N, 19, T) with imputed values at
+            ``target_mask == 1`` positions. Must be float32. ``T`` matches
+            the input ``T`` (i.e. ``1440`` or ``n_days * 1440``).
         """
         ...
 

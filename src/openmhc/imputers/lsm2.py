@@ -451,11 +451,78 @@ class LSM2WeeklySparseImputer(_LSM2ImputerBase):
         )
         return module.model
 
-    def _inference_forward(self, x, inherited_mask):
+    def impute(
+        self,
+        data: np.ndarray,
+        observed_mask: np.ndarray,
+        target_mask: np.ndarray,
+        *,
+        day_offsets: np.ndarray | None = None,
+    ) -> np.ndarray:
+        """Override to accept ``day_offsets`` for RoPE-aware decoding.
+
+        The weekly-sparse model receives ``(B, 19, num_days * 1440)``
+        windows from the harness (the evaluator's ``MultiDayImputationDataset``
+        path, gated on ``cfg.data.n_days > 1``). When the
+        ``WeeklySparseDecoderLSM2`` was trained with
+        ``use_rope_day_embed=True`` (the d4 sparse decoder checkpoint), the
+        cross-day attention blocks consume per-window calendar deltas to
+        encode real-world day gaps inside each window. We forward
+        ``day_offsets`` (``(B, num_days)`` int64, ``-1`` for padded slots)
+        through to ``_inference_forward``; if the caller doesn't pass it,
+        the model falls back to ``arange(num_days)`` internally — only
+        correct when every window is calendar-consecutive.
+        """
+        torch = self._torch
+        result = data.copy()
+        N = data.shape[0]
+        bs = max(1, self._inference_batch_size)
+
+        valid = observed_mask * (1.0 - target_mask)
+
+        for start in range(0, N, bs):
+            end = min(start + bs, N)
+            batch_data = data[start:end]
+            batch_valid = valid[start:end]
+            batch_target = target_mask[start:end]
+            batch_offsets = (
+                day_offsets[start:end] if day_offsets is not None else None
+            )
+
+            x_norm = self._normalize(batch_data)
+            x_filled = np.where(np.isfinite(x_norm), x_norm, 0.0).astype(np.float32)
+
+            x_t = torch.from_numpy(x_filled).to(self._device)
+            valid_t = torch.from_numpy(batch_valid.astype(np.float32)).to(self._device)
+            inherited_mask = self._create_inherited_mask(valid_t)
+
+            with torch.no_grad():
+                pred = self._inference_forward(
+                    x_t, inherited_mask, day_offsets=batch_offsets
+                )
+                reconstructed = self._model.unpatchify(pred)
+                if getattr(self._model, "use_hybrid_loss", False):
+                    reconstructed[:, 7:, :] = torch.sigmoid(reconstructed[:, 7:, :])
+
+            recon_np = reconstructed.detach().cpu().numpy()
+            recon_np = self._denormalize(recon_np)
+
+            tb = batch_target > 0.5
+            result[start:end][tb] = recon_np[tb]
+
+        return result.astype(np.float32, copy=False)
+
+    def _inference_forward(self, x, inherited_mask, day_offsets=None):
         torch = self._torch
         model = self._model
         B = x.shape[0]
         D = model.num_days
+
+        offsets_tensor = None
+        if day_offsets is not None:
+            offsets_tensor = torch.as_tensor(
+                day_offsets, dtype=torch.long, device=self._device
+            )
 
         # (B, C, D*L) → (B*D, C, L)
         x_days = x.reshape(B, model.in_channels, D, model.seq_length)
@@ -513,5 +580,7 @@ class LSM2WeeklySparseImputer(_LSM2ImputerBase):
             .reshape(B, model.num_patches)
         )
 
-        pred = model.forward_decoder(latent, ids_restore, total_mask_week)
+        pred = model.forward_decoder(
+            latent, ids_restore, total_mask_week, day_offsets=offsets_tensor
+        )
         return pred

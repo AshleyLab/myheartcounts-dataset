@@ -130,11 +130,29 @@ class WeeklySparseLSM2Module(pl.LightningModule):
         self.patch_size = patch_size
 
         if daily_checkpoint_path:
-            from utils.wandb_artifact import is_wandb_reference, resolve_checkpoint_path
+            # The private MHC-benchmark training repo provides
+            # ``utils.wandb_artifact`` to resolve ``wandb:<artifact>`` refs into
+            # a local checkpoint path before pre-loading the daily encoder.
+            # In the public openmhc package that helper isn't available — and
+            # it isn't needed for inference: Lightning's ``load_from_checkpoint``
+            # re-runs ``__init__`` with the saved ``daily_checkpoint_path``
+            # hparam (which may be a ``wandb:`` reference), then immediately
+            # overwrites the model state with ``checkpoint["state_dict"]``. So
+            # the pre-load below is redundant at inference and we can safely
+            # skip it when the private resolver isn't importable.
+            try:
+                from utils.wandb_artifact import (
+                    is_wandb_reference,
+                    resolve_checkpoint_path,
+                )
 
-            if is_wandb_reference(daily_checkpoint_path):
-                daily_checkpoint_path = str(resolve_checkpoint_path(daily_checkpoint_path))
-            self.model.load_daily_encoder_weights(daily_checkpoint_path)
+                if is_wandb_reference(daily_checkpoint_path):
+                    daily_checkpoint_path = str(
+                        resolve_checkpoint_path(daily_checkpoint_path)
+                    )
+                self.model.load_daily_encoder_weights(daily_checkpoint_path)
+            except ImportError:
+                pass
 
         if freeze_encoder:
             for param in self.model.patch_embed.parameters():
