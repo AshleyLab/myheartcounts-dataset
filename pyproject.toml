@@ -45,6 +45,7 @@ where = ["src"]
 include = [
   "context*",
   "data*",
+  "devices*",
   "downstream_evaluation*",
   "imputation_evaluation*",
   "labels*",
