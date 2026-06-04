@@ -294,6 +294,73 @@ imputer class itself does not need to know about Hydra.
 
 ---
 
+## Part 1.6 — Paper pipeline (optional): cross-method skill scores, average ranks, bootstrap CIs
+
+To reproduce the paper's headline table (skill score vs. LOCF, average rank,
+95 % bootstrap CIs, plus optional demographic-subgroup fairness summaries) run
+the three-phase pipeline below. It is fully optional and lives entirely in this
+repo — no external dependencies on the private MHC-benchmark scripts.
+
+```bash
+# Phase 0: sweep all 12 methods (each writes a pairs/ subdir)
+mhc-impute-eval --multirun \
+  method=mean,mode,locf,linear,temporal_mean,temporal_mode,lsm2,lsm2_weekly_sparse,brits,timesnet,dlinear,fedformer \
+  evaluation.save_pairs=true
+
+# Phase 1: paired participant-level bootstrap → bootstrap_draws.parquet
+python scripts/paper_results/bootstrap_imputation_draws.py \
+  --method-dirs configs/paper/bootstrap_method_dirs.json \
+  --output results/paper/bootstrap_draws.parquet \
+  --n-boot 1000 --seed 42 --splits test
+
+# Phase 2: aggregate → 4 sidecar CSVs in results/paper/
+python scripts/paper_results/aggregate_imputation_paper_metrics.py \
+  --draws results/paper/bootstrap_draws.parquet \
+  --output-dir results/paper/
+```
+
+Alternatively, the driver
+[`scripts/paper_results/run_paper_pipeline.py`](../../scripts/paper_results/run_paper_pipeline.py)
+chains all three phases from a single YAML sweep spec
+([`configs/paper/sweep_methods.yaml`](../../configs/paper/sweep_methods.yaml)).
+
+### Method-dirs manifest
+
+Phase 1 reads a JSON manifest mapping `{method: pairs_dir}`. The driver emits
+it automatically; if you skip the driver, write it yourself:
+
+```json
+{
+  "locf":  "/abs/path/to/run_dir/pairs",
+  "mean":  "/abs/path/to/run_dir/pairs",
+  "brits": "/abs/path/to/run_dir/pairs"
+}
+```
+
+Each `pairs/` directory must contain `manifest_<split>.parquet`,
+`channel_stds.npy` and a per-scenario tree `<scenario>/<split>/pairs_ch{NN}.parquet`
+— exactly what [`pair_writer.py`](evaluation/pair_writer.py) writes when
+`evaluation.save_pairs=true`.
+
+### Outputs (in `--output-dir`)
+
+| CSV | Columns |
+|---|---|
+| `skill_scores_bootstrap.csv` | `method, scope, split, n_tasks, mean, se, ci_lo, ci_hi, n_boot` |
+| `avg_rankings_bootstrap.csv` | same shape (mean of avg-rank) |
+| `fairness_subgroup_scores_bootstrap.csv` | `method, demographic_attr, subgroup, split, mean, se, ci_lo, ci_hi, n_boot` |
+| `fairness_summary_bootstrap.csv` | `method, demographic_attr, split, lambda, fairness_combine`, plus per-disparity `{S_overall, disparity_<name>, fairness_adjusted_<name>}_{mean, se, ci_lo, ci_hi}` |
+
+The engine lives in
+[`evaluation/bootstrap_skill_rank.py`](evaluation/bootstrap_skill_rank.py)
+(per-draw error reconstruction + phase-2 aggregator) with the deterministic
+point-flow definitions in
+[`evaluation/paper_metrics_core.py`](evaluation/paper_metrics_core.py) and the
+pluggable disparity registries in
+[`evaluation/disparity_metrics.py`](evaluation/disparity_metrics.py).
+
+---
+
 ## Part 2 — Library internals (`imputation_evaluation/`)
 
 This package is the engine `openmhc.evaluate_imputation` calls. The public surface (the `Imputer` protocol, results object, dataset-path resolution) lives in `openmhc/`; this package contains the masking, evaluation, and I/O machinery.
@@ -368,7 +435,19 @@ Notable fields a dev would tune:
 - `data.daily_hf_dir`, `data.split_file` — point at the dataset and the user-level split JSON.
 - `data.max_samples_per_split` — fast smoke runs.
 - `data.num_workers`, `data.num_eval_workers`, `data.num_eval_dl_workers` — see "Performance" below.
-- `data.n_days` — multi-day context window (1–7). Defaults to 1.
+- `data.n_days` — multi-day context window (1–7). Defaults to 1. When
+  `n_days > 1`, the loader groups each user's days chronologically into
+  non-overlapping `n_days`-day windows (left-padded with NaN-filled day
+  slots when a user's final group is incomplete), and the imputer
+  receives tensors of shape `(B, 19, n_days * 1440)` instead of
+  `(B, 19, 1440)`. The evaluator also forwards a `day_offsets` kwarg
+  (per-window int64 array of calendar-day deltas from the first
+  non-padded day, with `-1` for padded slots) to any imputer that
+  declares it in its `impute()` signature — used by calendar-aware
+  models like `LSM2WeeklySparseImputer` (RoPE day embeddings). Imputers
+  that don't declare `day_offsets` are silently skipped (see the
+  inspector at `src/openmhc/_evaluate.py:843`), so daily models are
+  unaffected.
 - `masking.mask_seed` — controls the RNG used by every scenario.
 - `masking.masks_file` — load pre-computed masks from `.npz` instead of regenerating, for like-for-like comparison across methods.
 - `sensitivity.enabled` / `sensitivity.age_bins` — emit per-subgroup metrics. Demographics are looked up via [`src/labels/api.py`](../labels/api.py); samples with missing demographics group under `"unknown"`.

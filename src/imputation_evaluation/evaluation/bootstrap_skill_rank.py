@@ -1,0 +1,992 @@
+"""Cross-task bootstrap for skill score, average rank, and fairness CIs.
+
+The participant-level cluster bootstrap in ``bootstrap.py`` produces CIs for
+**per-(scenario, split, channel)** metrics. This module raises that one level:
+it resamples users, recomputes per-(method, scenario, channel) error E for
+**every method together** (paired across methods via a shared resample
+matrix), then re-runs the existing point-flow aggregations (skill score,
+average rank, fairness) on each draw. Stacking draws yields mean / SE /
+percentile-CI for every cell of the paper's headline table.
+
+Pipeline
+--------
+
+Phase 1 — :func:`compute_per_draw_errors` reads each method's saved
+pairs/, builds per-(method, scenario, split, channel, subgroup) per-user
+sufficient stats, generates a single shared resample matrix per split
+(preserving cross-scenario and cross-subgroup covariance within each
+draw), and writes a long-format Parquet of per-draw E values.
+
+Phase 2 — :func:`aggregate_skill_rank_fairness` consumes that Parquet and
+runs ``compute_skill_scores`` / ``compute_average_rankings`` /
+``compute_fairness`` per draw; new disparity metrics or λ values rerun
+phase 2 in seconds without touching pairs/.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import logging
+from collections.abc import Callable
+from dataclasses import dataclass
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
+
+from data.processing.hf_config import CONTINUOUS_CHANNEL_INDICES, N_CHANNELS
+
+# Importing from bootstrap.py — these helpers are battle-tested.
+from imputation_evaluation.evaluation.bootstrap import (
+    _bootstrap_indices,
+    _continuous_metrics_from_sums,
+    _summarize,
+)
+from imputation_evaluation.evaluation.disparity_metrics import (
+    DISPARITY_FUNCTIONS,
+    FAIRNESS_COMBINE,
+)
+from imputation_evaluation.evaluation.paper_metrics_core import (
+    EXCLUDE_BINARY_SCENARIOS,
+    build_baseline_errors,
+    compute_average_rankings,
+    compute_skill_scores,
+)
+
+logger = logging.getLogger(__name__)
+
+
+# --------------------------------------------------------------------------
+# Constants — kept in sync with compute_imputation_paper_metrics.py
+# --------------------------------------------------------------------------
+
+ALL_KEY = ("all", "all")  # sentinel cell for the global / non-subgroup metrics
+
+
+# --------------------------------------------------------------------------
+# Subgroup-aware per-user sufficient statistics
+# --------------------------------------------------------------------------
+
+
+@dataclass
+class BinaryRows:
+    """Raw rows for a single binary channel, used for the AUC bootstrap."""
+
+    gt: np.ndarray  # bool, (R,)
+    pred: np.ndarray  # float32, (R,)
+    u_rows: np.ndarray  # int64,  (R,)  — index into cell's user_ids
+
+
+@dataclass
+class CellStats:
+    """Per-user sufficient stats for one (scenario, split, subgroup) cell.
+
+    ``user_ids`` is the canonical user ordering shared with the cell's
+    bootstrap-index matrix. ``has_data[ch]`` is True iff any row exists for
+    that channel (after subgroup filtering). For binary channels we also
+    keep the raw row arrays (gt, pred, u_rows) so the AUC bootstrap can
+    operate on subgroup-filtered rows.
+    """
+
+    user_ids: list[str]
+    n: np.ndarray  # (U, C) int64    — continuous sample counts
+    sse: np.ndarray  # (U, C) float64
+    sae: np.ndarray  # (U, C) float64
+    tp: np.ndarray  # (U, C) int64    — binary confusion sums (kept for parity)
+    tn: np.ndarray
+    fp: np.ndarray
+    fn: np.ndarray
+    has_data: np.ndarray  # (C,) bool
+    # Binary raw rows per channel — for AUC; lazy, only set when needed
+    binary_rows: dict[int, BinaryRows]
+
+
+def _channel_file(scenario_split_dir: Path, ch: int) -> Path:
+    return scenario_split_dir / f"pairs_ch{ch:02d}.parquet"
+
+
+def _build_cell_user_index(
+    sample_idx_arr: np.ndarray,
+    user_id_arr: list[str],
+    canonical_user_index: dict[str, int],
+    keep_mask: np.ndarray | None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Map manifest rows to canonical user-row indices, optionally filtering."""
+    if keep_mask is not None:
+        sample_idx_arr = sample_idx_arr[keep_mask]
+        user_id_arr = [user_id_arr[i] for i in np.flatnonzero(keep_mask)]
+    u_rows = np.array([canonical_user_index[u] for u in user_id_arr], dtype=np.int64)
+    return sample_idx_arr, u_rows
+
+
+def _subgroup_cells_from_mapping(
+    subgroup_mapping: dict[int, dict[str, str]] | None,
+    exclude_unknown: bool,
+) -> list[tuple[str, str]]:
+    """Discover ``(attr, value)`` cells present in the per-sample subgroup map.
+
+    Always includes the ``ALL_KEY`` sentinel for the global cell.
+    """
+    cells: set[tuple[str, str]] = {ALL_KEY}
+    if subgroup_mapping:
+        for demo in subgroup_mapping.values():
+            for attr, val in demo.items():
+                if exclude_unknown and val == "unknown":
+                    continue
+                cells.add((attr, val))
+    return sorted(cells)
+
+
+def compute_user_stats_per_cell(
+    scenario_split_dir: Path,
+    manifest: pa.Table,
+    canonical_user_ids: list[str],
+    canonical_user_index: dict[str, int],
+    cells: list[tuple[str, str]],
+    sample_to_subgroup: dict[int, dict[str, str]] | None,
+    n_channels: int = N_CHANNELS,
+    *,
+    include_binary_rows: bool = True,
+) -> dict[tuple[str, str], CellStats]:
+    """Per-user sufficient stats per (subgroup_attr, subgroup_value) cell.
+
+    Streaming per-channel pass that accumulates per-user sufficient stats
+    for every cell in ``cells``.
+    All cells share the same canonical user ordering so that downstream
+    code can use a single ``idx_b`` matrix per split.
+
+    Args:
+        scenario_split_dir: e.g. ``pairs/random_noise/test/``.
+        manifest: PyArrow table with ``(sample_idx, user_id, date)``.
+        canonical_user_ids: ordered list of every user that appears in
+            *any* method's manifest for this split. Users absent from a
+            particular scenario/method just leave that user's row at zero.
+        canonical_user_index: ``user_id -> row in canonical_user_ids``.
+        cells: list of ``(attr, value)`` tuples to populate.
+        sample_to_subgroup: maps ``sample_idx`` to attribute dicts. May be
+            ``None`` if only the ``ALL_KEY`` cell is requested.
+        n_channels: number of channels to scan (default ``N_CHANNELS``).
+        include_binary_rows: keep raw (gt, pred, u_rows) per binary channel
+            so the AUC bootstrap can run later. Costs RAM proportional to
+            row count; turn off if AUC isn't needed.
+    """
+    sidx_arr = manifest.column("sample_idx").to_numpy()
+    uid_arr = manifest.column("user_id").to_pylist()
+
+    # Map manifest sample_idx -> (canonical user row) once.
+    full_u_rows = np.array([canonical_user_index[u] for u in uid_arr], dtype=np.int64)
+
+    # Build per-cell row masks over the manifest rows.
+    cell_masks: dict[tuple[str, str], np.ndarray] = {}
+    n_manifest = len(uid_arr)
+    cell_masks[ALL_KEY] = np.ones(n_manifest, dtype=bool)
+    for cell in cells:
+        if cell == ALL_KEY:
+            continue
+        attr, value = cell
+        mask = np.zeros(n_manifest, dtype=bool)
+        if sample_to_subgroup is None:
+            cell_masks[cell] = mask
+            continue
+        for i, sidx in enumerate(sidx_arr):
+            demo = sample_to_subgroup.get(int(sidx))
+            if demo is None:
+                continue
+            if demo.get(attr) == value:
+                mask[i] = True
+        cell_masks[cell] = mask
+
+    U = len(canonical_user_ids)
+    out: dict[tuple[str, str], CellStats] = {}
+    for cell in cells:
+        out[cell] = CellStats(
+            user_ids=canonical_user_ids,
+            n=np.zeros((U, n_channels), dtype=np.int64),
+            sse=np.zeros((U, n_channels), dtype=np.float64),
+            sae=np.zeros((U, n_channels), dtype=np.float64),
+            tp=np.zeros((U, n_channels), dtype=np.int64),
+            tn=np.zeros((U, n_channels), dtype=np.int64),
+            fp=np.zeros((U, n_channels), dtype=np.int64),
+            fn=np.zeros((U, n_channels), dtype=np.int64),
+            has_data=np.zeros(n_channels, dtype=bool),
+            binary_rows={},
+        )
+
+    # sample_idx -> manifest-row, so we can map pair rows to manifest masks.
+    sidx_to_manifest_row = np.full(
+        int(sidx_arr.max()) + 1 if len(sidx_arr) else 0, -1, dtype=np.int64
+    )
+    for i, sidx in enumerate(sidx_arr):
+        sidx_to_manifest_row[int(sidx)] = i
+
+    cont_set = set(CONTINUOUS_CHANNEL_INDICES)
+
+    for ch in range(n_channels):
+        ch_file = _channel_file(scenario_split_dir, ch)
+        if not ch_file.exists():
+            continue
+        table = pq.read_table(ch_file, columns=["sample_idx", "gt", "pred"])
+        if table.num_rows == 0:
+            continue
+        pair_sidx = table.column("sample_idx").to_numpy()
+        pair_manifest_rows = sidx_to_manifest_row[pair_sidx]
+        if (pair_manifest_rows < 0).any():
+            raise ValueError(f"{ch_file.name}: rows with sample_idx not in manifest")
+
+        u_rows_pair = full_u_rows[pair_manifest_rows]
+
+        if ch in cont_set:
+            gt_ch = table.column("gt").to_numpy().astype(np.float32)
+            pred_ch = table.column("pred").to_numpy().astype(np.float32)
+            err = (pred_ch - gt_ch).astype(np.float64)
+            err_sq = err * err
+            err_abs = np.abs(err)
+            for cell, mask in cell_masks.items():
+                if not mask.any():
+                    continue
+                row_mask = mask[pair_manifest_rows]
+                if not row_mask.any():
+                    continue
+                cs = out[cell]
+                cs.has_data[ch] = True
+                u_sub = u_rows_pair[row_mask]
+                np.add.at(cs.n[:, ch], u_sub, 1)
+                np.add.at(cs.sse[:, ch], u_sub, err_sq[row_mask])
+                np.add.at(cs.sae[:, ch], u_sub, err_abs[row_mask])
+        else:
+            gt_bool = table.column("gt").to_numpy().astype(bool)
+            pred_ch = table.column("pred").to_numpy().astype(np.float32)
+            pred_bool = pred_ch > 0.5
+            tp_mask_all = gt_bool & pred_bool
+            tn_mask_all = (~gt_bool) & (~pred_bool)
+            fp_mask_all = (~gt_bool) & pred_bool
+            fn_mask_all = gt_bool & (~pred_bool)
+            for cell, mask in cell_masks.items():
+                if not mask.any():
+                    continue
+                row_mask = mask[pair_manifest_rows]
+                if not row_mask.any():
+                    continue
+                cs = out[cell]
+                cs.has_data[ch] = True
+                u_sub = u_rows_pair[row_mask]
+                np.add.at(cs.tp[:, ch], u_sub, tp_mask_all[row_mask].astype(np.int64))
+                np.add.at(cs.tn[:, ch], u_sub, tn_mask_all[row_mask].astype(np.int64))
+                np.add.at(cs.fp[:, ch], u_sub, fp_mask_all[row_mask].astype(np.int64))
+                np.add.at(cs.fn[:, ch], u_sub, fn_mask_all[row_mask].astype(np.int64))
+                if include_binary_rows:
+                    cs.binary_rows[ch] = BinaryRows(
+                        gt=gt_bool[row_mask],
+                        pred=pred_ch[row_mask],
+                        u_rows=u_sub.astype(np.int64),
+                    )
+
+    return out
+
+
+# --------------------------------------------------------------------------
+# AUC bootstrap from in-memory arrays
+# --------------------------------------------------------------------------
+
+
+def _bootstrap_auc_from_arrays(
+    gt: np.ndarray,
+    pred: np.ndarray,
+    u_rows: np.ndarray,
+    n_users: int,
+    boot_idx: np.ndarray,
+) -> np.ndarray:
+    """Cluster bootstrap of ROC AUC via Mann-Whitney U with per-user multiplicities.
+
+    Mirrors :func:`bootstrap._bootstrap_auc_one_channel` but operates on
+    in-memory arrays (avoids re-reading the parquet file when the same row
+    set is bootstrapped many times under different subgroup masks).
+    """
+    import scipy.sparse as sp
+
+    n_boot = boot_idx.shape[0]
+    if gt.size == 0:
+        return np.full(n_boot, np.nan)
+
+    order = np.argsort(pred, kind="stable")
+    sorted_pred = pred[order]
+    sorted_gt = gt[order]
+    sorted_user = u_rows[order]
+    sorted_pos = sorted_gt.astype(np.float64)
+    sorted_neg = (~sorted_gt).astype(np.float64)
+
+    is_new_group = np.empty(sorted_pred.shape[0], dtype=bool)
+    is_new_group[0] = True
+    is_new_group[1:] = sorted_pred[1:] != sorted_pred[:-1]
+    group_id = np.cumsum(is_new_group) - 1
+    G = int(group_id[-1]) + 1
+
+    pos_per_user = np.bincount(sorted_user, weights=sorted_pos, minlength=n_users)
+    neg_per_user = np.bincount(sorted_user, weights=sorted_neg, minlength=n_users)
+    S_pos = sp.csr_matrix(
+        (sorted_pos, (sorted_user, group_id)),
+        shape=(n_users, G),
+    )
+    S_neg = sp.csr_matrix(
+        (sorted_neg, (sorted_user, group_id)),
+        shape=(n_users, G),
+    )
+
+    out = np.full(n_boot, np.nan, dtype=np.float64)
+    cap_bytes = 1 * 1024**3
+    batch = max(1, cap_bytes // (max(G, 1) * 8))
+    batch = min(batch, n_boot)
+    for b0 in range(0, n_boot, batch):
+        b1 = min(b0 + batch, n_boot)
+        bs = b1 - b0
+        M = np.empty((bs, n_users), dtype=np.float64)
+        for j, b in enumerate(range(b0, b1)):
+            M[j] = np.bincount(boot_idx[b], minlength=n_users).astype(np.float64)
+        W_pos = M @ S_pos
+        W_neg = M @ S_neg
+        cumneg = np.cumsum(W_neg, axis=1)
+        cumneg_before = np.empty_like(cumneg)
+        cumneg_before[:, 0] = 0.0
+        cumneg_before[:, 1:] = cumneg[:, :-1]
+        numer = (W_pos * cumneg_before).sum(axis=1) + 0.5 * (W_pos * W_neg).sum(axis=1)
+        N_pos = M @ pos_per_user
+        N_neg = M @ neg_per_user
+        denom = N_pos * N_neg
+        with np.errstate(divide="ignore", invalid="ignore"):
+            auc_b = np.where(denom > 0, numer / denom, np.nan)
+        auc_b = np.where((N_pos == 0) | (N_neg == 0), np.nan, auc_b)
+        out[b0:b1] = auc_b
+    return out
+
+
+# --------------------------------------------------------------------------
+# Per-draw error reconstruction (phase 1 core)
+# --------------------------------------------------------------------------
+
+
+def _seed_for_split(seed: int, split: str) -> int:
+    """Stable per-split seed for the shared resample matrix.
+
+    Every scenario and subgroup cell within the same split shares one
+    resample matrix so that cross-scenario covariance and within-draw
+    fairness pairing are preserved.
+
+    Uses SHA-256 rather than Python's built-in ``hash()`` (which is
+    process-randomized by ``PYTHONHASHSEED`` for str keys).
+    """
+    key = f"{seed}|{split}".encode()
+    digest = hashlib.sha256(key).digest()
+    return int.from_bytes(digest[:4], "big") & 0x7FFFFFFF
+
+
+def _per_method_cell_errors(
+    cell_stats: CellStats,
+    boot_idx: np.ndarray,
+    channel_stds: np.ndarray,
+    include_auc: bool,
+) -> np.ndarray:
+    """Compute (n_boot, n_channels) per-draw error E.
+
+    Continuous channels: ``E = nRMSE`` (matches the point flow's default
+    metric in compute_imputation_paper_metrics.py:_extract_errors).
+    Binary channels: ``E = 1 − AUC`` (matches the point flow's E for binary).
+    Channels with no data are NaN.
+    """
+    n_channels = cell_stats.n.shape[1]
+    n_boot = boot_idx.shape[0]
+    E = np.full((n_boot, n_channels), np.nan, dtype=np.float64)
+
+    # Continuous via additive sums
+    bytes_per_elem = 8
+    n_users = cell_stats.n.shape[0]
+    target_mem = 2 * 1024**3
+    chunk = max(1, target_mem // (n_users * n_channels * bytes_per_elem))
+    chunk = min(chunk, n_boot)
+    for b0 in range(0, n_boot, chunk):
+        b1 = min(b0 + chunk, n_boot)
+        idx = boot_idx[b0:b1]
+        N_b = cell_stats.n[idx].sum(axis=1)
+        SSE_b = cell_stats.sse[idx].sum(axis=1)
+        SAE_b = cell_stats.sae[idx].sum(axis=1)
+        cont = _continuous_metrics_from_sums(N_b, SSE_b, SAE_b, channel_stds)
+        for ch in CONTINUOUS_CHANNEL_INDICES:
+            if cell_stats.has_data[ch]:
+                E[b0:b1, ch] = cont["nrmse"][:, ch]
+
+    # Binary via AUC bootstrap on subgroup-filtered raw rows
+    if include_auc:
+        for ch in range(n_channels):
+            if ch in CONTINUOUS_CHANNEL_INDICES:
+                continue
+            if not cell_stats.has_data[ch]:
+                continue
+            br = cell_stats.binary_rows.get(ch)
+            if br is None or br.gt.size == 0:
+                continue
+            auc_b = _bootstrap_auc_from_arrays(
+                br.gt,
+                br.pred,
+                br.u_rows,
+                n_users,
+                boot_idx,
+            )
+            E[:, ch] = 1.0 - auc_b
+    return E
+
+
+def _channel_type(ch: int) -> str:
+    return "continuous" if ch in CONTINUOUS_CHANNEL_INDICES else "binary"
+
+
+def compute_per_draw_errors(
+    method_dirs: dict[str, Path],
+    scenarios: list[str],
+    splits: list[str],
+    n_boot: int,
+    seed: int,
+    *,
+    subgroup_mappings: dict[str, dict[int, dict[str, str]]] | None = None,
+    channel_stds: np.ndarray | None = None,
+    channel_stds_path: Path | None = None,
+    include_auc: bool = True,
+    exclude_unknown: bool = False,
+    n_channels: int = N_CHANNELS,
+    progress_logger: Callable[[str], None] = logger.info,
+) -> pd.DataFrame:
+    """Phase-1 core: build a long-format DataFrame of per-draw errors.
+
+    Args:
+        method_dirs: ``{method: pairs_root}`` where ``pairs_root`` contains
+            ``manifest_<split>.parquet``, ``channel_stds.npy`` and per-scenario
+            subdirs with ``<scenario>/<split>/pairs_ch{NN}.parquet``.
+        scenarios: scenario names to process.
+        splits: split names to process (e.g. ``["test"]``).
+        n_boot: number of bootstrap draws.
+        seed: master RNG seed; per-split seeds are derived deterministically.
+        subgroup_mappings: optional ``{split_name: {sample_idx: {attr: val}}}``
+            built externally (mirrors ``aggregate_imputation_pairs.py``).
+        channel_stds: array of length ``n_channels``. If ``None``, loaded
+            from each method's ``pairs_root/channel_stds.npy`` and asserted
+            to match across methods.
+        channel_stds_path: optional explicit path overriding all method dirs.
+        include_auc: enable the (slower) AUC bootstrap for binary channels.
+        exclude_unknown: skip subgroup_value=="unknown" cells.
+        n_channels: number of channels per pairs/<scenario>/<split>/ dir.
+        progress_logger: logger callable invoked with progress messages.
+
+    Returns:
+        Long-format DataFrame with columns
+        ``[method, scenario, split, channel, channel_type, subgroup_attr,
+        subgroup_value, draw, E]``.
+    """
+    methods = list(method_dirs.keys())
+    if not methods:
+        raise ValueError("method_dirs is empty")
+
+    # ------------------ resolve channel_stds ------------------
+    if channel_stds is None and channel_stds_path is None:
+        ref_method = methods[0]
+        channel_stds_path = Path(method_dirs[ref_method]) / "channel_stds.npy"
+    if channel_stds is None:
+        channel_stds = np.load(channel_stds_path)
+    channel_stds = np.asarray(channel_stds, dtype=np.float64)
+    if channel_stds.shape[0] < n_channels:
+        raise ValueError(f"channel_stds has {channel_stds.shape[0]} entries, need {n_channels}")
+
+    rows: list[dict] = []
+
+    for split in splits:
+        sg_map = (subgroup_mappings or {}).get(split)
+        cells = _subgroup_cells_from_mapping(sg_map, exclude_unknown=exclude_unknown)
+        progress_logger(f"[split={split}] cells = {[f'{a}:{v}' for a, v in cells]}")
+
+        # ---------- Per-split canonical user list (union across methods) ----------
+        # Manifests are scenario-independent, so we load them once per split.
+        method_manifests: dict[str, pa.Table] = {}
+        for method, root in method_dirs.items():
+            manifest_path = Path(root) / f"manifest_{split}.parquet"
+            if not manifest_path.exists():
+                progress_logger(f"  WARN method={method}: {manifest_path} missing — skipping.")
+                continue
+            method_manifests[method] = pq.read_table(manifest_path)
+
+        if not method_manifests:
+            continue
+
+        all_user_ids: list[str] = []
+        seen: set[str] = set()
+        for manifest in method_manifests.values():
+            for uid in manifest.column("user_id").to_pylist():
+                if uid not in seen:
+                    seen.add(uid)
+                    all_user_ids.append(uid)
+        canonical_user_index = {u: i for i, u in enumerate(all_user_ids)}
+        U = len(all_user_ids)
+        progress_logger(f"[split={split}] U={U} (union across all methods)")
+
+        # ---------- One resample matrix per split ----------
+        split_seed = _seed_for_split(seed, split)
+        idx_b = _bootstrap_indices(U, n_boot, split_seed)
+
+        for scenario in scenarios:
+            progress_logger(f"[{scenario}/{split}] checking scenario dirs …")
+
+            method_payload: dict[str, dict] = {}
+            for method, manifest in method_manifests.items():
+                ssd = Path(method_dirs[method]) / scenario / split
+                if not ssd.exists():
+                    progress_logger(f"  WARN method={method}: {ssd} missing — skipping this cell.")
+                    continue
+                method_payload[method] = {
+                    "scenario_split_dir": ssd,
+                    "manifest": manifest,
+                }
+            if not method_payload:
+                continue
+
+            progress_logger(f"[{scenario}/{split}] methods={list(method_payload.keys())}")
+
+            # ------------------ Per-method, per-cell stats ------------------
+            method_cell_stats: dict[str, dict[tuple[str, str], CellStats]] = {}
+            for method, payload in method_payload.items():
+                progress_logger(f"  computing UserStats for method={method}")
+                method_cell_stats[method] = compute_user_stats_per_cell(
+                    payload["scenario_split_dir"],
+                    payload["manifest"],
+                    canonical_user_ids=all_user_ids,
+                    canonical_user_index=canonical_user_index,
+                    cells=cells,
+                    sample_to_subgroup=sg_map,
+                    n_channels=n_channels,
+                    include_binary_rows=include_auc,
+                )
+
+            # ------------------ Per-cell paired bootstrap ------------------
+            for cell in cells:
+                attr, value = cell
+
+                for method, cell_stats_map in method_cell_stats.items():
+                    cs = cell_stats_map[cell]
+                    if not cs.has_data.any():
+                        continue
+                    E = _per_method_cell_errors(
+                        cs,
+                        idx_b,
+                        channel_stds,
+                        include_auc=include_auc,
+                    )
+                    for ch in range(n_channels):
+                        if not cs.has_data[ch]:
+                            continue
+                        ch_type = _channel_type(ch)
+                        if ch_type == "binary" and scenario in EXCLUDE_BINARY_SCENARIOS:
+                            continue
+                        col_E = E[:, ch].astype(np.float32)
+                        for b in range(n_boot):
+                            val = col_E[b]
+                            if not np.isfinite(val):
+                                continue
+                            rows.append(
+                                {
+                                    "method": method,
+                                    "scenario": scenario,
+                                    "split": split,
+                                    "channel": f"ch_{ch}",
+                                    "channel_type": ch_type,
+                                    "subgroup_attr": attr,
+                                    "subgroup_value": value,
+                                    "draw": int(b),
+                                    "E": float(val),
+                                }
+                            )
+
+    if not rows:
+        return pd.DataFrame(
+            columns=[
+                "method",
+                "scenario",
+                "split",
+                "channel",
+                "channel_type",
+                "subgroup_attr",
+                "subgroup_value",
+                "draw",
+                "E",
+            ]
+        )
+    return pd.DataFrame(rows)
+
+
+# --------------------------------------------------------------------------
+# Parquet IO
+# --------------------------------------------------------------------------
+
+DRAWS_PARQUET_COLUMNS = [
+    "method",
+    "scenario",
+    "split",
+    "channel",
+    "channel_type",
+    "subgroup_attr",
+    "subgroup_value",
+    "draw",
+    "E",
+]
+
+
+def write_draws_parquet(
+    df: pd.DataFrame,
+    path: Path,
+    meta: dict | None = None,
+) -> None:
+    """Write the per-draw errors DataFrame plus a sidecar JSON of metadata."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    df = df[DRAWS_PARQUET_COLUMNS].copy()
+    df["draw"] = df["draw"].astype("int32")
+    df["E"] = df["E"].astype("float32")
+    for col in (
+        "method",
+        "scenario",
+        "split",
+        "channel",
+        "channel_type",
+        "subgroup_attr",
+        "subgroup_value",
+    ):
+        df[col] = df[col].astype("category")
+    df.to_parquet(path, compression="zstd")
+    if meta is not None:
+        meta_path = path.with_suffix(path.suffix + ".meta.json")
+        meta_path.write_text(json.dumps(meta, indent=2, default=str))
+
+
+def read_draws_parquet(path: Path) -> tuple[pd.DataFrame, dict | None]:
+    """Read the per-draw errors Parquet and its sidecar metadata if present."""
+    path = Path(path)
+    df = pd.read_parquet(path)
+    meta_path = path.with_suffix(path.suffix + ".meta.json")
+    meta: dict | None = None
+    if meta_path.exists():
+        meta = json.loads(meta_path.read_text())
+    return df, meta
+
+
+# --------------------------------------------------------------------------
+# Phase-2 aggregation: skill, rank, fairness summaries from the draws table
+# --------------------------------------------------------------------------
+
+
+def _skill_for_draw(
+    draw_errors: pd.DataFrame,
+    *,
+    baseline_errors: pd.DataFrame,
+    clip_lower: float,
+    clip_upper: float,
+) -> pd.DataFrame:
+    """Skill score for one draw slice.
+
+    ``baseline_errors`` is the global baseline (e.g. LOCF on the "all" cell
+    at the same draw).
+    """
+    cols = ["method", "scenario", "channel", "channel_type", "E"]
+    return compute_skill_scores(
+        draw_errors[cols],
+        baseline_errors[cols],
+        clip_lower=clip_lower,
+        clip_upper=clip_upper,
+    )
+
+
+def _rank_for_draw(draw_errors: pd.DataFrame) -> pd.DataFrame:
+    cols = ["method", "scenario", "channel", "channel_type", "E"]
+    return compute_average_rankings(draw_errors[cols])
+
+
+def aggregate_skill_rank_fairness(
+    draws_df: pd.DataFrame,
+    *,
+    baseline_method: str = "locf",
+    clip_lower: float = 1e-2,
+    clip_upper: float = 100.0,
+    lambda_fairness: float = 0.5,
+    disparity_fns: dict[str, Callable[[dict[str, float]], float]] | None = None,
+    fairness_combine_name: str = "linear_penalty",
+    ci_level: float = 0.95,
+) -> dict[str, pd.DataFrame]:
+    """Phase-2 core: per-draw skill / rank / fairness, summarised across draws.
+
+    ``disparity_fns`` is a ``{name: callable}`` dict — multiple disparities
+    can coexist in one pass. Defaults to all four built-ins.
+
+    Returns a dict with four DataFrames:
+    - ``skill_scores``       — columns ``method, scope, mean, se, ci_lo, ci_hi, n_boot, n_tasks``
+    - ``avg_rankings``       — same shape (mean of ``avg_rank``)
+    - ``fairness_subgroups`` — columns ``method, demographic_attr, subgroup,
+                                mean, se, ci_lo, ci_hi, n_boot``
+    - ``fairness_summary``   — columns ``method, demographic_attr,
+                                S_overall_{stats}``, then for each disparity
+                                ``disparity_<name>_{stats}`` and
+                                ``fairness_adjusted_<name>_{stats}``,
+                                plus ``lambda, fairness_combine, n_boot``.
+    """
+    if disparity_fns is None:
+        disparity_fns = {n: spec.fn for n, spec in DISPARITY_FUNCTIONS.items()}
+    fairness_combine_fn = FAIRNESS_COMBINE[fairness_combine_name]
+
+    if draws_df.empty:
+        empty = pd.DataFrame()
+        return {
+            "skill_scores": empty.copy(),
+            "avg_rankings": empty.copy(),
+            "fairness_subgroups": empty.copy(),
+            "fairness_summary": empty.copy(),
+        }
+
+    splits = sorted(draws_df["split"].unique())
+    if len(splits) > 1:
+        logger.warning(
+            "draws_df has multiple splits %s — aggregating each independently",
+            splits,
+        )
+
+    skill_per_draw_records: list[dict] = []
+    rank_per_draw_records: list[dict] = []
+    fairness_subgroup_records: list[dict] = []
+    fairness_summary_records: list[dict] = []
+
+    for split in splits:
+        df_split = draws_df[draws_df["split"] == split]
+        df_all = df_split[df_split["subgroup_attr"] == "all"]
+        if df_all.empty:
+            continue
+
+        # Pre-compute per-draw global baseline + overall skill for
+        # fairness_adjusted lookup.
+        all_by_draw: dict[int, pd.DataFrame] = {
+            int(d): grp for d, grp in df_all.groupby("draw", observed=True)
+        }
+
+        for draw, df_draw in all_by_draw.items():
+            bl = build_baseline_errors(
+                df_draw,
+                baseline_continuous=baseline_method,
+                baseline_binary=baseline_method,
+            )
+            if bl.empty:
+                continue
+            skill = _skill_for_draw(
+                df_draw,
+                baseline_errors=bl,
+                clip_lower=clip_lower,
+                clip_upper=clip_upper,
+            )
+            for _, row in skill.iterrows():
+                skill_per_draw_records.append(
+                    {
+                        "method": row["method"],
+                        "scope": row["scope"],
+                        "split": split,
+                        "skill_score": float(row["skill_score"]),
+                        "n_tasks": int(row["n_tasks"]),
+                        "draw": int(draw),
+                    }
+                )
+            rank = _rank_for_draw(df_draw)
+            for _, row in rank.iterrows():
+                rank_per_draw_records.append(
+                    {
+                        "method": row["method"],
+                        "scope": row["scope"],
+                        "split": split,
+                        "avg_rank": float(row["avg_rank"]),
+                        "n_tasks": int(row["n_tasks"]),
+                        "draw": int(draw),
+                    }
+                )
+
+        # Fairness — subgroup S_g uses subgroup model errors against the
+        # global baseline at the same draw (keeps pairing coherent).
+        sg_attrs = sorted(v for v in df_split["subgroup_attr"].unique() if v != "all")
+        for attr in sg_attrs:
+            df_attr = df_split[df_split["subgroup_attr"] == attr]
+            attr_values = sorted(df_attr["subgroup_value"].unique())
+            for draw in sorted(int(d) for d in df_attr["draw"].unique()):
+                df_draw_all = all_by_draw.get(draw)
+                if df_draw_all is None or df_draw_all.empty:
+                    continue
+                bl_global = build_baseline_errors(
+                    df_draw_all,
+                    baseline_continuous=baseline_method,
+                    baseline_binary=baseline_method,
+                )
+                if bl_global.empty:
+                    continue
+                overall_skill_draw = _skill_for_draw(
+                    df_draw_all,
+                    baseline_errors=bl_global,
+                    clip_lower=clip_lower,
+                    clip_upper=clip_upper,
+                )
+                overall_lookup = (
+                    overall_skill_draw[overall_skill_draw["scope"] == "overall"]
+                    .set_index("method")["skill_score"]
+                    .to_dict()
+                )
+
+                df_draw_attr = df_attr[df_attr["draw"] == draw]
+                methods = sorted(df_draw_attr["method"].unique())
+
+                for method in methods:
+                    group_scores: dict[str, float] = {}
+                    for sg_val in attr_values:
+                        sub = df_draw_attr[
+                            (df_draw_attr["method"] == method)
+                            & (df_draw_attr["subgroup_value"] == sg_val)
+                        ]
+                        if sub.empty:
+                            continue
+                        skill_sg = _skill_for_draw(
+                            sub,
+                            baseline_errors=bl_global,
+                            clip_lower=clip_lower,
+                            clip_upper=clip_upper,
+                        )
+                        ov = skill_sg[
+                            (skill_sg["method"] == method) & (skill_sg["scope"] == "overall")
+                        ]
+                        if ov.empty:
+                            continue
+                        s_g = float(ov["skill_score"].iloc[0])
+                        group_scores[sg_val] = s_g
+                        fairness_subgroup_records.append(
+                            {
+                                "method": method,
+                                "demographic_attr": attr,
+                                "subgroup": sg_val,
+                                "split": split,
+                                "S_g": s_g,
+                                "draw": int(draw),
+                            }
+                        )
+
+                    if len(group_scores) < 2:
+                        continue
+                    s_overall = overall_lookup.get(method, np.nan)
+                    rec: dict = {
+                        "method": method,
+                        "demographic_attr": attr,
+                        "split": split,
+                        "draw": int(draw),
+                        "S_overall": float(s_overall) if np.isfinite(s_overall) else float("nan"),
+                    }
+                    for name, fn in disparity_fns.items():
+                        d = float(fn(group_scores))
+                        rec[f"disparity_{name}"] = d
+                        if np.isfinite(s_overall) and np.isfinite(d):
+                            rec[f"fairness_adjusted_{name}"] = float(
+                                fairness_combine_fn(
+                                    float(s_overall),
+                                    d,
+                                    lambda_fairness,
+                                )
+                            )
+                        else:
+                            rec[f"fairness_adjusted_{name}"] = float("nan")
+                    fairness_summary_records.append(rec)
+
+    # ------------------ summarise across draws ------------------
+    def _summary_table(
+        records: list[dict], value_col: str, key_cols: list[str], extra_cols: list[str]
+    ) -> pd.DataFrame:
+        if not records:
+            return pd.DataFrame(
+                columns=key_cols
+                + extra_cols
+                + [
+                    "mean",
+                    "se",
+                    "ci_lo",
+                    "ci_hi",
+                    "n_boot",
+                ]
+            )
+        df = pd.DataFrame(records)
+        out_rows = []
+        for keys, grp in df.groupby(key_cols, observed=True):
+            summary = _summarize(grp[value_col].to_numpy(), ci_level)
+            row = dict(zip(key_cols, keys if isinstance(keys, tuple) else (keys,)))
+            for ec in extra_cols:
+                if ec in grp.columns:
+                    # take first (constant per group expected)
+                    row[ec] = grp[ec].iloc[0]
+            row.update(
+                {
+                    "mean": summary["bootstrap_mean"],
+                    "se": summary["bootstrap_se"],
+                    "ci_lo": summary["ci_lo"],
+                    "ci_hi": summary["ci_hi"],
+                    "n_boot": summary["n_valid_boot"],
+                }
+            )
+            out_rows.append(row)
+        return pd.DataFrame(out_rows)
+
+    skill_table = _summary_table(
+        skill_per_draw_records,
+        "skill_score",
+        key_cols=["method", "scope", "split"],
+        extra_cols=["n_tasks"],
+    )
+    rank_table = _summary_table(
+        rank_per_draw_records,
+        "avg_rank",
+        key_cols=["method", "scope", "split"],
+        extra_cols=["n_tasks"],
+    )
+    fairness_subgroup_table = _summary_table(
+        fairness_subgroup_records,
+        "S_g",
+        key_cols=["method", "demographic_attr", "subgroup", "split"],
+        extra_cols=[],
+    )
+
+    # Fairness summary: multiple value cols (S_overall + per-disparity)
+    if fairness_summary_records:
+        fs_df = pd.DataFrame(fairness_summary_records)
+        value_cols = [
+            c
+            for c in fs_df.columns
+            if c.startswith(("S_overall", "disparity_", "fairness_adjusted_"))
+        ]
+        out_rows = []
+        for keys, grp in fs_df.groupby(["method", "demographic_attr", "split"], observed=True):
+            row = {
+                "method": keys[0],
+                "demographic_attr": keys[1],
+                "split": keys[2],
+                "lambda": lambda_fairness,
+                "fairness_combine": fairness_combine_name,
+            }
+            n_boot_seen = len(grp)
+            row["n_boot"] = n_boot_seen
+            for vc in value_cols:
+                summary = _summarize(grp[vc].to_numpy(), ci_level)
+                row[f"{vc}_mean"] = summary["bootstrap_mean"]
+                row[f"{vc}_se"] = summary["bootstrap_se"]
+                row[f"{vc}_ci_lo"] = summary["ci_lo"]
+                row[f"{vc}_ci_hi"] = summary["ci_hi"]
+            out_rows.append(row)
+        fairness_summary_table = pd.DataFrame(out_rows)
+    else:
+        fairness_summary_table = pd.DataFrame()
+
+    return {
+        "skill_scores": skill_table,
+        "avg_rankings": rank_table,
+        "fairness_subgroups": fairness_subgroup_table,
+        "fairness_summary": fairness_summary_table,
+    }

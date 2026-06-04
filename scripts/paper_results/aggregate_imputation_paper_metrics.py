@@ -1,0 +1,149 @@
+#!/usr/bin/env python
+r"""Phase 2 of the imputation paper-metrics bootstrap.
+
+Reads ``bootstrap_draws.parquet`` produced by phase 1
+(``bootstrap_imputation_draws.py``) and emits the four sidecar CSVs
+that carry mean / SE / 95 % CI for the headline metrics:
+
+* ``skill_scores_bootstrap.csv``
+* ``avg_rankings_bootstrap.csv``
+* ``fairness_subgroup_scores_bootstrap.csv``
+* ``fairness_summary_bootstrap.csv``
+
+Phase 2 is **fast** — every reader passes a different subset of named
+disparity functions, λ, or clip bounds without re-resampling.
+
+Example::
+
+    python scripts/paper_results/aggregate_imputation_paper_metrics.py \
+        --draws results/paper/bootstrap_draws.parquet \
+        --output-dir results/paper/ \
+        --disparity-fn max_minus_min --disparity-fn worst_group --disparity-fn std \
+        --lambda-fairness 0.5
+"""
+
+from __future__ import annotations
+
+import argparse
+import logging
+import sys
+from pathlib import Path
+
+from imputation_evaluation.evaluation.bootstrap_skill_rank import (
+    aggregate_skill_rank_fairness,
+    read_draws_parquet,
+)
+from imputation_evaluation.evaluation.disparity_metrics import (
+    DISPARITY_FUNCTIONS,
+    FAIRNESS_COMBINE,
+)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(message)s",
+)
+logger = logging.getLogger(__name__)
+
+
+def _parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(
+        description="Phase 2: summarise bootstrap_draws.parquet into paper sidecar CSVs",
+    )
+    p.add_argument(
+        "--draws", type=Path, required=True,
+        help="Path to bootstrap_draws.parquet from phase 1",
+    )
+    p.add_argument(
+        "--output-dir", type=Path, required=True,
+        help="Directory for the four sidecar CSVs",
+    )
+    p.add_argument(
+        "--baseline-method", default="locf",
+        help="Method to treat as the skill-score baseline (default: locf)",
+    )
+    p.add_argument(
+        "--clip-lower", type=float, default=1e-2,
+        help="Lower clip bound for error ratios (default: 1e-2)",
+    )
+    p.add_argument(
+        "--clip-upper", type=float, default=100.0,
+        help="Upper clip bound for error ratios (default: 100.0)",
+    )
+    p.add_argument(
+        "--lambda-fairness", type=float, default=0.5,
+        help="Lambda for fairness-combine (default: 0.5)",
+    )
+    p.add_argument(
+        "--disparity-fn", action="append", default=None,
+        choices=sorted(DISPARITY_FUNCTIONS.keys()),
+        help="Named disparity function (repeat to compute several in one pass). "
+             "Default: all registered disparities.",
+    )
+    p.add_argument(
+        "--fairness-combine", default="linear_penalty",
+        choices=sorted(FAIRNESS_COMBINE.keys()),
+        help="Named fairness-combine function (default: linear_penalty)",
+    )
+    p.add_argument(
+        "--ci-level", type=float, default=0.95,
+        help="Percentile CI level (default: 0.95)",
+    )
+    p.add_argument(
+        "--method-filter", nargs="+", default=None,
+        help="Restrict to these methods only",
+    )
+    return p.parse_args()
+
+
+def main() -> int:
+    """CLI entry point — see module docstring for usage."""
+    args = _parse_args()
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+
+    df, meta = read_draws_parquet(args.draws)
+    logger.info("Loaded %d rows from %s", len(df), args.draws)
+    if meta is not None:
+        logger.info(
+            "Phase-1 meta: n_boot=%s, seed=%s, methods=%s, scenarios=%s",
+            meta.get("n_boot"), meta.get("seed"),
+            meta.get("methods"), meta.get("scenarios"),
+        )
+    if args.method_filter:
+        df = df[df["method"].isin(args.method_filter)].copy()
+        logger.info("After --method-filter: %d rows", len(df))
+
+    if args.disparity_fn:
+        disparity_fns = {n: DISPARITY_FUNCTIONS[n].fn for n in args.disparity_fn}
+    else:
+        disparity_fns = {n: spec.fn for n, spec in DISPARITY_FUNCTIONS.items()}
+    logger.info("Disparities: %s", sorted(disparity_fns.keys()))
+    logger.info("Fairness-combine: %s, lambda=%s",
+                args.fairness_combine, args.lambda_fairness)
+
+    tables = aggregate_skill_rank_fairness(
+        df,
+        baseline_method=args.baseline_method,
+        clip_lower=args.clip_lower,
+        clip_upper=args.clip_upper,
+        lambda_fairness=args.lambda_fairness,
+        disparity_fns=disparity_fns,
+        fairness_combine_name=args.fairness_combine,
+        ci_level=args.ci_level,
+    )
+
+    out = args.output_dir
+    paths = {
+        "skill_scores":       out / "skill_scores_bootstrap.csv",
+        "avg_rankings":       out / "avg_rankings_bootstrap.csv",
+        "fairness_subgroups": out / "fairness_subgroup_scores_bootstrap.csv",
+        "fairness_summary":   out / "fairness_summary_bootstrap.csv",
+    }
+    for key, path in paths.items():
+        tbl = tables[key]
+        tbl.to_csv(path, index=False, float_format="%.6f")
+        logger.info("Wrote %s (%d rows)", path, len(tbl))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -136,17 +136,19 @@ def run_eval(
         applicable_indices=applicable_indices,
     )
 
-    # 7. Run evaluation. When bootstrap is enabled, force pair-saving on
-    # because the cluster bootstrap operates post-hoc against pair files.
+    # 7. Run evaluation. Pair-saving is enabled when either evaluation.save_pairs is
+    # set in the config (e.g. for the paper pipeline) or when bootstrap is enabled
+    # (the cluster bootstrap operates post-hoc against pair files).
     bootstrap_cfg = getattr(config, "bootstrap", None)
     bootstrap_enabled = bool(bootstrap_cfg is not None and bootstrap_cfg.enabled)
-    save_pairs = bootstrap_enabled
+    save_pairs = bool(config.evaluation.save_pairs) or bootstrap_enabled
     pairs_dir: Path | None = None
     if save_pairs:
         pairs_dir = Path(config.output.results_dir) / "pairs"
         logger.info(
-            "Bootstrap enabled: forcing save_pairs=True (pairs_dir=%s)",
+            "save_pairs=True (pairs_dir=%s, bootstrap_enabled=%s)",
             pairs_dir,
+            bootstrap_enabled,
         )
 
     evaluator = ImputationEvaluator(
