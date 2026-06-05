@@ -7,16 +7,21 @@
 #SBATCH --output=logs/run_eval_%j.log
 
 # ============================================================================
-# Generic downstream eval — FROM RAW, through the public API.
+# Downstream eval — FROM RAW, through the public API. THE single entry point.
 #
 # Runs openmhc.evaluate_prediction(model) for the bundled baseline named by
-# METHOD (the same call an external submitter makes). One engine, build-on-miss
-# inside the model on a cache miss. GPU methods (toto/chronos2/wbm) need a GPU:
-# add `--gres=gpu:1` on the sbatch line. CPU methods (linear/multirocket) don't.
+# METHOD (the same call an external submitter makes), building features/embeddings
+# from raw on a cache miss. One driver for every method — pick it with METHOD.
 #
-# Usage:
-#   METHOD=toto        MHC_DATA_DIR=/home/yb525/yuze_mhc_ws/data sbatch --gres=gpu:1 jobs/imperial/slurm/run_eval.slurm
-#   METHOD=multirocket MHC_DATA_DIR=/home/yb525/yuze_mhc_ws/data sbatch              jobs/imperial/slurm/run_eval.slurm
+#   METHOD ∈ { linear, multirocket, gru_d,   # CPU
+#              toto, chronos2, wbm }          # GPU (first-run extraction); wbm = hybrid SSL
+#
+# Usage (set MHC_DATA_DIR to the dataset root; add --gres=gpu:1 for GPU methods):
+#   METHOD=linear   MHC_DATA_DIR=/path/to/data sbatch               jobs/imperial/slurm/run_eval.slurm
+#   METHOD=toto     MHC_DATA_DIR=/path/to/data sbatch --gres=gpu:1  jobs/imperial/slurm/run_eval.slurm
+#
+# Output: $OUT_CSV (default eval_<METHOD>.csv). Results are also returned in-process
+# as a PredictionResults object (.to_csv / .to_json / .summary) by the public API.
 # ============================================================================
 
 set -eo pipefail

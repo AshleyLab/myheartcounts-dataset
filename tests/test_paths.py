@@ -72,11 +72,11 @@ class TestDatasetPaths:
         assert paths.window_index == tmp_path / "processed" / "window_index_w7_s7_d5.parquet"
         assert (
             paths.weekly_labels_lookup
-            == tmp_path / "processed" / "weekly_labels_lookup_stride7.parquet"
+            == tmp_path / "processed" / "weekly_labels_lookup_stride7_windowed.parquet"
         )
+        assert paths.daily_labels_lookup == tmp_path / "processed" / "daily_labels_lookup.parquet"
         assert paths.splits_file == tmp_path / "splits" / "sharable_users_seed42_2026.json"
         assert paths.norm_stats == tmp_path / "processed" / "normalization_stats_hourly.json"
-        assert paths.clip_dates == tmp_path / "labels" / "clip_dates.json"
         assert paths.labels_dir == tmp_path / "labels"
 
     def test_env_override_propagates(self, monkeypatch, tmp_path):
