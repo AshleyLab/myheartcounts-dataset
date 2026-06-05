@@ -1,5 +1,7 @@
 # @package model
 type: autoETS
+name: null
+release_dir: null
 autoETS:
   auto: true
   sp: 24

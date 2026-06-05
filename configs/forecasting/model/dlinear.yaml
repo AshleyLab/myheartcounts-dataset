@@ -1,6 +1,9 @@
 # @package model
-# Learned forecaster — set ``model.dlinear.checkpoint_path`` to a trained ckpt.
+# Learned forecaster — set ``model.release_dir`` or
+# ``model.dlinear.checkpoint_path`` to a trained checkpoint.
 type: dlinear
+name: null
+release_dir: null
 dlinear:
   checkpoint_path: ???
   device: auto

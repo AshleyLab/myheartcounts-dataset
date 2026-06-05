@@ -29,9 +29,13 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 _CHANNEL_CONSTANTS_PATH = SRC_ROOT / "visualizations" / "constants.py"
-_CHANNEL_SPEC = importlib.util.spec_from_file_location(
-    "_forecasting_skill_score_channel_constants",
-    _CHANNEL_CONSTANTS_PATH,
+_CHANNEL_SPEC = (
+    importlib.util.spec_from_file_location(
+        "_forecasting_skill_score_channel_constants",
+        _CHANNEL_CONSTANTS_PATH,
+    )
+    if _CHANNEL_CONSTANTS_PATH.exists()
+    else None
 )
 if _CHANNEL_SPEC is None or _CHANNEL_SPEC.loader is None:
     CHANNEL_INFO = {}

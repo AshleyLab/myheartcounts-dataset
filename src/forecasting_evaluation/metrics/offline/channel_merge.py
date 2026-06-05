@@ -26,8 +26,13 @@ class ResolvedChannelMerges:
 def resolve_channel_merges(
     variable_names: list[str],
     merge_pairs: tuple[tuple[int, int], ...] = DEFAULT_CHANNEL_MERGE_PAIRS,
+    *,
+    combine_channels: bool = True,
 ) -> ResolvedChannelMerges:
     """Resolve a fixed merge plan against the current feature layout length."""
+    if not combine_channels:
+        return ResolvedChannelMerges(merge_pairs=(), zero_feature_indices=())
+
     resolved_pairs: list[tuple[int, int]] = []
     zero_feature_indices: list[int] = []
     feature_count = len(variable_names)

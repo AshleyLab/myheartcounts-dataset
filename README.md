@@ -103,6 +103,23 @@ results = openmhc.evaluate_forecasting(LastValueForecaster(), forecasting_length
 print(results.summary())
 ```
 
+For reproducible paper-style forecasting runs, use the Hydra CLI and config
+family at `configs/forecasting/`:
+
+```bash
+mhc-forecast-eval model=seasonal_naive
+mhc-forecast-eval --multirun model=seasonal_naive,autoARIMA,autoETS
+```
+
+Sherlock SLURM wrappers live in `jobs/sherlock/forecasting_eval/`. The
+forecasting implementation supports both metrics modes used in the paper:
+combined phone/watch channels for main skill/fairness summaries, and
+no-combine metrics for the raw appendix hour-group tables.
+
+See [`src/forecasting_evaluation/README.md`](src/forecasting_evaluation/README.md)
+for the full guide (Hydra overrides, release checkpoints, full-data Seasonal
+Naive parity checks, offline metrics, raw appendix tables, and SLURM dispatch).
+
 A more complete walkthrough is in [`notebooks/quickstart.ipynb`](notebooks/quickstart.ipynb).
 
 ## Submit to the leaderboard

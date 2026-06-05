@@ -1,4 +1,6 @@
 # @package model
 type: seasonal_naive_average_history
+name: null
+release_dir: null
 seasonal_naive_average_history:
   season_length: 24

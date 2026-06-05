@@ -81,7 +81,8 @@ class ForecastingDataLoader:
             full_ds = full_ds.select(range(self.config.max_samples))
 
 
-        all_users = sorted({str(user_id) for user_id in full_ds["user_id"]})
+        user_ids_by_row = [str(user_id) for user_id in full_ds["user_id"]]
+        all_users = sorted(set(user_ids_by_row))
 
         # 2. Filter
         sample_index_data = {}
@@ -117,22 +118,31 @@ class ForecastingDataLoader:
             test_sample_count,
         )
 
-        # 5. Filter by split
-        # Passing num_proc=1 still enables the datasets multiprocessing path.
-        # Keep single-worker runs truly serial so restricted test runners do not
-        # need to create a multiprocessing manager socket.
-        filter_num_proc = self.config.num_workers if self.config.num_workers > 1 else None
-        train_ds = full_ds.filter(
-            lambda ex: ex["user_id"] in user_splits["train"],
-            num_proc=filter_num_proc,
+        # 5. Select rows by split. Hugging Face ``filter`` materializes each
+        # full trajectory row before calling the predicate, which is expensive
+        # and fragile for the full Arrow cache. The split predicate depends only
+        # on ``user_id``, so build row indices from that column and preserve the
+        # original dataset order with ``select``.
+        train_ds = full_ds.select(
+            [
+                idx
+                for idx, user_id in enumerate(user_ids_by_row)
+                if user_id in user_splits["train"]
+            ]
         )
-        val_ds = full_ds.filter(
-            lambda ex: ex["user_id"] in user_splits["validation"],
-            num_proc=filter_num_proc,
+        val_ds = full_ds.select(
+            [
+                idx
+                for idx, user_id in enumerate(user_ids_by_row)
+                if user_id in user_splits["validation"]
+            ]
         )
-        test_ds = full_ds.filter(
-            lambda ex: ex["user_id"] in user_splits["test"],
-            num_proc=filter_num_proc,
+        test_ds = full_ds.select(
+            [
+                idx
+                for idx, user_id in enumerate(user_ids_by_row)
+                if user_id in user_splits["test"]
+            ]
         )
 
         logger.info(f"Split: train={len(train_ds)}, val={len(val_ds)}, test={len(test_ds)} samples")

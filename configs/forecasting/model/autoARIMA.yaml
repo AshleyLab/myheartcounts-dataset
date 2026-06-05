@@ -1,5 +1,7 @@
 # @package model
 type: autoARIMA
+name: null
+release_dir: null
 autoARIMA:
   start_p: 2
   start_q: 2

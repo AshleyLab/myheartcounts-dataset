@@ -14,6 +14,7 @@ from forecasting_evaluation.forecasting_training.online_dataset import (
     history_cf_manifest_path,
     load_or_build_row_group_manifest,
     write_history_cf_cache,
+    write_history_cf_cache_from_dataset,
 )
 from forecasting_evaluation.forecasting_training.standard_scaler import (
     ChannelStandardScalerStats,
@@ -166,3 +167,61 @@ def prepare_history_cf_cache_bundle(
         raise RuntimeError("Scaler stats should be available after preparing the cache bundle")
 
     return cache_dir, cache_paths, row_groups_by_split, scaler_stats
+
+
+def prepare_history_cf_raw_cache_for_split(
+    *,
+    split_name: str,
+    split_ds: object,
+    data_config,
+    model_config,
+    features_config,
+    h5_output_dir: str | Path,
+    overwrite: bool = False,
+) -> tuple[Path, Path, list]:
+    """Ensure a raw history_cf cache exists for one evaluation split.
+
+    Non-PyPOTS evaluation models only read raw test histories. Building the
+    full train/val/test plus standardized bundle is unnecessary and expensive
+    for the full public dataset, so this helper materializes the minimal cache
+    needed by prediction and offline metrics.
+    """
+    cache_dir = history_cf_cache_subdir(
+        base_dir=Path(h5_output_dir) / "history_cf_cache",
+        data_config=data_config,
+        model_config=model_config,
+        features_config=features_config,
+    )
+    cache_paths = cache_bundle_paths(cache_dir)
+    cache_path = cache_paths[split_name]
+    manifest_path = history_cf_manifest_path(cache_dir, split_name)
+
+    if overwrite or not cache_path.exists():
+        logger.info("Building raw history_cf cache for %s split at %s", split_name, cache_path)
+        write_history_cf_cache_from_dataset(
+            split_ds=split_ds,
+            cache_path=cache_path,
+            features_config=features_config,
+            model_config=model_config,
+            overwrite=True,
+        )
+        save_data_config_yaml(cache_dir, data_config)
+    else:
+        logger.info("Raw history_cf cache already exists at %s, reusing it", cache_path)
+
+    row_groups = load_or_build_row_group_manifest(
+        split_ds=split_ds,
+        sample_index_file=data_config.sample_index_file,
+        model_config=model_config,
+        manifest_path=manifest_path,
+        split_name=split_name,
+        overwrite=overwrite,
+    )
+    logger.info(
+        "Prepared raw %s cache under %s (%d rows/%d samples)",
+        split_name,
+        cache_dir,
+        len(row_groups),
+        sum(len(group.windows) for group in row_groups),
+    )
+    return cache_dir, cache_path, row_groups

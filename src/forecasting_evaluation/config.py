@@ -169,6 +169,7 @@ class ForecastingModelConfig:
 
     type: ModelType = "seasonal_naive"
     name: str | None = None
+    release_dir: str | None = None
 
     seasonal_naive: SeasonalNaiveModelConfig = field(default_factory=SeasonalNaiveModelConfig)
     seasonal_naive_average_history: SeasonalNaiveAverageHistoryModelConfig = field(

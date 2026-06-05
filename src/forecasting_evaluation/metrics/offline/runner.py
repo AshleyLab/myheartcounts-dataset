@@ -19,6 +19,7 @@ class OfflineMetricsCalculator:
         evaluation_result_paths: dict[str, str],
         metrics_output_path: str,
         max_user: int | None = None,
+        combine_channels: bool = True,
     ):
         """Initialize the multi-run offline metrics calculator."""
         self.evaluation_result_paths = {
@@ -27,6 +28,7 @@ class OfflineMetricsCalculator:
         self.metrics_output_path = Path(metrics_output_path)
         self.metrics_output_path.mkdir(parents=True, exist_ok=True)
         self.max_user = int(max_user) if max_user is not None else None
+        self.combine_channels = bool(combine_channels)
 
     def run(self) -> dict[str, Any]:
         """Run the offline metrics pipeline for all provided runs."""
@@ -43,6 +45,7 @@ class OfflineMetricsCalculator:
                 run_path=run_path,
                 metrics_output_path=self.metrics_output_path,
                 max_user=self.max_user,
+                combine_channels=self.combine_channels,
             )
             run_summaries.append(pipeline.run())
 

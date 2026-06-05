@@ -344,6 +344,51 @@ def write_history_cf_cache(
     return cache_path
 
 
+def write_history_cf_cache_from_dataset(
+    split_ds: hf_ds.Dataset,
+    cache_path: str | Path,
+    features_config: FeaturesConfig,
+    model_config: ModelConfig,
+    *,
+    overwrite: bool = False,
+) -> Path:
+    """Stream raw history_cf tensors from a split dataset into HDF5."""
+    cache_path = Path(cache_path)
+    if cache_path.exists() and not overwrite:
+        logger.info("history_cf cache already exists at %s, reusing it", cache_path)
+        return cache_path
+
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    extractor = MultivariateFeatureExtractor(
+        config=features_config,
+        forecasting_length=model_config.n_pred_steps,
+    )
+    zero_to_nan_transform = ZeroToNaNTransform()
+
+    n_rows = 0
+    n_features = int(model_config.n_features)
+    with h5py.File(cache_path, "w") as handle:
+        rows_group = handle.create_group("history_cf_rows")
+        for row_idx, row in enumerate(split_ds):
+            features = extractor.extract(row)
+            history_cf = torch.as_tensor(features["history"], dtype=torch.float32)
+            history_cf = zero_to_nan_transform(history_cf)
+            if row_idx == 0:
+                n_features = int(history_cf.shape[0])
+            rows_group.create_dataset(
+                str(row_idx),
+                data=history_cf.cpu().numpy().astype(np.float32),
+                compression="gzip",
+            )
+            n_rows += 1
+
+        handle.attrs["n_features"] = n_features
+        handle.attrs["n_rows"] = n_rows
+
+    logger.info("Saved streaming history_cf H5 cache for %d rows to %s", n_rows, cache_path)
+    return cache_path
+
+
 def precompute_history_cf_cache(
     split_ds: hf_ds.Dataset,
     cache_path: str | Path,

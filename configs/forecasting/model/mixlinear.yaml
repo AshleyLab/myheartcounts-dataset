@@ -1,6 +1,9 @@
 # @package model
-# Learned forecaster — set ``model.mixlinear.checkpoint_path`` to a trained ckpt.
+# Learned forecaster — set ``model.release_dir`` or
+# ``model.mixlinear.checkpoint_path`` to a trained checkpoint.
 type: mixlinear
+name: null
+release_dir: null
 mixlinear:
   checkpoint_path: ???
   device: auto

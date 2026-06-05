@@ -136,35 +136,32 @@ class SeasonalNaiveModel(BasePredictionModel):
         n_quantiles = len(self.quantile_levels)
         quantiles = np.zeros((n_features, prediction_length, n_quantiles))
 
-        valid_seasons: list[np.ndarray] = []
-        offset = 0
-        while True:
-            end_idx = history_length - effective_seasonal * offset
-            start_idx = end_idx - effective_seasonal
-            if start_idx < 0:
-                break
+        n_complete_seasons = history_length // effective_seasonal
+        if n_complete_seasons <= 0:
+            return np.repeat(predictions[:, :, None], n_quantiles, axis=2)
 
-            candidate_season = history[:, start_idx:end_idx]
-            if np.any(candidate_season != 0):
-                valid_seasons.append(candidate_season)
-            offset += 1
+        season_start = history_length - n_complete_seasons * effective_seasonal
+        seasons = history[:, season_start:].reshape(
+            n_features,
+            n_complete_seasons,
+            effective_seasonal,
+        )
+        valid_season_mask = np.any(seasons != 0, axis=(0, 2))
+        valid_seasons = seasons[:, valid_season_mask, :]
+
+        if valid_seasons.shape[1] == 0:
+            return np.repeat(predictions[:, :, None], n_quantiles, axis=2)
 
         for k in range(prediction_length):
             idx = k % effective_seasonal
+            seasonal_values_by_feature = valid_seasons[:, :, idx].astype(float, copy=False)
             for feature_idx in range(n_features):
-                if valid_seasons:
-                    seasonal_values = np.asarray(
-                        [season[feature_idx, idx] for season in valid_seasons],
-                        dtype=float,
-                    )
-                    seasonal_values = seasonal_values[np.isfinite(seasonal_values)]
-                else:
-                    seasonal_values = np.asarray([], dtype=float)
-
+                seasonal_values = seasonal_values_by_feature[feature_idx]
+                seasonal_values = seasonal_values[np.isfinite(seasonal_values)]
                 if seasonal_values.size == 0:
                     quantiles[feature_idx, k, :] = predictions[feature_idx, k]
                 else:
-                    quantiles[feature_idx, k, :] = np.nanquantile(
+                    quantiles[feature_idx, k, :] = np.quantile(
                         seasonal_values,
                         self.quantile_levels,
                     )

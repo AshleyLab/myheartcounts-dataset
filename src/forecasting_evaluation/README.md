@@ -14,11 +14,138 @@ Current scope in code:
 
 Main entrypoints:
 
-- `scripts/run_forecasting_eval.py` (prediction generation)
+- `mhc-forecast-eval` (Hydra CLI for reproducible public benchmark runs)
+- `scripts/run_forecasting_eval.py` (legacy prediction-generation wrapper)
 - `src/forecasting_evaluation/metrics/offline_calculate.py` (offline metric calculation)
-- `src/forecasting_evaluation/metrics/summary_metrics_result.py` (offline metric summary export)
+- `src/forecasting_evaluation/metrics/paper_result_generator_all_channels.py` (appendix-style raw hour-group tables)
+- `src/forecasting_evaluation/metrics/skill_score_summary.py` and `fairness_skill_score_summary.py` (paper scoring summaries)
 
 ---
+
+## 0.5. Reproducible Runs via `mhc-forecast-eval`
+
+Use the Hydra CLI when you want composable config presets, timestamped Hydra
+run directories, multirun sweeps, and Sherlock dispatch.
+
+Single run:
+
+```bash
+mhc-forecast-eval model=seasonal_naive
+```
+
+Multirun:
+
+```bash
+mhc-forecast-eval --multirun \
+  model=seasonal_naive,seasonal_naive_average_history,autoARIMA,autoETS
+```
+
+The public Hydra config tree lives at `configs/forecasting/`:
+
+- `model/`: `seasonal_naive`, `seasonal_naive_average_history`, `autoARIMA`,
+  `autoETS`, `chronos2`, `toto`, `mixlinear`, `dlinear`, `segrnn`
+- `data/`: trajectory dataset paths, split file, day mask, sample index
+- `forecasting/`: horizon and daily start-hour offset
+- `features/`: current 19-channel feature selection
+- `output/`: prediction parquet output root and overwrite policy
+
+### Checkpoints and Releases
+
+Baseline and statistical models do not require checkpoints. Learned and
+finetuned models can be launched either with a direct nested checkpoint path:
+
+```bash
+mhc-forecast-eval model=dlinear model.dlinear.checkpoint_path=/path/to/model.pypots
+```
+
+or with an imputation-style release directory:
+
+```bash
+mhc-forecast-eval model=dlinear model.release_dir=/path/to/openmhc-dlinear-forecast/
+```
+
+The release directory must contain `openmhc_manifest.json`. Forecasting accepts
+the same core fields used by imputation releases:
+
+```json
+{
+  "spec_version": 1,
+  "kind": "dlinear",
+  "checkpoint": "model.pypots",
+  "normalization_stats": null,
+  "arch": {"n_steps": 168, "n_pred_steps": 24, "n_features": 19},
+  "provenance": {}
+}
+```
+
+`kind` must match `model.type`. The CLI resolves `checkpoint`, copies the
+manifest into the Hydra run directory, and applies matching `arch` keys onto
+the selected nested model config.
+
+### Sherlock
+
+Sherlock scripts live under `jobs/sherlock/forecasting_eval/`.
+
+```bash
+# Full suite; chains summary aggregation by default.
+jobs/sherlock/forecasting_eval/submit_all.sh
+
+# Baselines only.
+sbatch jobs/sherlock/forecasting_eval/run_baselines.sbatch
+
+# Learned checkpoint example.
+export MHC_FORECAST_DLINEAR_RELEASE_DIR=/path/to/openmhc-dlinear-forecast
+sbatch jobs/sherlock/forecasting_eval/run_dlinear.sbatch
+```
+
+Common environment knobs:
+
+| Variable | Meaning |
+|---|---|
+| `MHC_REPO_DIR` | Repo checkout on Sherlock; defaults to the script-resolved repo root |
+| `MHC_VENV` | Virtualenv path; defaults to `/scratch/users/$USER/envs/mhc-benchmark` if present |
+| `MHC_DATA_DIR` | Dataset root containing `hourly_trajectory`, `splits`, and `forecasting_sample_index`; Sherlock scripts prefer `~/.cache/openmhc/data-full` when unset |
+| `MHC_FORECAST_RUNS_ROOT` | Output root; defaults to `results/forecasting_eval/sherlock` |
+| `MHC_FORECAST_<MODEL>_RELEASE_DIR` | Release dir for `CHRONOS2`, `TOTO`, `MIXLINEAR`, `DLINEAR`, or `SEGRNN` |
+
+To add a new Hydra model preset, add its dataclass fields in `config.py`,
+register construction in `models/registry.py`, add a YAML preset under
+`configs/forecasting/model/`, and include it in the Sherlock submission list if
+it should run in the paper sweep.
+
+### Full-Data Seasonal Naive Parity Check
+
+The full paper forecasting sample is the default public config when
+`MHC_DATA_DIR` points at the full OpenMHC cache. Expected test coverage is:
+
+- `827` test users
+- `43,563` test forecasting samples
+- one prediction parquet per test user
+
+The local full-data Seasonal Naive parity run used:
+
+```bash
+MHC_DATA_DIR=$HOME/.cache/openmhc/data-full HYDRA_FULL_ERROR=1 \
+mhc-forecast-eval \
+  model=seasonal_naive \
+  data.num_workers=1 \
+  experiment_name=FullSeasonalNaiveParity \
+  output.results_dir=/tmp/mhc_forecast_full_seasonal_naive_final \
+  output.overwrite_existing_parquet=true \
+  hydra.run.dir=/tmp/mhc_forecast_full_seasonal_naive_final/hydra \
+  hydra.job.chdir=false
+```
+
+This writes predictions to:
+
+```text
+{results_dir}/{experiment_name}/seasonal_naive/{user_id}.parquet
+```
+
+Seasonal Naive is the paper's `0` skill-score reference, so a
+Seasonal-Naive-only run can verify coverage, raw metrics, and zero-skill
+normalization against itself. It cannot reproduce the main table's average rank
+or fairness-adjusted score without the other model outputs.
 
 ## 1. Execution Flow (Code-Aligned)
 
@@ -67,8 +194,9 @@ Model configuration is single-model:
 
 ```yaml
 model:
-  type: seasonal_naive | seasonal_naive_average_history | autoARIMA | autoETS | chronos2
+  type: seasonal_naive | seasonal_naive_average_history | autoARIMA | autoETS | chronos2 | toto | mixlinear | dlinear | segrnn
   name: str | null
+  release_dir: str | null
   seasonal_naive:
     season_length: int
     quantile_levels: list[float]
@@ -101,7 +229,57 @@ model:
     max_history_length: int | null
   chronos2:
     temp: int
+    pretrained_model_name_or_path: str
+    checkpoint_path: str | null
+    training_output_dir: str | null
+    finetuned_ckpt_name: str | null
+    device: cuda | cpu
+    torch_dtype: auto | float32 | float16 | bfloat16
+  toto:
+    pretrained_model_name_or_path: str
+    checkpoint_path: str | null
+    lora_alpha: float | null
+    device: cuda | cpu
+    context_length: int
+    num_samples: int
+    samples_per_batch: int
+    use_kv_cache: bool
+    time_interval_seconds: int
+  mixlinear:
+    checkpoint_path: str | null
+    device: cuda | cpu
+    batch_size: int
+    n_steps: int | null
+    n_pred_steps: int | null
+    n_features: int | null
+    period_len: int
+    lpf: int
+    alpha: float
+    rank: int
+  dlinear:
+    checkpoint_path: str | null
+    device: cuda | cpu
+    batch_size: int
+    n_steps: int | null
+    n_pred_steps: int | null
+    n_features: int | null
+    moving_avg_window_size: int
+    individual: bool
+    d_model: int | null
+  segrnn:
+    checkpoint_path: str | null
+    device: cuda | cpu
+    batch_size: int
+    n_steps: int | null
+    n_pred_steps: int | null
+    n_features: int | null
+    seg_len: int
+    d_model: int
+    dropout: float
 ```
+
+The canonical source of truth is `ForecastingModelConfig` in `config.py`; the
+Hydra presets under `configs/forecasting/model/` set the common paper defaults.
 
 Core nested fields:
 
@@ -238,11 +416,22 @@ python src/forecasting_evaluation/metrics/offline_calculate.py \
   --metrics-output-path results/metrics
 ```
 
+For appendix raw hour-group tables, disable phone/watch channel merging:
+
+```bash
+python src/forecasting_evaluation/metrics/offline_calculate.py \
+  --evaluation-result-paths seasonal_naive_0=results/forecasting_eval/Exp/seasonal_naive \
+  --metrics-output-path results/metrics_nocombine \
+  --no-combine-channels
+```
+
 Arguments:
 
 - `--evaluation-result-paths` (alias `--run-dirs`): one or more `name=path` mappings.
 - `--metrics-output-path` (alias `--output-dir`): root output dir for offline metrics.
 - `--max-user`: optional sequential cap on how many user parquet metrics files to compute per run.
+- `--combine-channels` / `--no-combine-channels`: controls whether paired
+  phone/watch step and distance channels are merged before metrics.
 
 ### 4.2 What It Does
 
@@ -254,15 +443,16 @@ For each run mapping:
 4. Re-extract history from trajectory and reconstruct GT by:
    - `start = history_length`
    - `end = history_length + forecasting_length`
-5. Compute:
+5. Optionally merge paired phone/watch step and distance channels.
+6. Compute:
    - `mae`: element-wise absolute error matrix `(feature, horizon)`
    - `mse`: element-wise Mean Squared Error matrix `(feature, horizon)`
    - `mase`: hour-of-day scaled absolute error matrix `(feature, horizon)`
    - `mase_all`: globally scaled absolute error matrix `(feature, horizon)`
    - `ql`: quantile loss matrix `(feature, horizon)`
    - `sql`: hour-of-day scaled quantile loss matrix `(feature, horizon)`
-6. Flatten performance dict into `perf_*` columns.
-7. Save per-user parquet into per-metric subdirectories.
+7. Flatten performance dict into `perf_*` columns.
+8. Save per-user parquet into per-metric subdirectories.
 
 If quantile levels are absent in prediction rows, levels are auto-generated as evenly spaced values.
 
@@ -299,6 +489,63 @@ Current skip policy:
 
 - Metrics are skipped per user if `mae/{user_id}.parquet` already exists for the target model.
 - Invalid rows (for example missing history length or out-of-range slice) are skipped and counted.
+
+### 4.4 Combined vs. No-Combine Metrics
+
+There are two paper metrics layouts:
+
+| Output root | Channel behavior | Intended use |
+|---|---|---|
+| `results/metrics` | Combines `(0, 3)` step count and `(1, 4)` distance, then zeroes the secondary channels | Main skill/fairness summaries |
+| `results/metrics_nocombine` | Keeps all 19 channels separate | Appendix raw hour-group tables |
+
+The default is combined metrics to preserve main-score behavior. Use
+`--no-combine-channels` when regenerating appendix tables such as
+`tab:hour_of_day_mae`, `tab:hour_of_day_ql`, and
+`tab:hour_of_day_mae_stepcount`.
+
+Example full-data no-combine metrics calculation from an existing Seasonal
+Naive prediction run:
+
+```bash
+MHC_DATA_DIR=$HOME/.cache/openmhc/data-full \
+python src/forecasting_evaluation/metrics/offline_calculate.py \
+  --evaluation-result-paths 'Seasonal Naive=/tmp/mhc_forecast_full_seasonal_naive_final/FullSeasonalNaiveParity/seasonal_naive' \
+  --metrics-output-path /tmp/mhc_forecast_full_seasonal_naive_final/metrics_nocombine \
+  --no-combine-channels
+```
+
+Expected full-data result for Seasonal Naive:
+
+- `827` per-user parquet files under each metric directory
+- `43,563` saved rows
+- `0` skipped rows
+
+### 4.5 Raw Appendix Table Generation
+
+Generate the appendix-style grouped raw table from no-combine metrics:
+
+```bash
+python -m forecasting_evaluation.metrics.paper_result_generator_all_channels \
+  --models-json '{"Seasonal Naive":"/tmp/mhc_forecast_full_seasonal_naive_final/metrics_nocombine/Seasonal_Naive"}' \
+  --output-dir /tmp/mhc_forecast_full_seasonal_naive_final/paper_raw_table_check \
+  --output-file /tmp/mhc_forecast_full_seasonal_naive_final/paper_raw_table_check/seasonal_naive_raw_grouped_nocombine.csv
+```
+
+The active paper appendix is included from `paper/00_main.tex` via
+`sections/appendix/forecasting.tex`. Important table labels:
+
+- `tab:hour_of_day_mae`: raw continuous-channel MAE table, averaged across
+  start times `0`, `6`, `12`, and `18`
+- `tab:hour_of_day_ql`: raw continuous-channel QL table, averaged across those
+  start times
+- `tab:binary_model_channel_metrics`: raw binary-channel table
+- `tab:hour_of_day_mae_stepcount`: start-time-specific Step Count MAE table
+
+A default `mhc-forecast-eval model=seasonal_naive` run corresponds to
+`Seasonal Naive(0)` in `tab:hour_of_day_mae_stepcount`. Matching the full
+appendix raw tables exactly requires running start-time offsets `0`, `6`, `12`,
+and `18`, computing no-combine metrics for each, and aggregating them together.
 
 ---
 
@@ -367,6 +614,10 @@ Supported `model.type` values:
 - `autoARIMA`
 - `autoETS`
 - `chronos2`
+- `toto`
+- `mixlinear`
+- `dlinear`
+- `segrnn`
 
 If `name` is missing, evaluator uses `model.type` as the model name.
 
@@ -387,19 +638,19 @@ Or if you have raw HDF5 data, you can generate above data with scripts, referenc
 
 
 ### 7.2 Run evaluation
-Run forecasting prediction generation:
+Run forecasting prediction generation with Hydra:
 
 ```bash
-python scripts/run_forecasting_eval.py \
-  --config configs/forecasting_eval/default.yaml
+mhc-forecast-eval model=seasonal_naive
 ```
 
-Layered config override:
+Hydra override example:
 
 ```bash
-python scripts/run_forecasting_eval.py \
-  --config configs/forecasting_eval/default.yaml \
-  --config configs/forecasting_eval/test.yaml
+mhc-forecast-eval \
+  model=seasonal_naive \
+  output.results_dir=results/forecasting_eval/dev \
+  output.overwrite_existing_parquet=true
 ```
 
 Run offline metrics calculation:
@@ -408,6 +659,15 @@ Run offline metrics calculation:
 python src/forecasting_evaluation/metrics/offline_calculate.py \
   --evaluation-result-paths ExpA=results/forecasting_eval/ExpA/20260324_120000 \
   --metrics-output-path results/metrics
+```
+
+For no-combine appendix metrics:
+
+```bash
+python src/forecasting_evaluation/metrics/offline_calculate.py \
+  --evaluation-result-paths ExpA=results/forecasting_eval/ExpA/seasonal_naive \
+  --metrics-output-path results/metrics_nocombine \
+  --no-combine-channels
 ```
 
 Run offline metrics summary:
@@ -420,8 +680,25 @@ python src/forecasting_evaluation/metrics/summary_metrics_result.py \
 
 ---
 
-## 8. Current Caveats
+## 8. Implementation Notes and Current Caveats
 
+- Full-data runs rely on cache artifacts under `data/processed/forecasting_eval_h5/`.
+  For non-PyPOTS/statistical models, evaluation and offline metrics now build
+  only the raw `history_cf` cache needed for the test split. PyPOTS models still
+  use the full train/validation/test cache bundle for training/evaluation.
+- `ForecastingDataLoader.load_splits()` selects split rows by indexed
+  `user_id` lookup instead of Hugging Face multiprocessing filters. This avoids
+  materializing large trajectory rows just to split users and is important for
+  full-data runs.
+- Offline metrics are streamed by user. The pipeline computes global scale
+  denominators first, then reads one user's prediction parquet rows, computes
+  records, and writes that user's per-metric parquet files immediately.
+- Hour-of-day/global scale denominators are accumulated with a vectorized bulk
+  path over all start indices for a user. This preserves the scalar denominator
+  semantics while avoiding tens of thousands of Python calls.
+- Seasonal Naive empirical quantiles are vectorized across complete seasonal
+  windows. This keeps the full 43,563-sample baseline run feasible while
+  preserving the original loop behavior.
 - `SubTrajectoryGenerator` requires user entries in `data.sample_index_file` and does not implement fallback candidate generation.
 - `forecasting.valid_prediction_window.valid_day_threshold` and `valid_hour_threshold` are configured but not enforced in sample generation.
 - `valid_prediction_window.history_length` is configured but current slicing still uses all history before `index_hours`.

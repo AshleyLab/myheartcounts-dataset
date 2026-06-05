@@ -57,6 +57,16 @@ def build_parser() -> argparse.ArgumentParser:
             "per run. Use None to process all users."
         ),
     )
+    parser.add_argument(
+        "--combine-channels",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Whether to merge paired phone/watch step and distance channels before "
+            "computing offline metrics. Use --no-combine-channels for appendix raw "
+            "hour-group tables."
+        ),
+    )
     return parser
 
 
@@ -76,6 +86,7 @@ def main() -> None:
         evaluation_result_paths=evaluation_result_paths,
         metrics_output_path=args.metrics_output_path,
         max_user=args.max_user,
+        combine_channels=args.combine_channels,
     )
     summary = calculator.run()
     compact_summary = {
@@ -89,6 +100,7 @@ def main() -> None:
                 "saved_rows": run_summary.get("saved_rows"),
                 "skipped_rows": run_summary.get("skipped_rows"),
                 "computed_user_count": run_summary.get("computed_user_count"),
+                "combine_channels": run_summary.get("combine_channels"),
                 "output_run_dir": run_summary.get("output_run_dir"),
             }
             for run_summary in summary.get("runs", [])

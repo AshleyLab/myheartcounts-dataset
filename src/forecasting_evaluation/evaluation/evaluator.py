@@ -17,6 +17,7 @@ from forecasting_evaluation.data.data_loader import ForecastingDataLoader
 from forecasting_evaluation.data.types import SubTrajectoryInput
 from forecasting_evaluation.forecasting_training.cache_bundle import (
     prepare_history_cf_cache_bundle,
+    prepare_history_cf_raw_cache_for_split,
 )
 from forecasting_evaluation.forecasting_training.online_dataset import _resolve_window_hours
 from forecasting_evaluation.io.predict_result_writer import PredictResultWriter, PublicWriter
@@ -106,6 +107,24 @@ class ForecastingEvaluator:
         )
         # Resolve cache layout once so all model types use one loader path.
         model_config, h5_output_dir = self._resolve_eval_cache_config(model, test_ds)
+        if not isinstance(model, BasePyPOTSForecastingModel):
+            _cache_dir, test_cache_path, test_row_groups = prepare_history_cf_raw_cache_for_split(
+                split_name="test",
+                split_ds=test_ds,
+                data_config=self.config.data,
+                model_config=model_config,
+                features_config=self.config.features,
+                h5_output_dir=h5_output_dir,
+                overwrite=False,
+            )
+            context.test_cache_path = test_cache_path
+            context.test_row_groups = test_row_groups
+            logger.info(
+                "Prepared eval dataset using raw cache at %s",
+                context.test_cache_path,
+            )
+            return context
+
         split_datasets = {
             "train": train_ds,
             "val": val_ds,

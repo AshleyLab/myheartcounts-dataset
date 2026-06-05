@@ -1,5 +1,7 @@
 # @package model
 type: chronos2
+name: null
+release_dir: null
 chronos2:
   pretrained_model_name_or_path: amazon/chronos-2
   device: auto
