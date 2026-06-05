@@ -50,6 +50,14 @@ hydra = [
   "omegaconf>=2.3",
   "hydra-submitit-launcher>=1.2",
 ]
+wandb = [
+  "wandb>=0.16",
+]
+# Every runtime feature in one shot (all tracks + Hydra CLIs + W&B logging).
+# Add ``dev`` for contributor tooling: ``pip install -e ".[all,dev]"``.
+all = [
+  "openmhc[pypots,lsm2,hf,hydra,wandb]",
+]
 
 [project.scripts]
 mhc-impute-eval = "imputation_evaluation.hydra.cli:main"

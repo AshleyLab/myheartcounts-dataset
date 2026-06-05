@@ -11,10 +11,20 @@ Evaluation API and reference implementations for the **MyHeartCounts Datasets & 
 ```bash
 git clone https://github.com/AshleyLab/myheartcounts-dataset.git
 cd myheartcounts-dataset
-pip install -e .
+
+# Install into a dedicated environment (conda for Python, pip for the rest):
+conda create -n openmhc python=3.10 -y && conda activate openmhc
+pip install -e ".[all]"
 ```
 
-Python ≥ 3.10. Installs the `openmhc` package and its evaluation dependencies.
+Python ≥ 3.10. `[all]` pulls in every track (prediction, imputation,
+forecasting) plus the Hydra CLIs and W&B logging; use a bare `pip install -e .`
+for just Track 1 + the core API. **Install into an isolated environment** — the
+evaluation engines use non-unique top-level package names that will collide with
+the private `MHC-benchmark` repo if both share one environment.
+
+See [`docs/install.md`](docs/install.md) for the full guide (extras table, venv
+alternative, Sherlock cluster setup, verification).
 
 ## Quickstart
 
