@@ -23,23 +23,26 @@ class Encoder(Protocol):
     rather than its choice of probe. The same protocol is implemented by external
     encoders and by the baselines (MAE, SSL, Toto, Chronos-2, ...).
 
-    Optionally set ``input_granularity`` to choose how the benchmark hands you each
-    participant's data (default ``"series"``):
+    Set ``input_granularity`` to choose how the benchmark hands you each
+    participant's data. ``"daily"`` is currently wired by the segment binder:
 
-      - ``"series"`` — the eligible continuous hourly series ``(T, 38)``; window it
-        however you like (5h, 2048h, ...). The general default.
-      - ``"daily"``  — eligible daily segments  ``(n_segments, 24, 38)``.
-      - ``"weekly"`` — eligible weekly segments ``(n_segments, 168, 38)``.
+      - ``"daily"``  — eligible daily segments ``(n_segments, 24, 38)``.
+      - ``"series"`` / ``"weekly"`` — planned (hourly series / weekly segments).
 
-    In every case channels 0-18 are z-scored sensor values and 19-37 the
-    missingness masks (1 = missing, 0 = observed).
+    Channels 0-18 are the **raw** sensor values (NaN at missing positions) and 19-37
+    the missingness mask (1 = missing, 0 = observed). Normalization is your model's
+    concern — z-score with your own train-split statistics if you need it (the
+    imputation track hands raw values the same way). The benchmark fits a PCA-50 probe
+    on the embeddings, so return at least 50 dimensions.
 
     Example:
         >>> class MyEncoder:
-        ...     input_granularity = "series"
+        ...     input_granularity = "daily"
         ...     def encode(self, data: np.ndarray) -> np.ndarray:
-        ...         # data: (T, 38) — this participant's eligible hourly series
-        ...         return my_network(data).mean(axis=0)   # -> (D,)
+        ...         # data: (n_segments, 24, 38) — eligible days; channels 0-18 raw
+        ...         # values (NaN at missing), 19-37 the mask. Return D >= 50.
+        ...         x = np.nan_to_num(data).reshape(-1, 38)
+        ...         return np.concatenate([x.mean(0), x.std(0)])   # -> (76,)
     """
 
     def encode(self, data: np.ndarray) -> np.ndarray:

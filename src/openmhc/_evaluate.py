@@ -164,7 +164,15 @@ def evaluate_prediction(
     cfg = EvalConfig(
         data_dir=str(paths.root), split_users=split_users, tasks=task_list, seed=seed
     )
-    results = run_eval(cfg, encoder)
+    # A pure external encoder implements only the public ``encode(data)`` contract, so
+    # wrap it to translate the engine's per-participant ``ParticipantSegments`` into the
+    # documented ``(n_segments, 24, 38)`` array (mirrors ``_ImputerMethodAdapter`` /
+    # ``_ForecasterAdapter``). Bundled baselines speak the internal interface
+    # (``encode_cohort`` / ``fit``) and pass through untouched.
+    model = encoder
+    if hasattr(encoder, "encode") and not hasattr(encoder, "encode_cohort"):
+        model = _EncoderMethodAdapter(encoder)
+    results = run_eval(cfg, model)
 
     # Flatten the engine's ``{task: {metric: value, n_test}}`` into long-format
     # records; the global score is the mean test AUPRC over binary tasks (AUPRC is
@@ -198,6 +206,38 @@ def evaluate_prediction(
 
     global_score = float(np.mean(binary_primary)) if binary_primary else 0.0
     return PredictionResults(records=records, global_score=global_score)
+
+
+class _EncoderMethodAdapter:
+    """Adapt a user's :class:`~openmhc.Encoder` to the internal engine interface.
+
+    The internal evaluator hands a model one ``ParticipantSegments`` per participant —
+    raw ``.values`` and ``.mask``, each ``(n_segments, 24, 19)``. The public
+    ``Encoder.encode`` contract is a single ``(n_segments, 24, 38)`` array (channels
+    0-18 raw sensor values with NaN at missing positions, 19-37 the missingness mask).
+    This adapter performs that translation and forwards to the user's ``encode``,
+    mirroring ``_ImputerMethodAdapter`` / ``_ForecasterAdapter`` so all three tracks
+    expose the same clean-array public contract.
+    """
+
+    def __init__(self, encoder: Encoder) -> None:
+        """Wrap ``encoder`` and inherit its declared input granularity."""
+        self._encoder = encoder
+        # Respect the encoder's declared granularity so the engine binds the matching
+        # segments (the binder currently materializes daily segments).
+        self.input_granularity = getattr(encoder, "input_granularity", "daily")
+
+    @property
+    def name(self) -> str:
+        """Method name for run provenance."""
+        return getattr(self._encoder, "name", "custom_encoder")
+
+    def encode(self, segments) -> np.ndarray:
+        """Translate one participant's ``ParticipantSegments`` to the public array."""
+        values = np.asarray(segments.values, dtype=np.float32)  # (n, 24, 19) raw, NaN at missing
+        mask = np.asarray(segments.mask, dtype=np.float32)  # (n, 24, 19)
+        data = np.concatenate([values, mask], axis=-1)  # (n, 24, 38)
+        return np.asarray(self._encoder.encode(data), dtype=np.float32)
 
 
 # ---------------------------------------------------------------------------

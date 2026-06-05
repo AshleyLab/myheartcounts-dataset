@@ -274,7 +274,11 @@ def create_model(
         from sklearn.decomposition import PCA
 
         pca_whiten = getattr(config, "pca_whiten", False)
-        steps.append(PCA(n_components=pca_n, whiten=pca_whiten))
+        # random_state pins the randomized SVD solver that sklearn auto-selects for
+        # wide feature matrices (e.g. MultiRocket's ~50k dims). Without it the probe
+        # is non-reproducible: the rotated subspace varies run-to-run, swinging
+        # rare-positive AUPRC by ~0.03. Seeded here so results are deterministic.
+        steps.append(PCA(n_components=pca_n, whiten=pca_whiten, random_state=random_state))
 
     if steps:
         steps.append(clf)
