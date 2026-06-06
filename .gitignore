@@ -32,3 +32,4 @@ data/cache/
 # Generated outputs (eval run results, notebook-side artifacts)
 notebooks/data/
 results/
+logs/
