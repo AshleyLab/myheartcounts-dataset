@@ -1010,9 +1010,13 @@ def evaluate_forecasting(
     )
     from forecasting_evaluation.runner import run_eval
 
-    # Pick a sample-index file matching the requested forecasting horizon.
+    # Pick the paper/Hydra-default sample-index file for the requested horizon:
+    # the quality-filtered set (M = target day retained, H_7_3 = >=3 of prior 7
+    # days retained, S_100 = <=100 start days/user, seed 42). Matches
+    # configs/forecasting/data/default.yaml so the public API is paper-parity.
     sample_index_file = (
-        paths.forecasting_sample_index_dir / f"sample_index_P_{forecasting_length}_raw.json"
+        paths.forecasting_sample_index_dir
+        / f"sample_index_P_{forecasting_length}_M_H_7_3_S_100.json"
     )
 
     data_cfg = DataConfig(
