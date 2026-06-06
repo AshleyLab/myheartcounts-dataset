@@ -19,7 +19,10 @@ from forecasting_evaluation.forecasting_training.cache_bundle import (
     prepare_history_cf_cache_bundle,
     prepare_history_cf_raw_cache_for_split,
 )
-from forecasting_evaluation.forecasting_training.online_dataset import _resolve_window_hours
+from forecasting_evaluation.forecasting_training.online_dataset import (
+    _resolve_window_hours,
+    resolve_cache_base_dir,
+)
 from forecasting_evaluation.io.predict_result_writer import PredictResultWriter, PublicWriter
 from forecasting_evaluation.models.deep_learning_model.pypots_forecasting_base import (
     BasePyPOTSForecastingModel,
@@ -163,9 +166,11 @@ class ForecastingEvaluator:
     def _resolve_eval_cache_config(self, model: BasePredictionModel, test_ds) -> tuple[SimpleNamespace, str]:
         """Resolve one cache-bundle config so every model can share the same loader path."""
         if isinstance(model, BasePyPOTSForecastingModel):
-            h5_output_dir = model._get_training_config_value("h5_export", "output_dir")
-            if not h5_output_dir:
-                h5_output_dir = "data/processed/forecasting_pypots_h5"
+            # Eval-time bundle is written under the configured data root; scaler
+            # stats are supplied via scaler_stats_override (read by the model from
+            # its baked training path), so the eval cache need not co-locate with
+            # training artifacts.
+            h5_output_dir = str(resolve_cache_base_dir(self.config.data))
             if model.uses_standard_scaler and model.scaler_stats is None:
                 raise FileNotFoundError(
                     "PyPOTS checkpoint was trained with standard scaling, but "
@@ -191,7 +196,7 @@ class ForecastingEvaluator:
                 n_pred_steps=int(self.config.forecasting.forecasting_length),
                 n_features=n_features,
             ),
-            "data/processed/forecasting_eval_h5",
+            str(resolve_cache_base_dir(self.config.data)),
         )
 
     def _run_sequential(

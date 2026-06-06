@@ -193,6 +193,16 @@ def history_cf_cache_subdir(
     return Path(base_dir) / digest
 
 
+def resolve_cache_base_dir(data_config) -> Path:
+    """Cache base dir under the configured data root: {data_root}/cache/forecasting.
+
+    The data root is the parent of ``trajectory_hf_dir`` (e.g.
+    ``${MHC_DATA_DIR}/hourly_trajectory`` -> ``${MHC_DATA_DIR}``), so caches live
+    next to the dataset they are derived from instead of the current working dir.
+    """
+    return Path(data_config.trajectory_hf_dir).parent / "cache" / "forecasting"
+
+
 def history_cf_manifest_path(cache_dir: str | Path, split_name: str) -> Path:
     """Return the JSON manifest cache path for one split."""
     normalized_split = str(split_name).strip().lower()

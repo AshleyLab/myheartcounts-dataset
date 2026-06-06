@@ -14,6 +14,7 @@ from forecasting_evaluation.data.data_loader import ForecastingDataLoader
 from forecasting_evaluation.forecasting_training.cache_bundle import (
     prepare_history_cf_raw_cache_for_split,
 )
+from forecasting_evaluation.forecasting_training.online_dataset import resolve_cache_base_dir
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +49,7 @@ def iter_offline_user_contexts_from_eval_flow(
         data_config=config.data,
         model_config=model_config,
         features_config=config.features,
-        h5_output_dir="data/processed/forecasting_eval_h5",
+        h5_output_dir=str(resolve_cache_base_dir(config.data)),
         overwrite=False,
     )
 

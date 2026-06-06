@@ -13,7 +13,7 @@ from forecasting_evaluation.config import DataConfig, FeaturesConfig, Forecastin
 class H5ExportConfig:
     """Deprecated HDF5 export configuration for forecasting samples."""
 
-    output_dir: str = "data/processed/forecasting_pypots_h5"
+    output_dir: str = "data/cache/forecasting"
     overwrite: bool = False
     chunk_size: int = 512
 

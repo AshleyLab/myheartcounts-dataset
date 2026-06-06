@@ -682,7 +682,8 @@ python src/forecasting_evaluation/metrics/summary_metrics_result.py \
 
 ## 8. Implementation Notes and Current Caveats
 
-- Full-data runs rely on cache artifacts under `data/processed/forecasting_eval_h5/`.
+- Full-data runs rely on cache artifacts under `{data_dir}/cache/forecasting/`
+  (resolved from the configured data root, i.e. the parent of `hourly_trajectory/`).
   For non-PyPOTS/statistical models, evaluation and offline metrics now build
   only the raw `history_cf` cache needed for the test split. PyPOTS models still
   use the full train/validation/test cache bundle for training/evaluation.

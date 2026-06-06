@@ -13,7 +13,10 @@ import torch
 
 from forecasting_evaluation.config import FeaturesConfig
 from forecasting_evaluation.data.types import SubTrajectoryInput
-from forecasting_evaluation.forecasting_training.online_dataset import history_cf_cache_subdir
+from forecasting_evaluation.forecasting_training.online_dataset import (
+    history_cf_cache_subdir,
+    resolve_cache_base_dir,
+)
 from forecasting_evaluation.forecasting_training.standard_scaler import (
     ChannelStandardScalerStats,
     load_stats_json,
@@ -179,13 +182,18 @@ class BasePyPOTSForecastingModel(BasePredictionModel, ABC):
         if not isinstance(features_config, dict):
             features_config = {"channel": "all"}
         if not isinstance(h5_export_config, dict):
-            h5_export_config = {"output_dir": "data/processed/forecasting_pypots_h5"}
+            h5_export_config = {}
 
         try:
+            data_config_ns = SimpleNamespace(**data_config)
+            # Honor a baked training output_dir for existing checkpoints; otherwise
+            # resolve under the configured data root ({data_root}/cache/forecasting).
+            base_output_dir = h5_export_config.get("output_dir") or resolve_cache_base_dir(
+                data_config_ns
+            )
             cache_dir = history_cf_cache_subdir(
-                base_dir=Path(h5_export_config.get("output_dir", "data/processed/forecasting_pypots_h5"))
-                / "history_cf_cache",
-                data_config=SimpleNamespace(**data_config),
+                base_dir=Path(base_output_dir) / "history_cf_cache",
+                data_config=data_config_ns,
                 model_config=SimpleNamespace(**model_config),
                 features_config=SimpleNamespace(**features_config),
             )
