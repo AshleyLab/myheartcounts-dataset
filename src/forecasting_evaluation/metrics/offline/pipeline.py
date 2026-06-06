@@ -82,6 +82,7 @@ class OfflineMetricsPipeline:
         save_result = self.save_metrics_result(
             pipeline_inputs=pipeline_inputs,
             metrics_result=metrics_result,
+            scale_result=scale_result,
         )
 
         return {
@@ -406,8 +407,16 @@ class OfflineMetricsPipeline:
         *,
         pipeline_inputs: dict[str, Any],
         metrics_result: dict[str, Any],
+        scale_result: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Step 5: persist computed metrics parquet outputs to disk."""
+        """Step 5: persist computed metrics parquet outputs to disk.
+
+        Also persists the benchmark-global seasonal scales (the MASE/sQL
+        denominators) to ``<metrics_dir>/scales.npz`` so post-hoc metric
+        recomputation / bootstrapping can hold the scale fixed without
+        re-iterating every user's trajectory. The scales are model-invariant
+        (data + window set only), so each run writes an identical copy.
+        """
         output_run_dir = Path(pipeline_inputs["output_run_dir"])
         metrics_dir = Path(pipeline_inputs["metrics_dir"])
         model_key = sanitize_name(str(pipeline_inputs["model_name"]))
@@ -415,8 +424,31 @@ class OfflineMetricsPipeline:
         output_run_dir.mkdir(parents=True, exist_ok=True)
         copy_run_config(self.run_path, output_run_dir)
 
+        scales_path: str | None = None
+        if scale_result is not None:
+            by_feature = scale_result.get("global_scales_by_feature")
+            all_by_feature = scale_result.get("global_scales_all_by_feature")
+            metrics_dir.mkdir(parents=True, exist_ok=True)
+            scales_file = metrics_dir / "scales.npz"
+            np.savez(
+                scales_file,
+                season_length=np.asarray(int(scale_result.get("season_length", 24))),
+                global_scales_by_feature=(
+                    np.asarray(by_feature, dtype=float)
+                    if by_feature is not None
+                    else np.zeros((0, 0), dtype=float)
+                ),
+                global_scales_all_by_feature=(
+                    np.asarray(all_by_feature, dtype=float)
+                    if all_by_feature is not None
+                    else np.zeros((0,), dtype=float)
+                ),
+            )
+            scales_path = str(scales_file)
+
         return {
             "saved_files_by_metric": metrics_result["saved_files_by_metric"],
             "output_run_dir": str(output_run_dir),
             "metrics_dir": str(metrics_dir),
+            "scales_path": scales_path,
         }

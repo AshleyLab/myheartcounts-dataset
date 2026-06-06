@@ -315,6 +315,10 @@ class ForecastingEvaluator:
                             "history_length": int(history_end_hour),
                             "point_predictions": point_result,
                             "quantile_predictions": quantiles_result,
+                            # Raw ground-truth slice (n_channels, horizon) co-located with the
+                            # predictions so post-hoc metric recomputation / bootstrapping needs no
+                            # model re-run. Observed mask is recoverable as isfinite(ground_truth).
+                            "ground_truth": target_window,
                             "performance": base_result,
                         }
                         quantile_levels = getattr(model, "quantile_levels", None)
