@@ -24,7 +24,7 @@ HEADLINE_TASKS = [
 def build_model(method: str, data_dir: str):
     """Instantiate a bundled baseline by name."""
     if method in ("wbm", "hybrid"):
-        from downstream_evaluation.models.hybrid import Hybrid
+        from downstream_evaluation.models.hybrid_wbm import Hybrid
         return Hybrid(data_dir)
     if method == "linear":
         from downstream_evaluation.models.linear import Linear
@@ -38,6 +38,15 @@ def build_model(method: str, data_dir: str):
     if method == "multirocket":
         from downstream_evaluation.models.multirocket import MultiRocket
         return MultiRocket(data_dir=data_dir, tasks=HEADLINE_TASKS)
+    if method == "mae":
+        from downstream_evaluation.models.mae import MAE
+        # MAE_CHECKPOINT overrides the default registry ref with a local .ckpt path
+        # (or an alternate wandb ref) — e.g. when the registry is access-restricted.
+        ckpt = os.environ.get("MAE_CHECKPOINT")
+        return MAE(data_dir=data_dir, checkpoint=ckpt) if ckpt else MAE(data_dir=data_dir)
+    if method == "xgboost":
+        from downstream_evaluation.models.xgboost import XGBoost
+        return XGBoost(data_dir=data_dir)
     if method == "gru_d":
         from downstream_evaluation.models.grud import GRUD
         return GRUD(data_dir=data_dir, tasks=HEADLINE_TASKS)

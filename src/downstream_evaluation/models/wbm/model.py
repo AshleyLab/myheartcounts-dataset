@@ -78,7 +78,7 @@ def _load_wbm_encoder(checkpoint: str, device):
 
     from utils.wandb_artifact import resolve_checkpoint_path
 
-    from downstream_evaluation.models.apple_contrastive.week_encoders_mamba2 import (
+    from downstream_evaluation.models.wbm.week_encoders_mamba2 import (
         Mamba2WeekEncoder,
     )
 
