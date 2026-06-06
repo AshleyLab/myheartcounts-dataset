@@ -167,6 +167,13 @@ class BasePyPOTSForecastingModel(BasePredictionModel, ABC):
         if not self.uses_standard_scaler:
             return None
 
+        # Self-contained release bundles co-locate the scaler stats with the
+        # checkpoint. Prefer that over the content-addressed training cache so a
+        # downloaded bundle works without rebuilding the dataset-derived cache.
+        colocated = self._colocated_scaler_stats_path()
+        if colocated is not None and colocated.exists():
+            return load_stats_json(colocated)
+
         data_config = self._training_config.get("data")
         model_config = self._training_config.get("model")
         features_config = self._training_config.get("features")
@@ -209,6 +216,16 @@ class BasePyPOTSForecastingModel(BasePredictionModel, ABC):
         except Exception as exc:  # pragma: no cover - defensive path
             logger.warning("Failed to load scaler stats for %s: %s", self._checkpoint_dir, exc)
             return None
+
+    def _colocated_scaler_stats_path(self) -> Path | None:
+        """Return the bundle-local scaler stats path, if the checkpoint has one.
+
+        Release bundles ship ``standard_scaler_stats.json`` next to the
+        ``.pypots`` checkpoint (in the checkpoint directory, or beside the file
+        when the checkpoint path points directly at the ``.pypots``).
+        """
+        base = self._checkpoint_dir if self._checkpoint_dir.is_dir() else self._checkpoint_dir.parent
+        return base / "standard_scaler_stats.json"
 
     def _inverse_transform_point_forecast(self, point_result: np.ndarray) -> np.ndarray:
         """Map standardized point forecasts back to the original value space."""

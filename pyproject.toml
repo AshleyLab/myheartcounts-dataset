@@ -37,7 +37,9 @@ dev = [
   "ruff",
 ]
 pypots = [
-  "pypots>=0.7",
+  # >=1.2 required for the forecasting MixLinear model (added in 1.2); also
+  # ships the imputation models (BRITS/TimesNet/DLinear/FEDformer).
+  "pypots>=1.2",
 ]
 lsm2 = [
   "pytorch-lightning>=2.0",

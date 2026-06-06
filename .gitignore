@@ -33,3 +33,9 @@ data/cache/
 notebooks/data/
 results/
 logs/
+
+# Forecasting release staging + merge artifacts (large weights, not source)
+.merge_cache/
+releases-fc/
+forecasting_model_ckpt/
+__MACOSX/
