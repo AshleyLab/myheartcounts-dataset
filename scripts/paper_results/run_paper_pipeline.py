@@ -11,7 +11,10 @@ Reproduces the cross-imputer paper numbers in three stages:
 3. **Phase 1** — invoke ``bootstrap_imputation_draws.py`` to produce
    ``bootstrap_draws.parquet``.
 4. **Phase 2** — invoke ``aggregate_imputation_paper_metrics.py`` to produce
-   the four sidecar CSVs.
+   the four sidecar CSVs, followed by ``aggregate_fairness_skill_score.py``
+   to produce ``fairness_skill_score_bootstrap.csv`` (per-attribute and
+   macro-averaged fairness skill scores; see the script's docstring for the
+   formulation).
 
 The driver is intentionally minimal: each phase is a subprocess. If a method
 or phase fails, the failing command is printed and the driver exits
@@ -165,6 +168,29 @@ def _phase2_aggregate(cfg: dict, dry_run: bool) -> None:
     _run(cmd, dry_run)
 
 
+def _phase2_fairness_skill_score(cfg: dict, dry_run: bool) -> None:
+    """Sidecar reducer: fairness skill score (per-attribute and macro-averaged).
+
+    Independent of the four CSVs produced by ``_phase2_aggregate`` — reads
+    the same Phase 1 draws and writes a single
+    ``fairness_skill_score_bootstrap.csv`` under ``output_root``. Reuses the
+    same clip bounds, baseline method, and CI level as the regular skill
+    score for cross-table consistency.
+    """
+    script = REPO_ROOT / "scripts" / "paper_results" / "aggregate_fairness_skill_score.py"
+    output_path = Path(cfg["output_root"]) / "fairness_skill_score_bootstrap.csv"
+    cmd = [
+        sys.executable, str(script),
+        "--draws", cfg["draws_path"],
+        "--output", str(output_path),
+        "--baseline-method", cfg["baseline_method"],
+        "--clip-lower", str(cfg["clip_lower"]),
+        "--clip-upper", str(cfg["clip_upper"]),
+        "--ci-level", str(cfg["ci_level"]),
+    ]
+    _run(cmd, dry_run)
+
+
 def main() -> int:
     """CLI entry point — see module docstring for usage."""
     args = _parse_args()
@@ -194,6 +220,7 @@ def main() -> int:
     # Phase 2
     if not args.skip_phase2:
         _phase2_aggregate(cfg, args.dry_run)
+        _phase2_fairness_skill_score(cfg, args.dry_run)
 
     logger.info("Done. Sidecar CSVs in %s", cfg["output_root"])
     return 0
