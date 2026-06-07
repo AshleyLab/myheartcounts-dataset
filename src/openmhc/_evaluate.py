@@ -212,11 +212,15 @@ _LABELS_PAYLOAD_ENV_FILES = {
 def _ensure_labels_env(labels_dir: Path) -> None:
     """Point `labels.api` at a resolved dataset root for large label payloads.
 
-    `labels.api` resolves bundled schema metadata from the repo, but its large
-    JSON payloads still cache env-derived paths at import time. When callers
-    pass an explicit ``data_dir=`` to public OpenMHC APIs, set any missing
-    per-file env vars so a previously imported `labels.api` instance picks up
-    the same dataset root after reload.
+    `labels.api` reads its data-file paths from env vars at import time and
+    caches them in module-level Path constants. We set each var if the user
+    hasn't, then reload the module if it was already imported (e.g. via
+    ``openmhc.list_tasks()``) so the cached paths reflect the new values.
+
+    Without this, paths fall back to the repo-local ``data/labels/`` (which
+    ships only schema files), and `enrollment_info.json` / `label_validity.json`
+    silently load as empty — breaking the imputation sensitivity pathway and
+    the default ``return_valid_only=True`` behaviour of ``get_labels``.
     """
     changed = False
     for env_var, filename in _LABELS_PAYLOAD_ENV_FILES.items():
