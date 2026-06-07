@@ -12,7 +12,18 @@
 #SBATCH --partition=gpu
 #SBATCH --time=24:00:00
 #SBATCH --cpus-per-task=8
-#SBATCH --mem=64G
+# 7-day windows are 7× the daily memory footprint. History:
+#   - 64G (daily preset): OOMed at MaxRSS=64.0G in jid 27551695
+#   - 96G: OOMed at MaxRSS=96.0G in jid 27590952 (32 min in)
+# 96G bound is the in-memory metric + bootstrap accumulator (10080-step
+# windows × full test cohort). Two mitigations applied below:
+#   - data.batch_size 2000 -> 500 and num_workers 8 -> 4 (dataloader prefetch)
+#   - evaluation.compute_metrics=false (mirror MHC-benchmark's pairs-only
+#     mode at jobs/.../run_imputation_dlinear_7day_max91d.sbatch:49).
+#     Metrics + bootstrap are recomputed by run_paper_pipeline.py from the
+#     Parquet pairs in Phase 2 — no information lost.
+# Mem bumped to 128G for extra headroom on the dataloader buffers.
+#SBATCH --mem=128G
 #SBATCH --gpus=1
 #SBATCH --output=/scratch/users/schuetzn/logs/openmhc/dlinear_weekly_%j.out
 #SBATCH --error=/scratch/users/schuetzn/logs/openmhc/dlinear_weekly_%j.err
@@ -32,10 +43,11 @@ mhc-impute-eval \
   data.split_file="${SPLIT_FILE}" \
   +masking.masks_file="${MASKS}" \
   data.n_days=7 \
-  data.batch_size=2000 \
-  data.num_workers=8 \
+  data.batch_size=500 \
+  data.num_workers=4 \
   data.num_eval_workers=1 \
   method.inference_batch_size=32 \
   evaluation.save_pairs=true \
-  bootstrap=on \
+  evaluation.compute_metrics=false \
+  bootstrap=off \
   seed=42

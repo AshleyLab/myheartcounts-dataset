@@ -40,7 +40,7 @@ ALIVE = {"PENDING", "RUNNING", "REQUEUED", "RESIZING", "SUSPENDED", "CONFIGURING
 DONE = {"COMPLETED"}
 
 IMPUTER_LABELS = [
-    "baselines", "brits", "dlinear", "fedformer", "timesnet",
+    "baselines", "brits", "dlinear", "dlinear_weekly", "fedformer", "timesnet",
     "lsm2", "lsm2_weekly_sparse",
 ]
 
