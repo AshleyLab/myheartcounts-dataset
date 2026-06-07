@@ -158,31 +158,137 @@ def stage_toto(toto_ckpt: Path, staging: Path) -> Path:
     return bundle
 
 
-_WRAPPERS = {
-    "chronos2": "Chronos2Forecaster",
-    "toto": "TotoForecaster",
-    "dlinear": "DLinearForecaster",
-    "segrnn": "SegRNNForecaster",
-    "mixlinear": "MixLinearForecaster",
+# Per-model card metadata: wrapper class, display name, one-line architecture
+# summary, how the checkpoint was produced, the install extra, and the upstream
+# links (implementation + paper) for the model the checkpoint belongs to.
+_MODEL_INFO = {
+    "chronos2": {
+        "wrapper": "Chronos2Forecaster",
+        "title": "Chronos-2",
+        "extra": "chronos",
+        "format": "HuggingFace model directory (`checkpoint/`: `config.json` + `model.safetensors`)",
+        "summary": (
+            "Chronos-2 is Amazon's universal time-series foundation model, supporting "
+            "multivariate and covariate-informed probabilistic forecasting."
+        ),
+        "produced": (
+            "**Fine-tuned** from the pretrained `amazon/chronos-2` base on the MHC training "
+            "split (LoRA, rank 8, alpha 16; the adapter has been merged into the base so this "
+            "is a standalone full model — no PEFT runtime dependency)."
+        ),
+        "links": [
+            ("Chronos (official implementation)", "https://github.com/amazon-science/chronos-forecasting"),
+            ("Base model `amazon/chronos-2`", "https://huggingface.co/amazon/chronos-2"),
+            ("Paper: *Chronos-2: From Univariate to Universal Forecasting* (Ansari et al., 2025)", "https://arxiv.org/abs/2510.15821"),
+        ],
+    },
+    "toto": {
+        "wrapper": "TotoForecaster",
+        "title": "Toto",
+        "extra": "toto",
+        "format": "PyTorch Lightning checkpoint (`model.ckpt`)",
+        "summary": (
+            "Toto (Time-series Optimized Transformer for Observability) is Datadog's "
+            "decoder-only time-series foundation model with a probabilistic output head."
+        ),
+        "produced": (
+            "**Fine-tuned** (full) from the pretrained `Datadog/Toto-Open-Base-1.0` base on the "
+            "MHC training split."
+        ),
+        "links": [
+            ("Toto (official implementation)", "https://github.com/DataDog/toto"),
+            ("Base model `Datadog/Toto-Open-Base-1.0`", "https://huggingface.co/Datadog/Toto-Open-Base-1.0"),
+            ("Paper: *Toto: Time Series Optimized Transformer for Observability* (Cohen et al., 2024)", "https://arxiv.org/abs/2407.07874"),
+        ],
+    },
+    "dlinear": {
+        "wrapper": "DLinearForecaster",
+        "title": "DLinear",
+        "extra": "pypots",
+        "format": "PyPOTS checkpoint (`OnlineDLinear.pypots`) + `standard_scaler_stats.json` + `training_config.json`",
+        "summary": (
+            "DLinear is a lightweight linear forecaster that decomposes the series into trend "
+            "and seasonal components and applies a separate linear projection to each."
+        ),
+        "produced": "**Trained from scratch** on the MHC training split using the PyPOTS implementation.",
+        "links": [
+            ("PyPOTS toolkit (implementation)", "https://github.com/WenjieDu/PyPOTS"),
+            ("PyPOTS documentation", "https://docs.pypots.com"),
+            ("Paper: *Are Transformers Effective for Time Series Forecasting?* (Zeng et al., AAAI 2023)", "https://github.com/cure-lab/LTSF-Linear"),
+        ],
+    },
+    "segrnn": {
+        "wrapper": "SegRNNForecaster",
+        "title": "SegRNN",
+        "extra": "pypots",
+        "format": "PyPOTS checkpoint (`OnlineSegRNN.pypots`) + `standard_scaler_stats.json` + `training_config.json`",
+        "summary": (
+            "SegRNN is an RNN-based long-horizon forecaster that uses segment-wise iterations "
+            "and parallel multi-step decoding."
+        ),
+        "produced": "**Trained from scratch** on the MHC training split using the PyPOTS implementation.",
+        "links": [
+            ("PyPOTS toolkit (implementation)", "https://github.com/WenjieDu/PyPOTS"),
+            ("PyPOTS documentation", "https://docs.pypots.com"),
+            ("SegRNN (original implementation)", "https://github.com/lss-1138/SegRNN"),
+            ("Paper: *SegRNN: Segment Recurrent Neural Network for Long-Term Time Series Forecasting* (Lin et al., IEEE IoT-J 2025)", "https://github.com/lss-1138/SegRNN"),
+        ],
+    },
+    "mixlinear": {
+        "wrapper": "MixLinearForecaster",
+        "title": "MixLinear",
+        "extra": "pypots",
+        "format": "PyPOTS checkpoint (`OnlineMixLinear.pypots`) + `standard_scaler_stats.json` + `training_config.json`",
+        "summary": (
+            "MixLinear is an extremely lightweight forecaster combining segment-based linear "
+            "modeling in the time domain with adaptive low-rank filtering in the frequency domain."
+        ),
+        "produced": (
+            "**Trained from scratch** on the MHC training split using the PyPOTS implementation "
+            "(requires `pypots>=1.2`)."
+        ),
+        "links": [
+            ("PyPOTS toolkit (implementation)", "https://github.com/WenjieDu/PyPOTS"),
+            ("PyPOTS documentation", "https://docs.pypots.com"),
+            ("Paper: *MixLinear: Extreme Low Resource Multivariate Time Series Forecasting with 0.1K Parameters* (Ma et al., 2024)", "https://arxiv.org/abs/2410.02081"),
+        ],
+    },
 }
+
+# Back-compat alias used elsewhere in this module.
+_WRAPPERS = {k: v["wrapper"] for k, v in _MODEL_INFO.items()}
 
 
 def _write_readme(bundle: Path, kind: str) -> None:
+    info = _MODEL_INFO[kind]
     repo = f"MyHeartCounts/openmhc-{kind}-fc"
-    wrapper = _WRAPPERS[kind]
+    wrapper = info["wrapper"]
+    links = "\n".join(f"- [{label}]({url})" for label, url in info["links"])
     (bundle / "README.md").write_text(
         f"""---
 license: cc-by-4.0
+library_name: openmhc
 tags:
 - time-series-forecasting
 - wearables
 - openmhc
 ---
 
-# OpenMHC Forecasting — {kind}
+# OpenMHC Forecasting — {info["title"]}
 
 Track 3 (forecasting) reference checkpoint for the **MyHeartCounts / OpenMHC**
-wearable-health benchmark, trained/fine-tuned on the benchmark training split.
+wearable-health benchmark (NeurIPS 2026).
+
+**This checkpoint is a {info["title"]} model.** {info["summary"]}
+
+{info["produced"]}
+
+- **Checkpoint format:** {info["format"]}
+- **Forecasting task:** 24-hour-ahead, 19 sensor channels, hourly resolution.
+
+## Model & implementation
+
+{links}
 
 ## Usage
 
@@ -190,11 +296,20 @@ wearable-health benchmark, trained/fine-tuned on the benchmark training split.
 import openmhc
 from openmhc.forecasters import {wrapper}
 
-fc = {wrapper}.from_release("hf://{repo}")
+# pip install "openmhc[{info["extra"]}]"
+fc = {wrapper}.from_release("hf://{repo}@v1.0")
 results = openmhc.evaluate_forecasting(fc, version="full")
 ```
 
-See `openmhc_manifest.json` for provenance and architecture metadata.
+The same bundle also loads in the evaluation harness via
+`model.release_dir=hf://{repo}@v1.0`. See `openmhc_manifest.json` for
+provenance (training run, base model, fine-tuning details) and architecture
+metadata.
+
+## Citation
+
+If you use this checkpoint, please cite the OpenMHC benchmark and the original
+{info["title"]} work (linked above).
 """,
         encoding="utf-8",
     )
