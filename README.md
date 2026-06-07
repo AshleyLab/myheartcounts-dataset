@@ -48,7 +48,7 @@ class MeanPoolEncoder:
         # weekly_tensors: (B, 168, 38). Return (B, D) embeddings.
         return weekly_tensors[:, :, :19].mean(axis=1).astype(np.float32)
 
-results = openmhc.evaluate_prediction(MeanPoolEncoder())
+results = openmhc.evaluate_prediction(MeanPoolEncoder(), version="xs")
 print(results.summary())
 print("global score (mean AUROC over binary tasks):", results.global_score)
 ```
@@ -70,7 +70,7 @@ class MeanImputer:
             out[:, ch, :][target] = self.means[ch]
         return out.astype(np.float32)
 
-results = openmhc.evaluate_imputation(MeanImputer())
+results = openmhc.evaluate_imputation(MeanImputer(), version="xs")
 print(results.summary())
 ```
 
@@ -109,7 +109,7 @@ class LastValueForecaster:
         last = np.nan_to_num(history[:, -1:], nan=0.0)
         return np.tile(last, (1, horizon)).astype(np.float32)
 
-results = openmhc.evaluate_forecasting(LastValueForecaster(), forecasting_length=24)
+results = openmhc.evaluate_forecasting(LastValueForecaster(), version="xs", forecasting_length=24)
 print(results.summary())
 ```
 
