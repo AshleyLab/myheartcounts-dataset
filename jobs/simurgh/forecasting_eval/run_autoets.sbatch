@@ -2,7 +2,7 @@
 #SBATCH --job-name=fc-autoets
 #SBATCH --account=simurgh
 #SBATCH --partition=simurgh
-#SBATCH --time=24:00:00
+#SBATCH --time=48:00:00
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=64G
 #SBATCH --output=logs/forecasting_eval/autoets_%j.out
