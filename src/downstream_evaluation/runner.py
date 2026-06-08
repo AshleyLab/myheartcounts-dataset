@@ -21,6 +21,7 @@ import logging
 
 from downstream_evaluation.config import EvalConfig, TemporalWindowConfig
 from downstream_evaluation.data.binder import SegmentBinder
+from downstream_evaluation.data.inputs import input_builder_for
 from downstream_evaluation.data.provider import LOOKUP_BY_GRANULARITY, TaskDataProvider
 from downstream_evaluation.evaluation.evaluator import DownstreamEvaluator
 
@@ -40,13 +41,19 @@ def run_eval(config: EvalConfig, model) -> dict[str, dict]:
 
     Returns ``{task: {**metrics, "n_test": int}, "config": {...}}``.
     """
-    grain = getattr(model, "input_granularity", "series")
+    # Pick the cohort lookup + the input builder. New models declare a declarative
+    # ``input`` spec (Daily/Weekly/Window) → input_builder_for; legacy models use
+    # ``input_granularity`` + ``needs_segments`` (cache models opt out with False).
+    spec = getattr(model, "input", None)
+    if spec is not None:
+        grain = spec.cohort
+        builder = input_builder_for(spec, config.data_dir, config.temporal)
+    else:
+        grain = getattr(model, "input_granularity", "series")
+        needs_segments = getattr(model, "needs_segments", True)
+        builder = SegmentBinder(config.data_dir, granularity=grain) if needs_segments else None
     lookup = f"{config.data_dir}/processed/{LOOKUP_BY_GRANULARITY[grain]}"
     provider = TaskDataProvider(lookup, config.split_users, granularity=grain)
-    # Cache-based models (precomputed per-user features/embeddings) declare
-    # needs_segments=False and skip the segment binder entirely.
-    needs_segments = getattr(model, "needs_segments", True)
-    binder = SegmentBinder(config.data_dir, granularity=grain) if needs_segments else None
 
     # Hand the temporal-window policy to models that build their own windows from raw
     # (Toto/Chronos-2); cohort/lookup models ignore it (their window is baked into the
@@ -57,7 +64,7 @@ def run_eval(config: EvalConfig, model) -> dict[str, dict]:
     logger.info("Running prediction eval (granularity=%s) on %d tasks", grain, len(config.tasks))
 
     evaluator = DownstreamEvaluator(seed=config.seed, pca_n_components=config.pca_n_components)
-    results = evaluator.run(provider, binder, model, config.tasks)
+    results = evaluator.run(provider, builder, model, config.tasks)
     results["config"] = {
         "model": getattr(model, "name", type(model).__name__),
         "seed": config.seed,

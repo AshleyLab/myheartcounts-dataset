@@ -200,7 +200,7 @@ def _label_timestamp(user_id, task, reference_ts):
     from labels.api import LabelTypeError, LabelValueError, get_labels
 
     try:
-        record = get_labels(user_id, reference_ts, task)
+        record = get_labels(user_id, reference_ts, task, return_valid_only=False)
     except (KeyError, LabelValueError, LabelTypeError, ValueError):
         return None
     if record.matched_timestamp is None:

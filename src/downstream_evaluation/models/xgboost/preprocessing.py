@@ -177,16 +177,12 @@ def apply_variance_filter(
 
 
 def build_cutoff_dates(max_future_days: int = 365) -> dict[str, str]:
-    """Compute per-user data cutoff dates from the Labels API.
+    """Compute per-user data cutoff dates from label measurement dates.
 
-    For each user, finds the **latest valid** label measurement date across
-    all target labels, then adds *max_future_days* to get the cutoff date.
-    Daily data after this cutoff should be excluded from feature extraction
-    to prevent models from using wearable data far in the future of any
-    label measurement.
-
-    Only considers measurements marked as valid by the Labels API validity
-    system (i.e. measurements with nearby wearable data).
+    For each user, finds the latest label measurement date across all target
+    labels, then adds *max_future_days* to get the cutoff date.  Daily data
+    after this cutoff is excluded from feature extraction to prevent models
+    from using wearable data far in the future of any label measurement.
 
     Args:
         max_future_days: Maximum days of data to allow after the user's
@@ -204,9 +200,6 @@ def build_cutoff_dates(max_future_days: int = 365) -> dict[str, str]:
 
     _log = logging.getLogger(__name__)
 
-    # Ensure validity masks are loaded before accessing series.valid
-    STORE._ensure_validity_loaded()  # noqa: SLF001
-
     raw_index = STORE.labels_index._index  # noqa: SLF001
     user_latest: dict[str, dt.date] = {}
 
@@ -215,12 +208,7 @@ def build_cutoff_dates(max_future_days: int = 365) -> dict[str, str]:
         for uid, series in per_label.items():
             if not series.timestamps_ns:
                 continue
-            valid_mask = series.valid if series.valid is not None else [True] * len(
-                series.timestamps_ns
-            )
-            for ts_ns, is_valid in zip(series.timestamps_ns, valid_mask):
-                if not is_valid:
-                    continue
+            for ts_ns in series.timestamps_ns:
                 label_date = pd.Timestamp(ts_ns).date()
                 if uid not in user_latest or label_date > user_latest[uid]:
                     user_latest[uid] = label_date
