@@ -20,6 +20,7 @@ exactly mirroring ``wbm.py`` (only the granularity differs: daily here, weekly t
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 
 import numpy as np
@@ -36,7 +37,7 @@ MAX_NONWEAR_MINUTES = 720
 # Public default: the LSM2 daily checkpoint published on the Hugging Face Hub, so a
 # fresh user with no W&B account / no local copy can still fetch it. Override with a
 # local .ckpt path (or any wandb:/hf:// ref) via the MAE_CHECKPOINT env var.
-DEFAULT_CHECKPOINT = "hf://MyHeartCounts/openmhc-lsm2-daily"
+DEFAULT_CHECKPOINT = os.environ.get("MAE_CHECKPOINT", "hf://MyHeartCounts/openmhc-lsm2-daily")
 
 
 # --------------------------------------------------------------------------- #
