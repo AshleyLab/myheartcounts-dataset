@@ -5,13 +5,11 @@ the cohort's data in that shape. The IC/TC cohort always comes from the lookup (
 :class:`~downstream_evaluation.data.provider.TaskDataProvider`); these specs only choose
 the *materialization*, on two orthogonal axes:
 
-  - **shape** — :class:`Daily` / :class:`Weekly` eligible segments, or a :class:`Window`
-    of ``hours`` anchored to the label.
-  - **resolution** — ``"hourly"`` (``daily_hourly_hf``, 24 bins/day) or ``"minute"``
-    (``daily_hf``, 1440 bins/day).
+  - :class:`Raw` — the cohort's eligible raw days at a resolution; the model shapes them.
+  - :class:`Window` — one anchored ``hours``-long window the framework builds for you.
 
-``cohort`` is the lookup granularity used to pick *who* is in (daily/weekly); it is
-inferred from the spec (overridable later if a window ever needs a weekly cohort).
+Resolution is ``"hourly"`` (``daily_hourly_hf``, 24 bins/day) or ``"minute"``
+(``daily_hf``, 1440 bins/day). ``cohort`` is the lookup granularity for *who* is in (daily).
 """
 
 from __future__ import annotations
@@ -30,25 +28,21 @@ class InputSpec:
 
 
 @dataclass(frozen=True)
-class Daily(InputSpec):
-    """Eligible daily segments — ``(n_days, T, 19)`` (T = 24 hourly / 1440 minute)."""
+class Raw(InputSpec):
+    """Each cohort user's **IC/TC-bounded raw days** at the chosen resolution — the model
+    windows / featurizes / encodes it itself (the universal escape hatch).
+
+    Delivered as ``(n_eligible_days, T, 19)`` per participant, ``T`` = 24 (hourly) /
+    1440 (minute). The framework still applies the cohort (IC) and the in-window days
+    (TC) from the lookup; only the *shape* is the model's job — so a minute feature-builder,
+    a custom-window TSFM, anything, is covered without a bespoke materializer.
+    """
 
     resolution: str = "hourly"
 
     @property
     def cohort(self) -> str:
         return "daily"
-
-
-@dataclass(frozen=True)
-class Weekly(InputSpec):
-    """Eligible weekly segments — ``(n_weeks, 168, 19)``."""
-
-    resolution: str = "hourly"
-
-    @property
-    def cohort(self) -> str:
-        return "weekly"
 
 
 @dataclass(frozen=True)

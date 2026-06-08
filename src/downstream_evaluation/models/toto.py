@@ -20,6 +20,7 @@ from pathlib import Path
 
 import numpy as np
 
+from downstream_evaluation.data.inputs import Window
 from downstream_evaluation.models.tsfm import TSFMEncoder
 
 logger = logging.getLogger(__name__)
@@ -124,6 +125,7 @@ class Toto(TSFMEncoder):
 
     name = "toto"
     pooling_label = "none_channelwise_last_latent"
+    input = Window(WINDOW_HOURS, anchor="window_end")  # materializer builds the 2048h windows
 
     def __init__(self, data_dir=None, cache_dir=None, checkpoint=DEFAULT_CHECKPOINT,
                  base_checkpoint=DEFAULT_BASE_CHECKPOINT, toto_repo=DEFAULT_TOTO_REPO,

@@ -172,6 +172,8 @@ def evaluate_prediction(
     model = encoder
     if hasattr(encoder, "encode") and not hasattr(encoder, "encode_cohort"):
         model = _EncoderMethodAdapter(encoder)
+    elif _is_public_predictor(encoder):
+        model = _PredictorMethodAdapter(encoder)
     results = run_eval(cfg, model)
 
     # Flatten the engine's ``{task: {metric: value, n_test}}`` into long-format
@@ -226,6 +228,10 @@ class _EncoderMethodAdapter:
         # Respect the encoder's declared granularity so the engine binds the matching
         # segments (the binder currently materializes daily segments).
         self.input_granularity = getattr(encoder, "input_granularity", "daily")
+        # Forward the declarative input spec (Raw/Window) so an external encoder
+        # can drive the materializer — e.g. a TSFM submission declaring input=Window(ctx).
+        # None falls back to the input_granularity path above.
+        self.input = getattr(encoder, "input", None)
 
     @property
     def name(self) -> str:
@@ -238,6 +244,69 @@ class _EncoderMethodAdapter:
         mask = np.asarray(segments.mask, dtype=np.float32)  # (n, 24, 19)
         data = np.concatenate([values, mask], axis=-1)  # (n, 24, 38)
         return np.asarray(self._encoder.encode(data), dtype=np.float32)
+
+
+def _is_public_predictor(model) -> bool:
+    """True for a model implementing the *public* ``Predictor`` (``fit(data, labels)`` /
+    ``predict(data)``), not the internal ``fit(task_data)`` a bundled baseline uses.
+
+    Distinguished by ``fit`` arity: the public contract takes ``(data, labels)`` (>= 2 positional
+    params); a bundled predictor takes a single ``task_data``.
+    """
+    import inspect
+
+    if hasattr(model, "encode") or hasattr(model, "encode_cohort"):
+        return False
+    if not (hasattr(model, "fit") and hasattr(model, "predict")):
+        return False
+    try:
+        params = [
+            p for p in inspect.signature(model.fit).parameters.values()
+            if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)
+        ]
+    except (ValueError, TypeError):
+        return False
+    return len(params) >= 2
+
+
+class _PredictorMethodAdapter:
+    """Adapt a user's :class:`~openmhc.Predictor` to the internal engine interface.
+
+    The engine hands a model one ``TaskData`` per split — ``fit(train_td)`` / ``predict(test_td)``
+    with ``.inputs`` materialized. The public ``Predictor`` contract is ``fit(data, labels)`` /
+    ``predict(data)`` over per-participant ``(n, T, 38)`` arrays (channels 0-18 raw values with NaN
+    at missing, 19-37 the mask). This adapter translates between them and forwards the ``input``
+    spec so the materializer drives the data path (mirrors ``_EncoderMethodAdapter``).
+    """
+
+    def __init__(self, predictor) -> None:
+        """Wrap ``predictor``; forward its declared input granularity / spec."""
+        self._predictor = predictor
+        self.input_granularity = getattr(predictor, "input_granularity", "daily")
+        self.input = getattr(predictor, "input", None)
+
+    @property
+    def name(self) -> str:
+        """Method name for run provenance."""
+        return getattr(self._predictor, "name", "custom_predictor")
+
+    @staticmethod
+    def _arrays(task_data) -> list:
+        """Each participant's bound data → the public ``(n, T, 38)`` values+mask array."""
+        out = []
+        for p in task_data.inputs:
+            values = np.asarray(p.values, dtype=np.float32)
+            mask = np.asarray(p.mask, dtype=np.float32)
+            out.append(np.concatenate([values, mask], axis=-1))
+        return out
+
+    def fit(self, task_data) -> None:
+        """Engine ``fit(task_data)`` → the user's ``fit(data, labels)``."""
+        self._predictor.fit(self._arrays(task_data), np.asarray(task_data.labels))
+
+    def predict(self, task_data) -> np.ndarray:
+        """Engine ``predict(task_data)`` → the user's ``predict(data)``."""
+        return np.asarray(self._predictor.predict(self._arrays(task_data)), dtype=np.float32)
 
 
 # ---------------------------------------------------------------------------

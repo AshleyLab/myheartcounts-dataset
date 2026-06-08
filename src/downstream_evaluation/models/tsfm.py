@@ -340,7 +340,6 @@ class TSFMEncoder:
         if self._ds is not None:
             return
         import datasets as hf_ds
-        import torch
 
         from downstream_evaluation.data.splits import load_split_file
         from openmhc._evaluate import _DatasetPaths
@@ -351,9 +350,16 @@ class TSFMEncoder:
         split_users = load_split_file(paths.splits_file)
         user_to_split = {str(u): s for s, us in split_users.items() for u in us}
         self._grouped, _ = _group_indices(self._ds, user_to_split)
+        self._ensure_model()
+
+    def _ensure_model(self):
+        """Load the GPU model + its window length (shared by both encode paths)."""
+        if self._handle is not None:
+            return
+        import torch
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        logger.info("%s extraction device=%s", self.name, device)
+        logger.info("%s device=%s", self.name, device)
         self._handle, self._window_hours = self._load_model(device)
         logger.info("%s loaded: window_hours=%d", self.name, self._window_hours)
 
@@ -453,7 +459,14 @@ class TSFMEncoder:
         return out
 
     def encode_cohort(self, task: str, td) -> np.ndarray:
-        """Per-user channel-pooled TSFM embedding, aligned to ``td.user_ids``."""
+        """Per-user channel-pooled TSFM embedding, aligned to ``td.user_ids``.
+
+        Two paths: if the materializer supplied windows (``td.inputs`` is set — the
+        model declares ``input=Window(...)``), encode those directly; otherwise use
+        the build-on-miss self-extraction cache (legacy ``needs_segments=False``).
+        """
+        if td.inputs is not None:
+            return self._encode_from_inputs(task, td)
         self._ensure_split(td.split)
         by_user = self._load_task(td.split, task)
         dim = len(next(iter(by_user.values()))) if by_user else 0
@@ -463,6 +476,46 @@ class TSFMEncoder:
             if vec is not None:
                 X[i] = vec
         return X
+
+    def _encode_from_inputs(self, task: str, td) -> np.ndarray:
+        """Encode the materializer-supplied windows (``td.inputs``) → ``(N, D)`` pooled.
+
+        Mirrors the self-extract path's cohort semantics: a user whose window has no
+        observed data is zero-vectored (the legacy path never extracted them); the
+        rest are channel-mean-pooled — so the *scored* cohort stays byte-identical.
+        """
+        self._ensure_model()
+        real_idx, examples = [], []
+        for i, p in enumerate(td.inputs):
+            if np.isfinite(p.values).any():
+                real_idx.append(i)
+                examples.append(self._participant_to_example(p, str(td.user_ids[i]), task))
+        if not examples:
+            return np.zeros((len(td.user_ids), 0), dtype=np.float32)
+        chunks = [
+            np.asarray(
+                self._run_batch(self._handle, examples[j : j + self._batch_size], self._window_hours),
+                dtype=np.float32,
+            )
+            for j in range(0, len(examples), self._batch_size)
+        ]
+        pooled = np.concatenate(chunks, axis=0).mean(axis=1)  # (M, 19, D) -> (M, D)
+        X = np.zeros((len(td.user_ids), pooled.shape[1]), dtype=np.float32)
+        for k, i in enumerate(real_idx):
+            X[i] = pooled[k]
+        return X
+
+    @staticmethod
+    def _participant_to_example(p, user_id: str, task: str) -> WindowExample:
+        """``ParticipantData`` (1, H, 19; NaN at missing) → ``WindowExample`` (19, H;
+        zeros at gaps + bool padding mask) — the inverse of the WindowBuilder's packing."""
+        vals = np.asarray(p.values[0], dtype=np.float32)  # (H, 19)
+        real = np.isfinite(vals)  # (H, 19) True where observed
+        window = np.where(real, vals, 0.0).T.astype(np.float32)  # (19, H)
+        padding_mask = real.T.copy()  # (19, H) bool
+        return WindowExample(
+            user_id=user_id, task=task, label_date="", window=window, padding_mask=padding_mask
+        )
 
 
 def _DatasetPaths_root(data_dir):

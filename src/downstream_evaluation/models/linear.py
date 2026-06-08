@@ -16,6 +16,7 @@ import warnings
 
 import numpy as np
 
+from downstream_evaluation.data.inputs import Raw
 from downstream_evaluation.data.provider import TaskData
 
 logger = logging.getLogger(__name__)
@@ -54,7 +55,7 @@ class Linear:
     """End-to-end ``Predictor``: raw 38-d mean/std + demographics + a linear probe."""
 
     name = "linear"
-    input_granularity = "daily"
+    input = Raw(resolution="hourly")  # eligible raw daily (24-bin) days; pooled to mean/std
 
     def __init__(self, data_dir: str | None = None, seed: int = 42) -> None:
         """Args:

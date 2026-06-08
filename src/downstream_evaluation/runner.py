@@ -42,7 +42,7 @@ def run_eval(config: EvalConfig, model) -> dict[str, dict]:
     Returns ``{task: {**metrics, "n_test": int}, "config": {...}}``.
     """
     # Pick the cohort lookup + the input builder. New models declare a declarative
-    # ``input`` spec (Daily/Weekly/Window) → input_builder_for; legacy models use
+    # ``input`` spec (Raw/Window) → input_builder_for; legacy models use
     # ``input_granularity`` + ``needs_segments`` (cache models opt out with False).
     spec = getattr(model, "input", None)
     if spec is not None:

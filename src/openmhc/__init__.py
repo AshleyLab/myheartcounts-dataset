@@ -24,12 +24,19 @@ from openmhc._results import (
     PredictionResults,
 )
 
+# Input specs — what shape of data your model receives. Declare one as ``input`` on your
+# Encoder/Predictor; the framework hands you each cohort participant's IC/TC-bounded data.
+from downstream_evaluation.data.inputs import Raw, Window
+
 __all__ = [
     # Protocols
     "Encoder",
     "Predictor",
     "Imputer",
     "Forecaster",
+    # Input specs (what data your model receives)
+    "Raw",
+    "Window",
     # Evaluation functions
     "evaluate_prediction",
     "evaluate_imputation",

@@ -1,51 +1,79 @@
 # Downstream Prediction Evaluation
 
 Evaluate any wearable-sensor model on the MyHeart Counts health-prediction tasks.
-Your model turns one participant's data into an embedding; the benchmark fits a
-**uniform linear probe** on top and scores it — so results reflect your
-*representation*, not your choice of classifier.
+You declare the input your model wants and implement one method — an **`Encoder`**
+(return a representation; the benchmark scores it with a *uniform* linear probe, so
+results reflect your representation, not your classifier) or a **`Predictor`** (bring
+your own head; the benchmark scores your predictions directly). No base class, no config.
 
 ## Evaluate your own model
 
-Implement a single method, `encode(data) -> embedding`, and hand it to the benchmark.
-No base class, no config files:
+**1. Declare `input`** — what you receive per participant. Channels 0-18 are sensor
+values (NaN at missing positions), 19-37 the missingness mask (1 = missing, 0 = observed):
+
+| `input =` | per participant |
+|---|---|
+| `openmhc.Raw("hourly")` / `Raw("minute")` | eligible raw days at that resolution, `(n_days, 24\|1440, 38)` — you window/featurize it yourself |
+| `openmhc.Window(hours=H)` | one anchored history window, `(1, H, 38)` |
+
+The cohort and the allowed time window come from the dataset (handled for you, no leakage);
+you only choose the shape. **Either contract below can use any input — they're independent:**
+the input sets the *shape you receive*; the contract (`Encoder` vs `Predictor`) sets *what you
+return*. So an encoder on minute data (`input = openmhc.Raw("minute")`) is just as valid.
+
+**2a. `Encoder`** — return a representation of length ≥ 50; the benchmark fits PCA-50 + a
+uniform linear probe on it:
 
 ```python
 import numpy as np
 import openmhc
 
 class MyEncoder:
-    input_granularity = "daily"                     # the benchmark hands you daily segments
-
+    input = openmhc.Raw("hourly")                    # (n_days, 24, 38) per participant
     def encode(self, data: np.ndarray) -> np.ndarray:
-        # data: (n_days, 24, 38) — one participant's eligible days.
-        #   channels 0-18 = raw sensor values (NaN at missing positions)
-        #   channels 19-37 = missingness mask (1 = missing, 0 = observed)
-        # Normalize however your model needs; return any vector of length >= 50.
         x = np.nan_to_num(data).reshape(-1, 38)
-        return np.concatenate([x.mean(0), x.std(0)])      # -> (76,)
+        return np.concatenate([x.mean(0), x.std(0)])      # any vector, length >= 50
 
-results = openmhc.evaluate_prediction(MyEncoder(), tasks="all", data_dir="path/to/mhc-data")
+results = openmhc.evaluate_prediction(MyEncoder(), data_dir="path/to/mhc-data")
+print(results.summary())
+results.to_csv("my_results.csv")
+```
 
-print(results.summary())             # wide table: one row per task, one column per metric
-results.to_csv("my_results.csv")     # full long-format results
+A time-series foundation model is the same, with a context window:
+`input = openmhc.Window(hours=2048)`.
+
+**2b. `Predictor`** — bring your own classifier head; the benchmark scores your predictions
+directly:
+
+```python
+class MyModel:
+    input = openmhc.Raw("minute")                    # list of (n_days, 1440, 38); you featurize it
+    def fit(self, data, labels):
+        X = np.stack([featurize(d) for d in data])
+        self.clf = SomeClassifier().fit(X, labels)
+    def predict(self, data):
+        return self.clf.predict_proba(np.stack([featurize(d) for d in data]))[:, 1]
+
+results = openmhc.evaluate_prediction(MyModel(), data_dir="path/to/mhc-data")
 ```
 
 `evaluate_prediction(model, tasks="all", data_dir=None, seed=42)` returns a
 `PredictionResults` with `.summary()`, `.to_csv()`, `.to_json()`, `.to_dataframe()`,
-and `.global_score` (mean AUPRC over the binary tasks). Set `data_dir` to the dataset
-root (or the `MHC_DATA_DIR` env var). List the tasks with `openmhc.list_tasks()`.
+and `.global_score` (mean AUPRC over the binary tasks). Set `data_dir` (or the
+`MHC_DATA_DIR` env var). List the tasks with `openmhc.list_tasks()`.
 
 ## How scoring works
 
-For each task the benchmark:
+For each task the benchmark selects each eligible participant's data (cohort + time window
+handled for you), then:
 
-1. selects each eligible participant's data (cohort + time window are handled for you),
-2. calls your `encode` once per participant,
-3. fits PCA-50 + a linear probe on the train split and scores the test split.
+- an **`Encoder`** is called once per participant; the benchmark fits PCA-50 + a linear probe
+  on the train split and scores the test split — every encoder goes through the *same* probe,
+  so the comparison isolates representation quality;
+- a **`Predictor`** is `fit` on the train cohort and `predict`s the test cohort; its predictions
+  are scored directly.
 
-Every model goes through the *same* probe, so the comparison isolates representation
-quality. Primary metric per task type:
+Primary metric per task type:
 
 | Task type  | Metric     | Example tasks                          |
 |------------|------------|----------------------------------------|
