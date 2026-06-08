@@ -53,9 +53,8 @@ def _load_mae_model(checkpoint: str, device):
     """
     import torch
 
-    from utils.checkpoints import resolve_checkpoint_path
-
     from downstream_evaluation.models.mae.mae_vit1d import MaskedAutoencoderViT1D_LSM2
+    from utils.checkpoints import resolve_checkpoint_path
 
     resolved = resolve_checkpoint_path(checkpoint)
     logger.info("loading MAE checkpoint: %s", resolved)
@@ -104,6 +103,7 @@ def _build_transforms(stats_path: Path):
     import torch
 
     from data.normalization import load_global_normalization_stats
+
     # public data/transforms/__init__.py is empty → import the submodule directly.
     from data.transforms.nan_transforms import HybridNaNAwareNormalize, ZeroToNaNTransform
 
@@ -135,8 +135,9 @@ def extract_mae_embeddings(
     batch_size: int = BATCH_SIZE,
     seed: int = 42,
 ) -> None:
-    """Regenerate the MAE day-embedding intermediate from raw (GPU). Writes
-    ``embeddings.npy`` (N_days, 384) / ``user_ids.npy`` / ``dates.npy`` under
+    """Regenerate the MAE day-embedding intermediate from raw (GPU).
+
+    Writes ``embeddings.npy`` (N_days, 384) / ``user_ids.npy`` / ``dates.npy`` under
     ``output_dir`` — one pooled row per kept (user, day).
     """
     from collections import defaultdict
@@ -145,11 +146,10 @@ def extract_mae_embeddings(
     import torch
     from tqdm import tqdm
 
-    from openmhc._evaluate import _DatasetPaths
-
     from data.processing.hf_config import DEFAULT_VARIANCE_THRESHOLDS
     from downstream_evaluation.data.splits import load_split_file
     from downstream_evaluation.models.mae.utils import create_inherited_mask
+    from openmhc._evaluate import _DatasetPaths
 
     torch.manual_seed(seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -243,10 +243,12 @@ def extract_mae_embeddings(
 # Stage 2 — the MAE Encoder (driven by run_eval; build-on-miss is internal)
 # --------------------------------------------------------------------------- #
 class MAE:
-    """MAE daily encoder for the engine. ``encode_cohort`` returns the cohort's
-    per-user 384-d embeddings — built **on a cache miss** by running the dense
-    encoder over raw (GPU), saved, and reused on a hit — all inside the eval flow.
-    The engine then runs the uniform PCA-50 + linear probe.
+    """MAE daily encoder for the engine.
+
+    ``encode_cohort`` returns the cohort's per-user 384-d embeddings — built **on a
+    cache miss** by running the dense encoder over raw (GPU), saved, and reused on a
+    hit — all inside the eval flow. The engine then runs the uniform PCA-50 + linear
+    probe.
     """
 
     name = "mae"
@@ -261,6 +263,7 @@ class MAE:
         batch_size: int = BATCH_SIZE,
         seed: int = 42,
     ):
+        """Store the checkpoint, cache, and extraction settings; embeddings load lazily."""
         self._data_dir = data_dir
         self._checkpoint = checkpoint
         self._cache_dir = cache_dir
@@ -300,7 +303,9 @@ class MAE:
         self._ensure_embeddings()
         X = np.zeros((len(td.user_ids), self._dim), dtype=np.float32)
         for i, (uid, dates) in enumerate(zip(td.user_ids, td.dates)):
-            vecs = [self._by_key[k] for d in dates if (k := (str(uid), str(d)[:10])) in self._by_key]
+            vecs = [
+                self._by_key[k] for d in dates if (k := (str(uid), str(d)[:10])) in self._by_key
+            ]
             if vecs:
                 X[i] = np.mean(vecs, axis=0)
         return X
@@ -310,7 +315,9 @@ def _main() -> None:
     import argparse
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    ap = argparse.ArgumentParser(description="Stage-1 MAE day-embedding extraction (from raw, GPU).")
+    ap = argparse.ArgumentParser(
+        description="Stage-1 MAE day-embedding extraction (from raw, GPU)."
+    )
     ap.add_argument("--output-dir", required=True)
     ap.add_argument("--checkpoint", default=DEFAULT_CHECKPOINT)
     ap.add_argument("--data-dir", default=None, help="dataset root (else MHC_DATA_DIR)")

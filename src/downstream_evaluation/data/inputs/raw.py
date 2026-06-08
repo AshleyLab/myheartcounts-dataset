@@ -26,6 +26,13 @@ class RawBuilder(InputBuilder):
     """Deliver the cohort's eligible raw days at ``spec.resolution`` (model shapes them)."""
 
     def __init__(self, data_dir: str | None, spec) -> None:
+        """Set up the builder from the dataset root and a :class:`~.spec.Raw` spec.
+
+        Args:
+            data_dir: dataset root (``MHC_DATA_DIR`` / openmhc cache if ``None``).
+            spec: the :class:`~.spec.Raw` input spec; ``spec.resolution`` selects
+                ``"hourly"`` or ``"minute"`` and must be one of those two.
+        """
         self.spec = spec
         self._data_dir = data_dir
         self._res = getattr(spec, "resolution", "hourly")
@@ -43,8 +50,11 @@ class RawBuilder(InputBuilder):
         self._loaded = True
 
     def _load_minute_index(self) -> None:
-        """Open ``daily_hf`` lazily and index it by ``(user_id, date)`` — only the small
-        id/date columns are materialized; the 1440-bin values are read per row on demand."""
+        """Open ``daily_hf`` lazily and index it by ``(user_id, date)``.
+
+        Only the small id/date columns are materialized; the 1440-bin values are
+        read per row on demand.
+        """
         import datasets as hf_ds
 
         from data.transforms.nan_transforms import ZeroToNaNTransform
@@ -61,6 +71,11 @@ class RawBuilder(InputBuilder):
         self._z2n = ZeroToNaNTransform()
 
     def iter_inputs(self, td: TaskData) -> Iterator[ParticipantData]:
+        """Yield one :class:`ParticipantData` of eligible raw days per cohort user.
+
+        Hourly days are selected by row index from the row-aligned table; minute
+        days are gathered per user by ``(user_id, date)`` from ``td.dates``.
+        """
         self._ensure_loaded()
         if self._res == "hourly":
             for rows in td.eligible_indices:
@@ -99,9 +114,8 @@ def _load_daily_hourly(data_dir: str | None):
     """Load ``daily_hourly_hf`` as ``(N, 24, 19)`` values + mask (row order == lookup order)."""
     import datasets as hf_ds
 
-    from openmhc._evaluate import _DatasetPaths
-
     from downstream_evaluation.data.data_loader import prepare_daily_hourly_hf
+    from openmhc._evaluate import _DatasetPaths
 
     paths = _DatasetPaths.resolve(data_dir)
     ds = hf_ds.load_from_disk(str(paths.daily_hourly_hf))

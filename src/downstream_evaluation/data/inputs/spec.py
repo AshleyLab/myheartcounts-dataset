@@ -29,8 +29,9 @@ class InputSpec:
 
 @dataclass(frozen=True)
 class Raw(InputSpec):
-    """Each cohort user's **IC/TC-bounded raw days** at the chosen resolution — the model
-    windows / featurizes / encodes it itself (the universal escape hatch).
+    """Cohort user's IC/TC-bounded raw days at the chosen resolution.
+
+    The model windows / featurizes / encodes it itself (the universal escape hatch).
 
     Delivered as ``(n_eligible_days, T, 19)`` per participant, ``T`` = 24 (hourly) /
     1440 (minute). The framework still applies the cohort (IC) and the in-window days
@@ -42,6 +43,7 @@ class Raw(InputSpec):
 
     @property
     def cohort(self) -> str:
+        """Return the lookup granularity for the cohort (``"daily"``)."""
         return "daily"
 
 
@@ -62,4 +64,5 @@ class Window(InputSpec):
 
     @property
     def cohort(self) -> str:
+        """Return the lookup granularity for the cohort (``"daily"``)."""
         return "daily"

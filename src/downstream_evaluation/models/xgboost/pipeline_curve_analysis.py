@@ -58,9 +58,9 @@ MINUTES_PER_DAY = 1440
 MIN_COSINOR_DATAPOINTS = 200
 
 # Daytime/nighttime boundaries in minutes from midnight.
-DAYTIME_START_MIN = 360   # 6:00 AM
-DAYTIME_END_MIN = 1320    # 10:00 PM
-NIGHTTIME_LATE_MIN = 1380 # 11:00 PM
+DAYTIME_START_MIN = 360  # 6:00 AM
+DAYTIME_END_MIN = 1320  # 10:00 PM
+NIGHTTIME_LATE_MIN = 1380  # 11:00 PM
 
 
 # ── Phase A helpers ──────────────────────────────────────────────────────────
@@ -375,11 +375,13 @@ def _fit_cosinor(curve: np.ndarray) -> dict | None:
     omega = 2 * np.pi / 24.0
 
     # Design matrix: [1, cos(wt), sin(wt)]
-    X = np.column_stack([
-        np.ones(n_valid),
-        np.cos(omega * t_hours),
-        np.sin(omega * t_hours),
-    ])
+    X = np.column_stack(
+        [
+            np.ones(n_valid),
+            np.cos(omega * t_hours),
+            np.sin(omega * t_hours),
+        ]
+    )
 
     beta, _residuals, _rank, _sv = np.linalg.lstsq(X, y, rcond=None)
     mesor, beta_r, beta_s = beta
@@ -434,7 +436,7 @@ def _compute_hros_profile(avg_hr: np.ndarray, avg_steps: np.ndarray) -> dict:
     # Time windows
     daytime = slice(DAYTIME_START_MIN, DAYTIME_END_MIN)
     nighttime_mask = np.zeros(MINUTES_PER_DAY, dtype=bool)
-    nighttime_mask[0:DAYTIME_START_MIN] = True          # midnight – 6 AM
+    nighttime_mask[0:DAYTIME_START_MIN] = True  # midnight – 6 AM
     nighttime_mask[NIGHTTIME_LATE_MIN:MINUTES_PER_DAY] = True  # 11 PM – midnight
 
     all_valid = hros_profile[np.isfinite(hros_profile)]
@@ -446,9 +448,7 @@ def _compute_hros_profile(avg_hr: np.ndarray, avg_steps: np.ndarray) -> dict:
     result = {
         "hros_profile_mean": float(np.nanmean(all_valid)) if len(all_valid) > 0 else None,
         "hros_profile_std": float(np.nanstd(all_valid)) if len(all_valid) > 0 else None,
-        "hros_profile_daytime_mean": (
-            float(np.nanmean(day_valid)) if len(day_valid) > 0 else None
-        ),
+        "hros_profile_daytime_mean": (float(np.nanmean(day_valid)) if len(day_valid) > 0 else None),
         "hros_profile_nighttime_mean": (
             float(np.nanmean(night_valid)) if len(night_valid) > 0 else None
         ),
@@ -556,7 +556,10 @@ def build_curve_analysis_features(
         t0 = time.time()
         for i, arrow_file in enumerate(arrow_files):
             n_rows = _accumulate_arrow_file(
-                arrow_file, user_sums, user_counts, max_nonwear_minutes,
+                arrow_file,
+                user_sums,
+                user_counts,
+                max_nonwear_minutes,
                 variance_filter=variance_filter,
                 cutoff_dates=cutoff_dates,
             )
@@ -584,8 +587,8 @@ def build_curve_analysis_features(
     print("Phase B: Assembling matrices and processing channels...")
     user_ids = curves_df["user_id"].to_list()
     n_users = len(user_ids)
-    channel_matrices: dict[str, np.ndarray] = {}   # non-sparse channels (FDataGrid path)
-    channel_basis: dict[str, object] = {}           # sparse channels (FDataBasis path)
+    channel_matrices: dict[str, np.ndarray] = {}  # non-sparse channels (FDataGrid path)
+    channel_basis: dict[str, object] = {}  # sparse channels (FDataBasis path)
 
     for ch_idx, ch_info in FPCA_CHANNELS.items():
         col_name = f"avg_curve_{ch_info['name']}"
@@ -602,7 +605,8 @@ def build_curve_analysis_features(
                 f"{n_nan_total} NaN ({nan_frac:.1f}%) -> basis smoothing"
             )
             fd_basis = _build_sparse_basis_representation(
-                matrix, n_basis=n_basis,
+                matrix,
+                n_basis=n_basis,
                 smoothing_parameter=smoothing_parameter,
                 min_obs=min_obs,
             )
@@ -677,9 +681,7 @@ def build_curve_analysis_features(
         cosinor_rows.append(row)
 
     print(f"  Cosinor fit successful: {n_cosinor_ok}/{n_users} users")
-    print(
-        f"  Cosinor insufficient data: {n_users - n_cosinor_ok} users (< 200 valid minutes)"
-    )
+    print(f"  Cosinor insufficient data: {n_users - n_cosinor_ok} users (< 200 valid minutes)")
 
     cosinor_df = pl.DataFrame(cosinor_rows)
     result = pl.concat([result, cosinor_df], how="horizontal")

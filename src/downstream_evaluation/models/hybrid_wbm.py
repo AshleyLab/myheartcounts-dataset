@@ -44,6 +44,7 @@ class Hybrid:
     def __init__(
         self, data_dir: str | None = None, checkpoint: str = DEFAULT_CHECKPOINT, seed: int = 42
     ):
+        """Build the WBM (SSL) and Linear (fallback) branches; probes fit lazily."""
         self._data_dir = data_dir
         self.seed = seed
         self._linear = Linear(data_dir=data_dir, seed=seed)  # fallback branch
@@ -56,13 +57,12 @@ class Hybrid:
     def _weekly_td(self, task: str, split: str) -> TaskData:
         """Weekly cohort + eligible week_starts for ``task`` (for the SSL branch)."""
         if self._weekly_provider is None:
-            from openmhc._evaluate import _DatasetPaths
-
             from downstream_evaluation.data.provider import (
                 LOOKUP_BY_GRANULARITY,
                 TaskDataProvider,
             )
             from downstream_evaluation.data.splits import load_split_file
+            from openmhc._evaluate import _DatasetPaths
 
             paths = _DatasetPaths.resolve(self._data_dir)
             lookup = str(paths.root / "processed" / LOOKUP_BY_GRANULARITY["weekly"])
@@ -72,6 +72,7 @@ class Hybrid:
         return self._weekly_provider.task_data(task, split)
 
     def fit(self, task_data: TaskData) -> None:
+        """Fit the Linear fallback on all train users and the SSL probe on weekly users."""
         from sklearn.decomposition import PCA
 
         from downstream_evaluation.config import ClassifierConfig
@@ -92,7 +93,9 @@ class Hybrid:
         y_ssl = wtd.labels
         if self._ttype in ("binary", "multiclass", "ordinal"):
             y_ssl = y_ssl.astype(int)
-        cfg = ClassifierConfig(type=_PROBE_BY_TASKTYPE[self._ttype], use_scaler=False, pca_n_components=None)
+        cfg = ClassifierConfig(
+            type=_PROBE_BY_TASKTYPE[self._ttype], use_scaler=False, pca_n_components=None
+        )
         self._ssl_clf = create_model(cfg, random_state=self.seed, task_type=self._ttype)
         self._ssl_clf.fit(X_ssl, y_ssl)
 
@@ -108,7 +111,9 @@ class Hybrid:
         # SSL-branch predictions, keyed by user (weekly cohort = SSL users).
         wtd = self._weekly_td(task_data.task, task_data.split)
         ssl_users = [str(u) for u in wtd.user_ids]
-        ssl_pred = self._branch_pred(self._ssl_clf, self._ssl_pca.transform(self._wbm.encode_cohort(task_data.task, wtd)))
+        ssl_pred = self._branch_pred(
+            self._ssl_clf, self._ssl_pca.transform(self._wbm.encode_cohort(task_data.task, wtd))
+        )
         ssl_by_user = dict(zip(ssl_users, ssl_pred))
 
         # Fallback predictions for every daily-cohort user (Linear, fit on all).

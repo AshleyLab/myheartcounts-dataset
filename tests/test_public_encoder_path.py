@@ -45,6 +45,7 @@ class TestEncoderMethodAdapter:
     """Guard the ParticipantSegments -> (n, 24, 38) array translation."""
 
     def test_encode_receives_single_n_24_38_array(self):
+        """The adapter hands the encoder one ``(n, 24, 38)`` array."""
         seg, _, _ = _make_segments()
         enc = _RecordingEncoder()
         _EncoderMethodAdapter(enc).encode(seg)
@@ -52,6 +53,7 @@ class TestEncoderMethodAdapter:
         assert enc.seen.shape == (3, 24, 38)
 
     def test_channels_are_values_then_mask(self):
+        """Channels 0-18 carry raw values and 19-37 carry the mask."""
         seg, values, mask = _make_segments()
         enc = _RecordingEncoder()
         _EncoderMethodAdapter(enc).encode(seg)
@@ -59,6 +61,7 @@ class TestEncoderMethodAdapter:
         np.testing.assert_array_equal(enc.seen[..., 19:], mask)
 
     def test_raw_nan_values_pass_through(self):
+        """NaN raw values reach the encoder unfilled."""
         # The contract is RAW values (NaN at missing); the adapter must not pre-fill.
         seg, _, _ = _make_segments()
         seg.values[0, 0, 0] = np.nan
@@ -67,6 +70,7 @@ class TestEncoderMethodAdapter:
         assert np.isnan(enc.seen[0, 0, 0])
 
     def test_returns_embedding_as_float32(self):
+        """The adapter returns the embedding as a float32 array."""
         seg, _, _ = _make_segments()
         out = _EncoderMethodAdapter(_RecordingEncoder()).encode(seg)
         assert isinstance(out, np.ndarray)
@@ -74,12 +78,15 @@ class TestEncoderMethodAdapter:
         assert out.shape == (38,)
 
     def test_inherits_granularity_and_name(self):
+        """The adapter inherits the encoder's granularity and name."""
         enc = _RecordingEncoder()
         adapter = _EncoderMethodAdapter(enc)
         assert adapter.input_granularity == "daily"
         assert adapter.name == "recording"
 
     def test_defaults_when_encoder_omits_metadata(self):
+        """The adapter falls back to default granularity and name."""
+
         class Bare:
             def encode(self, data):
                 return data.reshape(-1, 38).mean(axis=0)

@@ -62,7 +62,9 @@ class _DatasetPaths:
             daily_hourly_hf=root / "processed" / "daily_hourly_hf",
             daily_hf=root / "processed" / "daily_hf",
             window_index=root / "processed" / "window_index_w7_s7_d5.parquet",
-            weekly_labels_lookup=root / "processed" / "weekly_labels_lookup_stride7_windowed.parquet",
+            weekly_labels_lookup=root
+            / "processed"
+            / "weekly_labels_lookup_stride7_windowed.parquet",
             daily_labels_lookup=root / "processed" / "daily_labels_lookup.parquet",
             splits_file=root / "splits" / "sharable_users_seed42_2026.json",
             norm_stats=root / "processed" / "normalization_stats_hourly.json",
@@ -161,9 +163,7 @@ def evaluate_prediction(
     # ``encode_cohort``/``fit``. run_eval selects the path, applies the uniform
     # PCA-50 + linear probe, and reports the primary metric per task type. The
     # per-task temporal scope is baked into the windowed lookup (no eval-time knob).
-    cfg = EvalConfig(
-        data_dir=str(paths.root), split_users=split_users, tasks=task_list, seed=seed
-    )
+    cfg = EvalConfig(data_dir=str(paths.root), split_users=split_users, tasks=task_list, seed=seed)
     # A pure external encoder implements only the public ``encode(data)`` contract, so
     # wrap it to translate the engine's per-participant ``ParticipantSegments`` into the
     # documented ``(n_segments, 24, 38)`` array (mirrors ``_ImputerMethodAdapter`` /
@@ -195,14 +195,16 @@ def evaluate_prediction(
         for metric_name, value in task_metrics.items():
             if metric_name == "n_test":
                 continue
-            records.append({
-                "task": task_name,
-                "task_type": task_type,
-                "classifier": probe_by_type.get(task_type),
-                "metric": metric_name,
-                "value": value,
-                "n_test": n_test,
-            })
+            records.append(
+                {
+                    "task": task_name,
+                    "task_type": task_type,
+                    "classifier": probe_by_type.get(task_type),
+                    "metric": metric_name,
+                    "value": value,
+                    "n_test": n_test,
+                }
+            )
         if task_type == "binary" and "auprc" in task_metrics:
             binary_primary.append(task_metrics["auprc"])
 
@@ -247,7 +249,9 @@ class _EncoderMethodAdapter:
 
 
 def _is_public_predictor(model) -> bool:
-    """True for a model implementing the *public* ``Predictor`` (``fit(data, labels)`` /
+    """Return True for a model implementing the *public* ``Predictor`` contract.
+
+    True for a model implementing the *public* ``Predictor`` (``fit(data, labels)`` /
     ``predict(data)``), not the internal ``fit(task_data)`` a bundled baseline uses.
 
     Distinguished by ``fit`` arity: the public contract takes ``(data, labels)`` (>= 2 positional
@@ -261,7 +265,8 @@ def _is_public_predictor(model) -> bool:
         return False
     try:
         params = [
-            p for p in inspect.signature(model.fit).parameters.values()
+            p
+            for p in inspect.signature(model.fit).parameters.values()
             if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)
         ]
     except (ValueError, TypeError):
@@ -357,8 +362,7 @@ def evaluate_imputation(
     for s in scenario_list:
         if s not in MASKING_SCENARIOS:
             raise ValueError(
-                f"Unknown masking scenario: {s!r}. "
-                f"Valid scenarios: {MASKING_SCENARIOS}"
+                f"Unknown masking scenario: {s!r}. Valid scenarios: {MASKING_SCENARIOS}"
             )
 
     paths = _DatasetPaths.resolve(data_dir)

@@ -47,6 +47,7 @@ from .constants import (
 # Robust Baselines
 # =============================================================================
 
+
 def extract_robust_baselines_daily() -> list[pl.Expr]:
     """Extract day-level robust baseline metrics for continuous channels.
 
@@ -74,8 +75,10 @@ def extract_robust_baselines_daily() -> list[pl.Expr]:
     # HR: filter zeros and NaN first (only sampled intermittently, ~84% of minutes
     # are zero, and channels are all-NaN for users without a watch).
     # NaN > 0 is True in Polars, so we must gate on is_finite().
-    hr_nonzero = pl.col("data").arr.get(WATCH_HR).list.eval(
-        pl.element().filter(pl.element().is_finite() & (pl.element() > 0))
+    hr_nonzero = (
+        pl.col("data")
+        .arr.get(WATCH_HR)
+        .list.eval(pl.element().filter(pl.element().is_finite() & (pl.element() > 0)))
     )
 
     return [
@@ -87,9 +90,13 @@ def extract_robust_baselines_daily() -> list[pl.Expr]:
         pl.col("data").arr.get(WATCH_STEPS).list.sum().alias("daily_watch_steps_sum"),
         pl.col("data").arr.get(WATCH_DISTANCE).list.sum().alias("daily_watch_distance_sum"),
         # HR percentiles (converted to bpm)
-        (hr_nonzero.list.eval(pl.element().quantile(0.05)).list.first() * 60).alias("daily_watch_hr_p5"),
+        (hr_nonzero.list.eval(pl.element().quantile(0.05)).list.first() * 60).alias(
+            "daily_watch_hr_p5"
+        ),
         (hr_nonzero.list.median() * 60).alias("daily_watch_hr_median"),
-        (hr_nonzero.list.eval(pl.element().quantile(0.95)).list.first() * 60).alias("daily_watch_hr_p95"),
+        (hr_nonzero.list.eval(pl.element().quantile(0.95)).list.first() * 60).alias(
+            "daily_watch_hr_p95"
+        ),
         pl.col("data").arr.get(WATCH_ENERGY).list.sum().alias("daily_watch_energy_sum"),
     ]
 
@@ -140,25 +147,30 @@ def aggregate_robust_baselines_to_user() -> list[pl.Expr]:
     for metric in sum_metrics:
         # Remove "daily_" prefix for cleaner user-level names
         base_name = metric.replace("daily_", "").replace("_sum", "")
-        exprs.extend([
-            pl.col(metric).quantile(0.05).alias(f"{base_name}_p5"),
-            pl.col(metric).median().alias(f"{base_name}_p50"),
-            pl.col(metric).quantile(0.95).alias(f"{base_name}_p95"),
-            (
-                pl.col(metric).quantile(0.75) - pl.col(metric).quantile(0.25)
-            ).alias(f"{base_name}_iqr"),
-        ])
+        exprs.extend(
+            [
+                pl.col(metric).quantile(0.05).alias(f"{base_name}_p5"),
+                pl.col(metric).median().alias(f"{base_name}_p50"),
+                pl.col(metric).quantile(0.95).alias(f"{base_name}_p95"),
+                (pl.col(metric).quantile(0.75) - pl.col(metric).quantile(0.25)).alias(
+                    f"{base_name}_iqr"
+                ),
+            ]
+        )
 
     # HR metrics: we have daily p5, median, p95 - take median of each across days
-    exprs.extend([
-        pl.col("daily_watch_hr_p5").median().alias("watch_hr_p5_p50"),
-        pl.col("daily_watch_hr_median").median().alias("watch_hr_median_p50"),
-        pl.col("daily_watch_hr_p95").median().alias("watch_hr_p95_p50"),
-        # Also include IQR of the daily median HR
-        (
-            pl.col("daily_watch_hr_median").quantile(0.75) - pl.col("daily_watch_hr_median").quantile(0.25)
-        ).alias("watch_hr_iqr"),
-    ])
+    exprs.extend(
+        [
+            pl.col("daily_watch_hr_p5").median().alias("watch_hr_p5_p50"),
+            pl.col("daily_watch_hr_median").median().alias("watch_hr_median_p50"),
+            pl.col("daily_watch_hr_p95").median().alias("watch_hr_p95_p50"),
+            # Also include IQR of the daily median HR
+            (
+                pl.col("daily_watch_hr_median").quantile(0.75)
+                - pl.col("daily_watch_hr_median").quantile(0.25)
+            ).alias("watch_hr_iqr"),
+        ]
+    )
 
     return exprs
 
@@ -275,10 +287,10 @@ def _extract_hr_coupling_daily() -> list[pl.Expr]:
 
     # Daytime HR: 6am-10pm (minutes 360-1320)
     hr_daytime = (
-        hr_list
-        .list.slice(360, 960)  # 6am to 10pm
+        hr_list.list.slice(360, 960)  # 6am to 10pm
         .list.eval(pl.element().filter(_hr_valid))
-        .list.median() * 60  # Convert to bpm
+        .list.median()
+        * 60  # Convert to bpm
     ).alias("daily_hr_daytime_median")
 
     # Nighttime HR: 11pm-6am (minutes 1380-1440 + 0-360)
@@ -288,15 +300,16 @@ def _extract_hr_coupling_daily() -> list[pl.Expr]:
     hr_nighttime = (
         hr_late_night.list.concat(hr_early_morning)
         .list.eval(pl.element().filter(_hr_valid))
-        .list.median() * 60  # Convert to bpm
+        .list.median()
+        * 60  # Convert to bpm
     ).alias("daily_hr_nighttime_median")
 
     # P95 HR as proxy for workout/peak exertion
     hr_p95 = (
-        hr_list
-        .list.eval(pl.element().filter(_hr_valid))
+        hr_list.list.eval(pl.element().filter(_hr_valid))
         .list.eval(pl.element().quantile(0.95))
-        .list.first() * 60
+        .list.first()
+        * 60
     ).alias("daily_hr_p95")
 
     return [hr_daytime, hr_nighttime, hr_p95]
@@ -330,16 +343,28 @@ def _extract_intensity_zones_daily() -> list[pl.Expr]:
         # (NaN > 0 is True in Polars, which would wrongly count NaN as active)
         steps = pl.col("data").arr.get(channel).list.eval(pl.element().fill_nan(None))
         raw_sedentary = steps.list.eval(pl.element() == 0).list.sum()
-        exprs.extend([
-            # Sedentary: 0 steps during wear time (subtract non-wear minutes)
-            pl.max_horizontal(raw_sedentary - nonwear_total, 0).alias(f"daily_{device}_sedentary_minutes"),
-            # Light: 1 to MODERATE_THRESHOLD-1
-            steps.list.eval((pl.element() > 0) & (pl.element() < MODERATE_THRESHOLD)).list.sum().alias(f"daily_{device}_light_minutes"),
-            # Moderate: MODERATE_THRESHOLD to VIGOROUS_THRESHOLD-1
-            steps.list.eval((pl.element() >= MODERATE_THRESHOLD) & (pl.element() < VIGOROUS_THRESHOLD)).list.sum().alias(f"daily_{device}_moderate_minutes"),
-            # Vigorous: VIGOROUS_THRESHOLD+
-            steps.list.eval(pl.element() >= VIGOROUS_THRESHOLD).list.sum().alias(f"daily_{device}_vigorous_minutes"),
-        ])
+        exprs.extend(
+            [
+                # Sedentary: 0 steps during wear time (subtract non-wear minutes)
+                pl.max_horizontal(raw_sedentary - nonwear_total, 0).alias(
+                    f"daily_{device}_sedentary_minutes"
+                ),
+                # Light: 1 to MODERATE_THRESHOLD-1
+                steps.list.eval((pl.element() > 0) & (pl.element() < MODERATE_THRESHOLD))
+                .list.sum()
+                .alias(f"daily_{device}_light_minutes"),
+                # Moderate: MODERATE_THRESHOLD to VIGOROUS_THRESHOLD-1
+                steps.list.eval(
+                    (pl.element() >= MODERATE_THRESHOLD) & (pl.element() < VIGOROUS_THRESHOLD)
+                )
+                .list.sum()
+                .alias(f"daily_{device}_moderate_minutes"),
+                # Vigorous: VIGOROUS_THRESHOLD+
+                steps.list.eval(pl.element() >= VIGOROUS_THRESHOLD)
+                .list.sum()
+                .alias(f"daily_{device}_vigorous_minutes"),
+            ]
+        )
 
     return exprs
 
@@ -359,6 +384,7 @@ def _extract_workout_metrics_daily() -> list[pl.Expr]:
         - daily_cardio_minutes: Minutes in cardio workouts (walking, running, cycling, elliptical, HIIT, mixed)
         - daily_strength_minutes: Minutes in strength workouts (strength, functional)
     """
+
     # Helper: sum a workout channel, filling NaN with 0
     def workout_channel_sum(ch: int) -> pl.Expr:
         return pl.col("data").arr.get(ch).list.eval(pl.element().fill_nan(0)).list.sum()
@@ -368,19 +394,21 @@ def _extract_workout_metrics_daily() -> list[pl.Expr]:
         return (workout_channel_sum(ch) > 0).cast(pl.Int8)
 
     # Total workout minutes (sum across all channels, NaN -> 0)
-    workout_minutes = pl.sum_horizontal([
-        workout_channel_sum(ch) for ch in WORKOUT_CHANNELS
-    ]).alias("daily_workout_minutes")
+    workout_minutes = pl.sum_horizontal([workout_channel_sum(ch) for ch in WORKOUT_CHANNELS]).alias(
+        "daily_workout_minutes"
+    )
 
     # Any workout flag
     has_any_workout = (
-        pl.sum_horizontal([workout_channel_sum(ch) for ch in WORKOUT_CHANNELS]) > 0
-    ).cast(pl.Int8).alias("daily_has_any_workout")
+        (pl.sum_horizontal([workout_channel_sum(ch) for ch in WORKOUT_CHANNELS]) > 0)
+        .cast(pl.Int8)
+        .alias("daily_has_any_workout")
+    )
 
     # Count unique workout types (how many different workout types today)
-    workout_type_count = pl.sum_horizontal([
-        workout_occurred(ch) for ch in WORKOUT_CHANNELS
-    ]).alias("daily_workout_type_count")
+    workout_type_count = pl.sum_horizontal([workout_occurred(ch) for ch in WORKOUT_CHANNELS]).alias(
+        "daily_workout_type_count"
+    )
 
     # Binary indicators for each workout type
     workout_indicators = [
@@ -391,21 +419,31 @@ def _extract_workout_metrics_daily() -> list[pl.Expr]:
     # Cardio vs Strength breakdown
     # Cardio: walking, running, cycling, elliptical, HIIT, mixed cardio
     cardio_channels = [
-        WORKOUT_WALKING, WORKOUT_RUNNING, WORKOUT_CYCLING,
-        WORKOUT_ELLIPTICAL, WORKOUT_HIIT, WORKOUT_MIXED_CARDIO
+        WORKOUT_WALKING,
+        WORKOUT_RUNNING,
+        WORKOUT_CYCLING,
+        WORKOUT_ELLIPTICAL,
+        WORKOUT_HIIT,
+        WORKOUT_MIXED_CARDIO,
     ]
     # Strength: strength training, functional training
     strength_channels = [WORKOUT_STRENGTH, WORKOUT_FUNCTIONAL]
 
-    cardio_minutes = pl.sum_horizontal([
-        workout_channel_sum(ch) for ch in cardio_channels
-    ]).alias("daily_cardio_minutes")
+    cardio_minutes = pl.sum_horizontal([workout_channel_sum(ch) for ch in cardio_channels]).alias(
+        "daily_cardio_minutes"
+    )
 
-    strength_minutes = pl.sum_horizontal([
-        workout_channel_sum(ch) for ch in strength_channels
-    ]).alias("daily_strength_minutes")
+    strength_minutes = pl.sum_horizontal(
+        [workout_channel_sum(ch) for ch in strength_channels]
+    ).alias("daily_strength_minutes")
 
-    return [workout_minutes, has_any_workout, workout_type_count, cardio_minutes, strength_minutes] + workout_indicators
+    return [
+        workout_minutes,
+        has_any_workout,
+        workout_type_count,
+        cardio_minutes,
+        strength_minutes,
+    ] + workout_indicators
 
 
 def _extract_device_sync_daily() -> list[pl.Expr]:
@@ -451,9 +489,11 @@ def _extract_hr_intensity_daily() -> list[pl.Expr]:
     # Filter to finite non-zero HR first (list.max() propagates NaN, and
     # NaN >= threshold is True in Polars, giving false positives).
     hr_bpm = (
-        pl.col("data").arr.get(WATCH_HR)
+        pl.col("data")
+        .arr.get(WATCH_HR)
         .list.eval(pl.element().filter(pl.element().is_finite() & (pl.element() > 0)))
-        .list.max() * 60
+        .list.max()
+        * 60
     )
 
     return [
@@ -504,9 +544,7 @@ def _extract_workout_hr_dynamics_daily() -> list[pl.Expr]:
     for ch in WORKOUT_CHANNELS:
         arr = pl.col("data").arr.get(ch).list.eval(pl.element().fill_nan(0))
         idx_expr = arr.list.eval(
-            pl.when(pl.element() > 0)
-            .then(pl.int_range(pl.len()))
-            .otherwise(None)
+            pl.when(pl.element() > 0).then(pl.int_range(pl.len())).otherwise(None)
         )
         last_workout_per_channel.append(idx_expr.list.max())
         first_workout_per_channel.append(idx_expr.list.min())
@@ -527,10 +565,10 @@ def _extract_workout_hr_dynamics_daily() -> list[pl.Expr]:
         start = pl.max_horizontal(minute_expr - window_half, pl.lit(0))
         window_size = window_half * 2 + 1
         return (
-            hr_list
-            .list.slice(start, window_size)
+            hr_list.list.slice(start, window_size)
             .list.eval(pl.element().filter(pl.element().is_finite() & (pl.element() > 0)))
-            .list.median() * 60
+            .list.median()
+            * 60
         )
 
     hr_at_end = _hr_window_median(last_workout_min)
@@ -541,9 +579,18 @@ def _extract_workout_hr_dynamics_daily() -> list[pl.Expr]:
     exprs = [
         pl.when(has_workout).then(hr_at_end).otherwise(None).alias("daily_hr_at_workout_end"),
         # HR recovery (positive = HR dropping = good recovery)
-        pl.when(has_workout).then(hr_at_end - hr_at_1min).otherwise(None).alias("daily_hr_recovery_1min"),
-        pl.when(has_workout).then(hr_at_end - hr_at_5min).otherwise(None).alias("daily_hr_recovery_5min"),
-        pl.when(has_workout).then(hr_at_end - hr_at_10min).otherwise(None).alias("daily_hr_recovery_10min"),
+        pl.when(has_workout)
+        .then(hr_at_end - hr_at_1min)
+        .otherwise(None)
+        .alias("daily_hr_recovery_1min"),
+        pl.when(has_workout)
+        .then(hr_at_end - hr_at_5min)
+        .otherwise(None)
+        .alias("daily_hr_recovery_5min"),
+        pl.when(has_workout)
+        .then(hr_at_end - hr_at_10min)
+        .otherwise(None)
+        .alias("daily_hr_recovery_10min"),
         # Normalized recovery ratio
         (
             pl.when(has_workout & (hr_at_end > 0))
@@ -558,19 +605,30 @@ def _extract_workout_hr_dynamics_daily() -> list[pl.Expr]:
     hr_at_start_5 = _hr_window_median(first_workout_min + 5)
     hr_at_start_10 = _hr_window_median(first_workout_min + 10)
 
-    exprs.extend([
-        pl.when(has_workout).then(hr_at_start).otherwise(None).alias("daily_hr_at_workout_start"),
-        # HR activation (positive = HR rising = normal response)
-        pl.when(has_workout).then(hr_at_start_5 - hr_at_start).otherwise(None).alias("daily_hr_activation_5min"),
-        pl.when(has_workout).then(hr_at_start_10 - hr_at_start).otherwise(None).alias("daily_hr_activation_10min"),
-        # Normalized activation ratio
-        (
-            pl.when(has_workout & (hr_at_start > 0))
-            .then((hr_at_start_5 - hr_at_start) / hr_at_start)
+    exprs.extend(
+        [
+            pl.when(has_workout)
+            .then(hr_at_start)
             .otherwise(None)
-            .alias("daily_hr_activation_ratio")
-        ),
-    ])
+            .alias("daily_hr_at_workout_start"),
+            # HR activation (positive = HR rising = normal response)
+            pl.when(has_workout)
+            .then(hr_at_start_5 - hr_at_start)
+            .otherwise(None)
+            .alias("daily_hr_activation_5min"),
+            pl.when(has_workout)
+            .then(hr_at_start_10 - hr_at_start)
+            .otherwise(None)
+            .alias("daily_hr_activation_10min"),
+            # Normalized activation ratio
+            (
+                pl.when(has_workout & (hr_at_start > 0))
+                .then((hr_at_start_5 - hr_at_start) / hr_at_start)
+                .otherwise(None)
+                .alias("daily_hr_activation_ratio")
+            ),
+        ]
+    )
 
     return exprs
 
@@ -607,8 +665,9 @@ def _extract_sedentary_bouts_daily() -> list[pl.Expr]:
         )
         # Subtract non-wear minutes during wake hours
         exprs.append(
-            pl.max_horizontal(raw_wake_sedentary - wake_nonwear, 0)
-            .alias(f"daily_{device}_wake_sedentary_minutes")
+            pl.max_horizontal(raw_wake_sedentary - wake_nonwear, 0).alias(
+                f"daily_{device}_wake_sedentary_minutes"
+            )
         )
 
     return exprs
@@ -636,15 +695,20 @@ def _extract_hros_daily() -> list[pl.Expr]:
 
     # Median HR (bpm) during daytime (6am-10pm), valid readings only
     daytime_hr = hr_arr.list.slice(360, 960)
-    hr_median = daytime_hr.list.eval(
-        pl.element().filter(pl.element().is_finite() & (pl.element() > 0)).median()
-    ).list.first() * 60.0
+    hr_median = (
+        daytime_hr.list.eval(
+            pl.element().filter(pl.element().is_finite() & (pl.element() > 0)).median()
+        ).list.first()
+        * 60.0
+    )
 
     # Total steps and active minutes during same window
     daytime_steps = steps_arr.list.slice(360, 960).list.sum()
-    active_mins = steps_arr.list.slice(360, 960).list.eval(
-        pl.element().filter(pl.element() > 0).len()
-    ).list.first()
+    active_mins = (
+        steps_arr.list.slice(360, 960)
+        .list.eval(pl.element().filter(pl.element() > 0).len())
+        .list.first()
+    )
 
     step_rate = daytime_steps / active_mins.replace(0, None)
 
@@ -656,6 +720,7 @@ def _extract_hros_daily() -> list[pl.Expr]:
 # =============================================================================
 # Physical Activity - Main Functions
 # =============================================================================
+
 
 def extract_physical_activity_daily() -> list[pl.Expr]:
     """Extract day-level physical activity metrics.
@@ -715,10 +780,14 @@ def aggregate_physical_activity_to_user() -> list[pl.Expr]:
     # --- Active Minutes ---
     for device in ["watch", "iphone"]:
         col = f"daily_{device}_active_minutes"
-        exprs.extend([
-            pl.col(col).median().alias(f"{device}_active_minutes_p50"),
-            (pl.col(col).quantile(0.75) - pl.col(col).quantile(0.25)).alias(f"{device}_active_minutes_iqr"),
-        ])
+        exprs.extend(
+            [
+                pl.col(col).median().alias(f"{device}_active_minutes_p50"),
+                (pl.col(col).quantile(0.75) - pl.col(col).quantile(0.25)).alias(
+                    f"{device}_active_minutes_iqr"
+                ),
+            ]
+        )
 
     # --- Gait Efficiency ---
     for device in ["watch", "iphone"]:
@@ -726,109 +795,139 @@ def aggregate_physical_activity_to_user() -> list[pl.Expr]:
         exprs.append(pl.col(col).median().alias(f"{device}_gait_efficiency_p50"))
 
     # --- HR Coupling (time-based proxies) ---
-    exprs.extend([
-        pl.col("daily_hr_daytime_median").median().alias("hr_daytime_p50"),
-        pl.col("daily_hr_nighttime_median").median().alias("hr_nighttime_p50"),
-        pl.col("daily_hr_p95").median().alias("hr_p95_p50"),
-        # HR coupling ratio: daytime / nighttime (active vs rest proxy)
-        (
-            pl.col("daily_hr_daytime_median").median()
-            / pl.col("daily_hr_nighttime_median").median().replace(0, None)
-        ).alias("hr_daytime_nighttime_ratio"),
-        # HR peak ratio: P95 / nighttime (workout intensity proxy)
-        (
-            pl.col("daily_hr_p95").median()
-            / pl.col("daily_hr_nighttime_median").median().replace(0, None)
-        ).alias("hr_peak_rest_ratio"),
-    ])
+    exprs.extend(
+        [
+            pl.col("daily_hr_daytime_median").median().alias("hr_daytime_p50"),
+            pl.col("daily_hr_nighttime_median").median().alias("hr_nighttime_p50"),
+            pl.col("daily_hr_p95").median().alias("hr_p95_p50"),
+            # HR coupling ratio: daytime / nighttime (active vs rest proxy)
+            (
+                pl.col("daily_hr_daytime_median").median()
+                / pl.col("daily_hr_nighttime_median").median().replace(0, None)
+            ).alias("hr_daytime_nighttime_ratio"),
+            # HR peak ratio: P95 / nighttime (workout intensity proxy)
+            (
+                pl.col("daily_hr_p95").median()
+                / pl.col("daily_hr_nighttime_median").median().replace(0, None)
+            ).alias("hr_peak_rest_ratio"),
+        ]
+    )
 
     # --- Intensity Zones (both devices) ---
     for device in ["watch", "iphone"]:
         for zone in ["sedentary", "light", "moderate", "vigorous"]:
             col = f"daily_{device}_{zone}_minutes"
-            exprs.extend([
-                pl.col(col).median().alias(f"{device}_{zone}_minutes_p50"),
-                (pl.col(col).quantile(0.75) - pl.col(col).quantile(0.25)).alias(f"{device}_{zone}_minutes_iqr"),
-            ])
+            exprs.extend(
+                [
+                    pl.col(col).median().alias(f"{device}_{zone}_minutes_p50"),
+                    (pl.col(col).quantile(0.75) - pl.col(col).quantile(0.25)).alias(
+                        f"{device}_{zone}_minutes_iqr"
+                    ),
+                ]
+            )
 
     # --- Workout Metrics ---
-    exprs.extend([
-        # Workout duration
-        pl.col("daily_workout_minutes").median().alias("workout_minutes_p50"),
-        (pl.col("daily_workout_minutes").quantile(0.75) - pl.col("daily_workout_minutes").quantile(0.25)).alias("workout_minutes_iqr"),
-        # Workout density: proportion of days with any workout
-        pl.col("daily_has_any_workout").mean().alias("workout_density"),
-        # Workout specialization: median number of workout types per workout day
-        pl.col("daily_workout_type_count").filter(pl.col("daily_has_any_workout") == 1).median().alias("workout_specialization_p50"),
-        # Total unique workout types ever used by this user
-        # (sum of "ever did this workout" across all types)
-        pl.sum_horizontal([
-            (pl.col(f"daily_has_{CHANNEL_NAMES[ch].replace('workout_', '')}").sum() > 0).cast(pl.Int8)
-            for ch in WORKOUT_CHANNELS
-        ]).alias("total_workout_types_ever"),
-        # Cardio vs Strength ratio
-        (
-            pl.col("daily_cardio_minutes").sum()
-            / (pl.col("daily_cardio_minutes").sum() + pl.col("daily_strength_minutes").sum()).replace(0, None)
-        ).alias("cardio_strength_ratio"),
-    ])
+    exprs.extend(
+        [
+            # Workout duration
+            pl.col("daily_workout_minutes").median().alias("workout_minutes_p50"),
+            (
+                pl.col("daily_workout_minutes").quantile(0.75)
+                - pl.col("daily_workout_minutes").quantile(0.25)
+            ).alias("workout_minutes_iqr"),
+            # Workout density: proportion of days with any workout
+            pl.col("daily_has_any_workout").mean().alias("workout_density"),
+            # Workout specialization: median number of workout types per workout day
+            pl.col("daily_workout_type_count")
+            .filter(pl.col("daily_has_any_workout") == 1)
+            .median()
+            .alias("workout_specialization_p50"),
+            # Total unique workout types ever used by this user
+            # (sum of "ever did this workout" across all types)
+            pl.sum_horizontal(
+                [
+                    (
+                        pl.col(f"daily_has_{CHANNEL_NAMES[ch].replace('workout_', '')}").sum() > 0
+                    ).cast(pl.Int8)
+                    for ch in WORKOUT_CHANNELS
+                ]
+            ).alias("total_workout_types_ever"),
+            # Cardio vs Strength ratio
+            (
+                pl.col("daily_cardio_minutes").sum()
+                / (
+                    pl.col("daily_cardio_minutes").sum() + pl.col("daily_strength_minutes").sum()
+                ).replace(0, None)
+            ).alias("cardio_strength_ratio"),
+        ]
+    )
 
     # Workout type frequencies
     workout_types = [CHANNEL_NAMES[ch].replace("workout_", "") for ch in WORKOUT_CHANNELS]
     for wtype in workout_types:
-        exprs.append(
-            pl.col(f"daily_has_{wtype}").mean().alias(f"workout_freq_{wtype}")
-        )
+        exprs.append(pl.col(f"daily_has_{wtype}").mean().alias(f"workout_freq_{wtype}"))
 
     # --- Device Sync ---
-    exprs.append(
-        pl.col("daily_step_sync_ratio").median().alias("step_sync_ratio_p50")
-    )
+    exprs.append(pl.col("daily_step_sync_ratio").median().alias("step_sync_ratio_p50"))
 
     # --- HR Intensity ---
-    exprs.extend([
-        pl.col("daily_hr_max").median().alias("hr_max_p50"),
-        pl.col("daily_hr_max").quantile(0.95).alias("hr_max_p95"),
-        # Percent of days achieving 80% HR max
-        pl.col("daily_hr_80pct_achieved").mean().alias("pct_days_hr_80pct_achieved"),
-    ])
+    exprs.extend(
+        [
+            pl.col("daily_hr_max").median().alias("hr_max_p50"),
+            pl.col("daily_hr_max").quantile(0.95).alias("hr_max_p95"),
+            # Percent of days achieving 80% HR max
+            pl.col("daily_hr_80pct_achieved").mean().alias("pct_days_hr_80pct_achieved"),
+        ]
+    )
 
     # --- Sedentary Patterns (both devices) ---
     for device in ["watch", "iphone"]:
         col = f"daily_{device}_wake_sedentary_minutes"
-        exprs.extend([
-            pl.col(col).median().alias(f"{device}_wake_sedentary_minutes_p50"),
-            (pl.col(col).quantile(0.75) - pl.col(col).quantile(0.25)).alias(f"{device}_wake_sedentary_minutes_iqr"),
-        ])
+        exprs.extend(
+            [
+                pl.col(col).median().alias(f"{device}_wake_sedentary_minutes_p50"),
+                (pl.col(col).quantile(0.75) - pl.col(col).quantile(0.25)).alias(
+                    f"{device}_wake_sedentary_minutes_iqr"
+                ),
+            ]
+        )
 
     # --- Workout HR Dynamics ---
     # Post-workout HR recovery (only on workout days, nulls are ignored)
-    exprs.extend([
-        pl.col("daily_hr_at_workout_end").median().alias("hr_at_workout_end_p50"),
-        pl.col("daily_hr_recovery_1min").median().alias("hr_recovery_1min_p50"),
-        pl.col("daily_hr_recovery_5min").median().alias("hr_recovery_5min_p50"),
-        pl.col("daily_hr_recovery_10min").median().alias("hr_recovery_10min_p50"),
-        pl.col("daily_hr_recovery_ratio").median().alias("hr_recovery_ratio_p50"),
-        # IQR of recovery for consistency
-        (
-            pl.col("daily_hr_recovery_5min").quantile(0.75)
-            - pl.col("daily_hr_recovery_5min").quantile(0.25)
-        ).alias("hr_recovery_5min_iqr"),
-    ])
+    exprs.extend(
+        [
+            pl.col("daily_hr_at_workout_end").median().alias("hr_at_workout_end_p50"),
+            pl.col("daily_hr_recovery_1min").median().alias("hr_recovery_1min_p50"),
+            pl.col("daily_hr_recovery_5min").median().alias("hr_recovery_5min_p50"),
+            pl.col("daily_hr_recovery_10min").median().alias("hr_recovery_10min_p50"),
+            pl.col("daily_hr_recovery_ratio").median().alias("hr_recovery_ratio_p50"),
+            # IQR of recovery for consistency
+            (
+                pl.col("daily_hr_recovery_5min").quantile(0.75)
+                - pl.col("daily_hr_recovery_5min").quantile(0.25)
+            ).alias("hr_recovery_5min_iqr"),
+        ]
+    )
 
     # HR activation at workout start
-    exprs.extend([
-        pl.col("daily_hr_at_workout_start").median().alias("hr_at_workout_start_p50"),
-        pl.col("daily_hr_activation_5min").median().alias("hr_activation_5min_p50"),
-        pl.col("daily_hr_activation_10min").median().alias("hr_activation_10min_p50"),
-        pl.col("daily_hr_activation_ratio").median().alias("hr_activation_ratio_p50"),
-    ])
+    exprs.extend(
+        [
+            pl.col("daily_hr_at_workout_start").median().alias("hr_at_workout_start_p50"),
+            pl.col("daily_hr_activation_5min").median().alias("hr_activation_5min_p50"),
+            pl.col("daily_hr_activation_10min").median().alias("hr_activation_10min_p50"),
+            pl.col("daily_hr_activation_ratio").median().alias("hr_activation_ratio_p50"),
+        ]
+    )
 
     # --- HROS (Heart Rate Over Steps) ---
-    exprs.extend([
-        pl.col("daily_hros").median().alias("hros_p50"),
-        (pl.col("daily_hros").quantile(0.75) - pl.col("daily_hros").quantile(0.25)).alias("hros_iqr"),
-    ])
+    exprs.extend(
+        [
+            pl.col("daily_hros").median().alias("hros_p50"),
+            (pl.col("daily_hros").quantile(0.75) - pl.col("daily_hros").quantile(0.25)).alias(
+                "hros_iqr"
+            ),
+        ]
+    )
 
     return exprs
 
@@ -855,22 +954,12 @@ def aggregate_rhr_stability_to_user() -> list[pl.Expr]:
         - rhr_median_rmssd: RMSSD of daily median HR (overall HR volatility, bpm)
     """
     return [
-        (
-            pl.col("daily_watch_hr_p5")
-            .sort_by(pl.col("date"))
-            .diff()
-            .pow(2)
-            .mean()
-            .sqrt()
-        ).alias("rhr_p5_rmssd"),
-        (
-            pl.col("daily_watch_hr_median")
-            .sort_by(pl.col("date"))
-            .diff()
-            .pow(2)
-            .mean()
-            .sqrt()
-        ).alias("rhr_median_rmssd"),
+        (pl.col("daily_watch_hr_p5").sort_by(pl.col("date")).diff().pow(2).mean().sqrt()).alias(
+            "rhr_p5_rmssd"
+        ),
+        (pl.col("daily_watch_hr_median").sort_by(pl.col("date")).diff().pow(2).mean().sqrt()).alias(
+            "rhr_median_rmssd"
+        ),
     ]
 
 
@@ -879,18 +968,18 @@ def aggregate_rhr_stability_to_user() -> list[pl.Expr]:
 # =============================================================================
 
 # Time windows for sleep timing detection
-MORNING_START = 0     # Midnight
-MORNING_END = 720     # Noon (12pm) - look for wake-up in this window
+MORNING_START = 0  # Midnight
+MORNING_END = 720  # Noon (12pm) - look for wake-up in this window
 EVENING_START = 1080  # 6pm
-EVENING_END = 1440    # Midnight - look for bedtime in this window
+EVENING_END = 1440  # Midnight - look for bedtime in this window
 
 # Nighttime window for restless sleep detection
-NIGHTTIME_START = 0   # Midnight
-NIGHTTIME_END = 300   # 5am
+NIGHTTIME_START = 0  # Midnight
+NIGHTTIME_END = 300  # 5am
 
 # Pre-sleep activity window (3 hours before typical bedtime ~11pm)
 PRESLEEP_START = 1200  # 8pm
-PRESLEEP_END = 1380    # 11pm
+PRESLEEP_END = 1380  # 11pm
 
 
 def _extract_sleep_duration_daily() -> list[pl.Expr]:
@@ -913,8 +1002,10 @@ def _extract_sleep_duration_daily() -> list[pl.Expr]:
 
     # Check if user has any valid (non-NaN) sleep data for this day
     has_data = (
-        sleep_arr.list.eval(~pl.element().is_nan()).list.sum() > 0
-    ).cast(pl.Int8).alias("daily_has_sleep_data")
+        (sleep_arr.list.eval(~pl.element().is_nan()).list.sum() > 0)
+        .cast(pl.Int8)
+        .alias("daily_has_sleep_data")
+    )
 
     # Sum with fill_nan(0), but return null if no data at all
     sleep_sum = (
@@ -940,11 +1031,7 @@ def _extract_sleep_duration_daily() -> list[pl.Expr]:
             (sleep_arr.list.eval(~pl.element().is_nan()).list.sum() > 0)
             & (inbed_arr.list.eval(pl.element().fill_nan(0)).list.sum() > 0)
         )
-        .then(
-            pl.when(raw_efficiency > 1.0)
-            .then(1.0)
-            .otherwise(raw_efficiency)
-        )
+        .then(pl.when(raw_efficiency > 1.0).then(1.0).otherwise(raw_efficiency))
         .otherwise(None)
     ).alias("daily_sleep_efficiency")
 
@@ -986,13 +1073,9 @@ def _extract_sleep_timing_daily() -> list[pl.Expr]:
     wake_minute = (
         pl.when(has_any_sleep)
         .then(
-            morning_sleep
-            .list.eval(
-                pl.when(pl.element() == 1)
-                .then(pl.int_range(pl.len()))
-                .otherwise(None)
-            )
-            .list.max()
+            morning_sleep.list.eval(
+                pl.when(pl.element() == 1).then(pl.int_range(pl.len())).otherwise(None)
+            ).list.max()
             + 1  # Wake is the minute after last sleep
         )
         .otherwise(None)
@@ -1005,13 +1088,9 @@ def _extract_sleep_timing_daily() -> list[pl.Expr]:
     bedtime_minute = (
         pl.when(has_any_sleep)
         .then(
-            evening_sleep
-            .list.eval(
-                pl.when(pl.element() == 1)
-                .then(pl.int_range(pl.len()))
-                .otherwise(None)
-            )
-            .list.min()
+            evening_sleep.list.eval(
+                pl.when(pl.element() == 1).then(pl.int_range(pl.len())).otherwise(None)
+            ).list.min()
             + EVENING_START  # Offset to get actual minute of day
         )
         .otherwise(None)
@@ -1024,16 +1103,13 @@ def _extract_sleep_timing_daily() -> list[pl.Expr]:
         .then(
             (
                 sleep_arr.list.eval(
-                    pl.when(pl.element() == 1)
-                    .then(pl.int_range(pl.len()))
-                    .otherwise(None)
+                    pl.when(pl.element() == 1).then(pl.int_range(pl.len())).otherwise(None)
                 ).list.min()
                 + sleep_arr.list.eval(
-                    pl.when(pl.element() == 1)
-                    .then(pl.int_range(pl.len()))
-                    .otherwise(None)
+                    pl.when(pl.element() == 1).then(pl.int_range(pl.len())).otherwise(None)
                 ).list.max()
-            ) / 2
+            )
+            / 2
         )
         .otherwise(None)
     ).alias("daily_sleep_midpoint")
@@ -1188,6 +1264,7 @@ def _extract_weekend_flag_daily() -> list[pl.Expr]:
 # Sleep - Main Functions
 # =============================================================================
 
+
 def extract_sleep_daily() -> list[pl.Expr]:
     """Extract day-level sleep metrics.
 
@@ -1274,9 +1351,7 @@ def _aggregate_sleep_timing_to_user() -> list[pl.Expr]:
 
         # IQR for variability
         exprs.append(
-            (
-                pl.col(metric).quantile(0.75) - pl.col(metric).quantile(0.25)
-            ).alias(f"{name}_iqr")
+            (pl.col(metric).quantile(0.75) - pl.col(metric).quantile(0.25)).alias(f"{name}_iqr")
         )
 
         # MAD (Median Absolute Deviation) = median(|x - median(x)|)
@@ -1285,9 +1360,9 @@ def _aggregate_sleep_timing_to_user() -> list[pl.Expr]:
         # in a single aggregation. We use std as a proxy, or compute MAD differently.
         # For now, we use a scaled IQR as MAD proxy: IQR * 0.7413 ≈ MAD for normal data
         exprs.append(
-            (
-                (pl.col(metric).quantile(0.75) - pl.col(metric).quantile(0.25)) * 0.7413
-            ).alias(f"{name}_mad_proxy")
+            ((pl.col(metric).quantile(0.75) - pl.col(metric).quantile(0.25)) * 0.7413).alias(
+                f"{name}_mad_proxy"
+            )
         )
 
     return exprs
@@ -1307,12 +1382,14 @@ def _aggregate_nighttime_movement_to_user() -> list[pl.Expr]:
         "daily_nighttime_energy",
     ]:
         base_name = metric.replace("daily_", "")
-        exprs.extend([
-            pl.col(metric).median().alias(f"{base_name}_p50"),
-            (
-                pl.col(metric).quantile(0.75) - pl.col(metric).quantile(0.25)
-            ).alias(f"{base_name}_iqr"),
-        ])
+        exprs.extend(
+            [
+                pl.col(metric).median().alias(f"{base_name}_p50"),
+                (pl.col(metric).quantile(0.75) - pl.col(metric).quantile(0.25)).alias(
+                    f"{base_name}_iqr"
+                ),
+            ]
+        )
 
     return exprs
 
@@ -1365,15 +1442,20 @@ def _aggregate_weekend_weekday_sleep_to_user() -> list[pl.Expr]:
 
     return [
         # Weekend sleep duration (median)
-        pl.col("daily_sleep_minutes").filter(is_weekend).median().alias("sleep_minutes_weekend_p50"),
+        pl.col("daily_sleep_minutes")
+        .filter(is_weekend)
+        .median()
+        .alias("sleep_minutes_weekend_p50"),
         # Weekday sleep duration (median)
-        pl.col("daily_sleep_minutes").filter(is_weekday).median().alias("sleep_minutes_weekday_p50"),
+        pl.col("daily_sleep_minutes")
+        .filter(is_weekday)
+        .median()
+        .alias("sleep_minutes_weekday_p50"),
         # Sleep duration ratio: weekend / weekday (>1 = more sleep on weekends)
         (
             pl.col("daily_sleep_minutes").filter(is_weekend).median()
             / pl.col("daily_sleep_minutes").filter(is_weekday).median().replace(0, None)
         ).alias("sleep_weekend_weekday_ratio"),
-
         # Bedtime comparison (social jet lag - bedtime component)
         pl.col("daily_bedtime_minute").filter(is_weekend).median().alias("bedtime_weekend_p50"),
         pl.col("daily_bedtime_minute").filter(is_weekday).median().alias("bedtime_weekday_p50"),
@@ -1382,7 +1464,6 @@ def _aggregate_weekend_weekday_sleep_to_user() -> list[pl.Expr]:
             pl.col("daily_bedtime_minute").filter(is_weekend).median()
             - pl.col("daily_bedtime_minute").filter(is_weekday).median()
         ).alias("bedtime_weekend_shift"),
-
         # Wake time comparison (social jet lag - wake component)
         pl.col("daily_wake_minute").filter(is_weekend).median().alias("wake_weekend_p50"),
         pl.col("daily_wake_minute").filter(is_weekday).median().alias("wake_weekday_p50"),
@@ -1391,7 +1472,6 @@ def _aggregate_weekend_weekday_sleep_to_user() -> list[pl.Expr]:
             pl.col("daily_wake_minute").filter(is_weekend).median()
             - pl.col("daily_wake_minute").filter(is_weekday).median()
         ).alias("wake_weekend_shift"),
-
         # Social jet lag: shift in sleep midpoint between weekday and weekend
         # Absolute difference captures magnitude regardless of direction
         (
@@ -1400,7 +1480,6 @@ def _aggregate_weekend_weekday_sleep_to_user() -> list[pl.Expr]:
                 - pl.col("daily_sleep_midpoint").filter(is_weekday).median()
             ).abs()
         ).alias("social_jet_lag"),
-
         # Count of weekend vs weekday days (for data quality check)
         is_weekend.sum().alias("n_weekend_days"),
         is_weekday.sum().alias("n_weekday_days"),
@@ -1514,7 +1593,10 @@ def _extract_acrophase_daily(channel: int, signal_name: str) -> pl.Expr:
         or null when total activity is zero.
     """
     arr = pl.col("data").arr.get(channel)
-    hourly_sums = [arr.list.slice(h * 60, 60).list.eval(pl.element().fill_nan(None)).list.sum() for h in range(24)]
+    hourly_sums = [
+        arr.list.slice(h * 60, 60).list.eval(pl.element().fill_nan(None)).list.sum()
+        for h in range(24)
+    ]
     total = pl.sum_horizontal(hourly_sums)
     return (
         pl.when(total.is_not_null() & (total > 0))
@@ -1527,6 +1609,7 @@ def _extract_acrophase_daily(channel: int, signal_name: str) -> pl.Expr:
 # =============================================================================
 # Circadian - Main Daily Extraction
 # =============================================================================
+
 
 def extract_circadian_daily() -> list[pl.Expr]:
     """Extract day-level circadian rhythm metrics.
@@ -1578,7 +1661,10 @@ def extract_circadian_daily() -> list[pl.Expr]:
         arr = pl.col("data").arr.get(channel)
         # fill_nan(None) so all-NaN channels produce null sums (not NaN),
         # which propagate correctly through arithmetic and the denominator guard.
-        hour_vals = [arr.list.slice(h * 60, 60).list.eval(pl.element().fill_nan(None)).list.sum() for h in range(24)]
+        hour_vals = [
+            arr.list.slice(h * 60, 60).list.eval(pl.element().fill_nan(None)).list.sum()
+            for h in range(24)
+        ]
         N = 24
 
         sq_diffs = [(hour_vals[h] - hour_vals[h - 1]).pow(2) for h in range(1, N)]
@@ -1602,6 +1688,7 @@ def extract_circadian_daily() -> list[pl.Expr]:
 # Circadian - User-Level Aggregation Helpers
 # =============================================================================
 
+
 def _aggregate_time_windows_to_user() -> list[pl.Expr]:
     """Aggregate time-window sums to user level.
 
@@ -1622,19 +1709,20 @@ def _aggregate_time_windows_to_user() -> list[pl.Expr]:
         night = pl.col(f"daily_{signal_name}_night")
 
         # Median activity per time window
-        exprs.extend([
-            morning.median().alias(f"{signal_name}_morning_p50"),
-            afternoon.median().alias(f"{signal_name}_afternoon_p50"),
-            evening.median().alias(f"{signal_name}_evening_p50"),
-            night.median().alias(f"{signal_name}_night_p50"),
-        ])
+        exprs.extend(
+            [
+                morning.median().alias(f"{signal_name}_morning_p50"),
+                afternoon.median().alias(f"{signal_name}_afternoon_p50"),
+                evening.median().alias(f"{signal_name}_evening_p50"),
+                night.median().alias(f"{signal_name}_night_p50"),
+            ]
+        )
 
         # Chronotype ratio: morning / (morning + evening)
         exprs.append(
-            (
-                morning.median()
-                / (morning.median() + evening.median()).replace(0, None)
-            ).alias(f"chronotype_morning_ratio_{signal_name}")
+            (morning.median() / (morning.median() + evening.median()).replace(0, None)).alias(
+                f"chronotype_morning_ratio_{signal_name}"
+            )
         )
 
         # Day/night ratio: (morning + afternoon + evening) / night
@@ -1677,16 +1765,16 @@ def _aggregate_acrophase_to_user() -> list[pl.Expr]:
         # IQR/2 as a robust dispersion proxy: low = consistent peak timing,
         # high = erratic peak timing across days.
         exprs.append(
-            ((acro.quantile(0.75) - acro.quantile(0.25)) * 0.5)
-            .alias(f"acrophase_{signal_name}_spread")
+            ((acro.quantile(0.75) - acro.quantile(0.25)) * 0.5).alias(
+                f"acrophase_{signal_name}_spread"
+            )
         )
 
         # Social jetlag: |weekend acrophase - weekday acrophase|
         exprs.append(
-            (
-                acro.filter(is_weekend).median()
-                - acro.filter(is_weekday).median()
-            ).abs().alias(f"social_jetlag_{signal_name}")
+            (acro.filter(is_weekend).median() - acro.filter(is_weekday).median())
+            .abs()
+            .alias(f"social_jetlag_{signal_name}")
         )
 
     return exprs
@@ -1733,16 +1821,12 @@ def _aggregate_is_to_user() -> list[pl.Expr]:
 
         # Numerator: D * sum_h((hourly_mean_h - grand_mean)^2)
         # This is the "between-hours" sum of squares, scaled by D
-        numerator = n_days * pl.sum_horizontal([
-            (hm - grand_mean).pow(2) for hm in hourly_means
-        ])
+        numerator = n_days * pl.sum_horizontal([(hm - grand_mean).pow(2) for hm in hourly_means])
 
         # Denominator: total sum of squares over all (day, hour) pairs
         # In agg context, ((col - grand_mean).pow(2)).sum() sums across days
         # for that hour column.
-        denominator = pl.sum_horizontal([
-            ((col - grand_mean).pow(2)).sum() for col in hour_cols
-        ])
+        denominator = pl.sum_horizontal([((col - grand_mean).pow(2)).sum() for col in hour_cols])
 
         exprs.append(
             pl.when(denominator > 0)
@@ -1790,10 +1874,7 @@ def _aggregate_npcra_to_user() -> list[pl.Expr]:
     """
     exprs = []
     for _channel, signal_name in _CIRCADIAN_SIGNALS:
-        hourly_means = [
-            pl.col(f"daily_hour_{h:02d}_{signal_name}").mean()
-            for h in range(24)
-        ]
+        hourly_means = [pl.col(f"daily_hour_{h:02d}_{signal_name}").mean() for h in range(24)]
 
         # 24 rolling sums of 5 consecutive hours (circular wrap-around)
         rolling_5 = [
@@ -1813,14 +1894,17 @@ def _aggregate_npcra_to_user() -> list[pl.Expr]:
         l5_value = l5_list.list.min() / 5.0
         m10_value = m10_list.list.max() / 10.0
 
-        exprs.extend([
-            l5_value.alias(f"l5_{signal_name}"),
-            l5_list.list.arg_min().alias(f"l5_onset_{signal_name}"),
-            m10_value.alias(f"m10_{signal_name}"),
-            m10_list.list.arg_max().alias(f"m10_onset_{signal_name}"),
-            ((m10_value - l5_value) / (m10_value + l5_value).replace(0, None))
-                .alias(f"ra_{signal_name}"),
-        ])
+        exprs.extend(
+            [
+                l5_value.alias(f"l5_{signal_name}"),
+                l5_list.list.arg_min().alias(f"l5_onset_{signal_name}"),
+                m10_value.alias(f"m10_{signal_name}"),
+                m10_list.list.arg_max().alias(f"m10_onset_{signal_name}"),
+                ((m10_value - l5_value) / (m10_value + l5_value).replace(0, None)).alias(
+                    f"ra_{signal_name}"
+                ),
+            ]
+        )
 
     return exprs
 
@@ -1828,6 +1912,7 @@ def _aggregate_npcra_to_user() -> list[pl.Expr]:
 # =============================================================================
 # Circadian - Main User Aggregation
 # =============================================================================
+
 
 def aggregate_circadian_to_user() -> list[pl.Expr]:
     """Aggregate day-level circadian metrics to user-level features.
@@ -1873,6 +1958,7 @@ def aggregate_circadian_to_user() -> list[pl.Expr]:
 # =============================================================================
 # Convenience Functions
 # =============================================================================
+
 
 def get_all_daily_extractors() -> list[pl.Expr]:
     """Get all day-level feature extraction expressions.

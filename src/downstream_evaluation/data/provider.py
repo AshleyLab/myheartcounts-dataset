@@ -20,7 +20,7 @@ mask. Granularity controls only *which* lookup supplies eligibility:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
@@ -72,10 +72,12 @@ class TaskDataProvider:
         split_users: dict[str, list[str] | set[str]],
         granularity: str = "series",
     ) -> None:
-        """Args:
-        lookup_path: path to the labels lookup parquet for this granularity.
-        split_users: ``{"train"/"validation"/"test": [user_id, ...]}``.
-        granularity: ``"daily"`` / ``"weekly"`` / ``"series"``.
+        """Load the labels lookup and record the per-split user sets.
+
+        Args:
+            lookup_path: path to the labels lookup parquet for this granularity.
+            split_users: ``{"train"/"validation"/"test": [user_id, ...]}``.
+            granularity: ``"daily"`` / ``"weekly"`` / ``"series"``.
         """
         if granularity not in LOOKUP_BY_GRANULARITY:
             raise ValueError(

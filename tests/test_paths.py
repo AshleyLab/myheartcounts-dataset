@@ -35,25 +35,32 @@ def _isolate_env(monkeypatch):
 
 
 class TestDataDir:
+    """Cover ``data_dir`` resolution precedence and path normalization."""
+
     def test_default_under_user_cache(self):
+        """Default to the per-user cache dir when no override or env var is set."""
         result = data_dir()
         assert result == Path.home() / ".cache" / "openmhc" / "data"
 
     def test_explicit_override_wins(self, tmp_path):
+        """Resolve an explicit override argument to an absolute path."""
         result = data_dir(tmp_path / "explicit")
         assert result == (tmp_path / "explicit").resolve()
 
     def test_env_var_override(self, monkeypatch, tmp_path):
+        """Use MHC_DATA_DIR when set and no explicit override is given."""
         monkeypatch.setenv("MHC_DATA_DIR", str(tmp_path / "from-env"))
         result = data_dir()
         assert result == (tmp_path / "from-env").resolve()
 
     def test_explicit_wins_over_env(self, monkeypatch, tmp_path):
+        """Prefer an explicit override over the MHC_DATA_DIR env var."""
         monkeypatch.setenv("MHC_DATA_DIR", str(tmp_path / "from-env"))
         result = data_dir(tmp_path / "explicit")
         assert result == (tmp_path / "explicit").resolve()
 
     def test_tilde_expansion(self):
+        """Expand a leading ``~`` in the override to the home directory."""
         result = data_dir("~/some-mhc-data")
         assert result == (Path.home() / "some-mhc-data").resolve()
 
@@ -62,10 +69,12 @@ class TestDatasetPaths:
     """Confirm the eval pipeline routes through ``data_dir`` consistently."""
 
     def test_default_root_matches_data_dir(self):
+        """Anchor the resolved root to ``data_dir`` by default."""
         paths = _DatasetPaths.resolve()
         assert paths.root == data_dir()
 
     def test_all_subpaths_under_root(self, tmp_path):
+        """Place every dataset subpath under the resolved root."""
         paths = _DatasetPaths.resolve(tmp_path)
         assert paths.daily_hourly_hf == tmp_path / "processed" / "daily_hourly_hf"
         assert paths.daily_hf == tmp_path / "processed" / "daily_hf"
@@ -80,12 +89,14 @@ class TestDatasetPaths:
         assert paths.labels_dir == tmp_path / "labels"
 
     def test_env_override_propagates(self, monkeypatch, tmp_path):
+        """Propagate the MHC_DATA_DIR override to root and its subpaths."""
         monkeypatch.setenv("MHC_DATA_DIR", str(tmp_path))
         paths = _DatasetPaths.resolve()
         assert paths.root == tmp_path.resolve()
         assert paths.daily_hf.parent.parent == tmp_path.resolve()
 
     def test_explicit_override_propagates(self, tmp_path):
+        """Propagate an explicit override argument to the resolved root."""
         paths = _DatasetPaths.resolve(tmp_path / "explicit")
         assert paths.root == (tmp_path / "explicit").resolve()
 
@@ -94,17 +105,17 @@ class TestLabelsEnvWiring:
     """Verify the labels.api env-var bridge is set when missing."""
 
     def test_sets_labels_path_when_unset(self, monkeypatch, tmp_path):
+        """Set the labels env vars from the labels dir when they are unset."""
         monkeypatch.delenv("LABELS_DATA_PATH", raising=False)
         monkeypatch.delenv("CONTEXT_LABELS_PATH", raising=False)
         from openmhc._evaluate import _ensure_labels_env
 
         _ensure_labels_env(tmp_path / "labels")
         assert os.environ["LABELS_DATA_PATH"] == str(tmp_path / "labels" / "last_labels.json")
-        assert os.environ["CONTEXT_LABELS_PATH"] == str(
-            tmp_path / "labels" / "context_labels.json"
-        )
+        assert os.environ["CONTEXT_LABELS_PATH"] == str(tmp_path / "labels" / "context_labels.json")
 
     def test_respects_user_overrides(self, monkeypatch, tmp_path):
+        """Leave pre-existing user-set labels env vars untouched."""
         monkeypatch.setenv("LABELS_DATA_PATH", "/somewhere/else.json")
         monkeypatch.setenv("CONTEXT_LABELS_PATH", "/somewhere/ctx.json")
         from openmhc._evaluate import _ensure_labels_env
@@ -118,12 +129,14 @@ class TestDownloadDatasetSurface:
     """Verify the download helper signature and error paths."""
 
     def test_unknown_version_raises(self):
+        """Raise ValueError when an unrecognized version is requested."""
         from openmhc import download_dataset
 
         with pytest.raises(ValueError, match="version must be one of"):
             download_dataset(version="bogus")
 
     def test_unpublished_version_raises(self):
+        """Raise ValueError when a known but unpublished version is requested."""
         from openmhc import download_dataset
 
         with pytest.raises(ValueError, match="not yet published"):

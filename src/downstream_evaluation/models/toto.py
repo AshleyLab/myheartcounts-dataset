@@ -127,9 +127,18 @@ class Toto(TSFMEncoder):
     pooling_label = "none_channelwise_last_latent"
     input = Window(WINDOW_HOURS, anchor="window_end")  # materializer builds the 2048h windows
 
-    def __init__(self, data_dir=None, cache_dir=None, checkpoint=DEFAULT_CHECKPOINT,
-                 base_checkpoint=DEFAULT_BASE_CHECKPOINT, toto_repo=DEFAULT_TOTO_REPO,
-                 lora_alpha=None, batch_size=32, seed=42):
+    def __init__(
+        self,
+        data_dir=None,
+        cache_dir=None,
+        checkpoint=DEFAULT_CHECKPOINT,
+        base_checkpoint=DEFAULT_BASE_CHECKPOINT,
+        toto_repo=DEFAULT_TOTO_REPO,
+        lora_alpha=None,
+        batch_size=32,
+        seed=42,
+    ):
+        """Configure the TSFM base plus the Toto checkpoint / repo / LoRA-merge settings."""
         super().__init__(data_dir=data_dir, cache_dir=cache_dir, batch_size=batch_size, seed=seed)
         self.checkpoint = checkpoint
         self.base_checkpoint = base_checkpoint

@@ -40,6 +40,8 @@ _XGB_PARAMS = dict(
     reg_lambda=1.0,
     n_jobs=-1,
 )
+
+
 def _build_xgb(task_type: str, seed: int):
     """Build the bundled XGBoost estimator for a task type.
 
@@ -67,6 +69,7 @@ def _build_xgb(task_type: str, seed: int):
         # sub-classifiers use XGBoost's default seed.
         return XGBOrdinalWrapper(params={**_XGB_PARAMS, "objective": "binary:logistic"})
     raise ValueError(f"unsupported task type: {task_type!r}")
+
 
 # Per-pipeline feature tables (one row per user); joined on user_id.
 _PARQUET_NAMES = [
@@ -123,8 +126,6 @@ def extract_xgboost_features(
     ``pipeline_{timeseries,day_dynamics,curve_analysis}_user_features.parquet`` plus
     intermediates under ``output_dir``.
     """
-    from openmhc._evaluate import _DatasetPaths, _ensure_labels_env
-
     from downstream_evaluation.models.xgboost.pipeline_curve_analysis import (
         build_curve_analysis_features,
     )
@@ -135,6 +136,7 @@ def extract_xgboost_features(
         build_user_features_chunked,
     )
     from downstream_evaluation.models.xgboost.preprocessing import build_cutoff_dates
+    from openmhc._evaluate import _DatasetPaths, _ensure_labels_env
 
     paths = _DatasetPaths.resolve(data_dir)
     _ensure_labels_env(paths.labels_dir)  # build_cutoff_dates reads the Labels API
@@ -143,11 +145,16 @@ def extract_xgboost_features(
     out.mkdir(parents=True, exist_ok=True)
 
     # Per-user future-data cutoff = latest valid label date + max_future_days.
-    cutoff_dates = build_cutoff_dates(max_future_days=max_future_days) if max_future_days > 0 else None
+    cutoff_dates = (
+        build_cutoff_dates(max_future_days=max_future_days) if max_future_days > 0 else None
+    )
     suffix = f"_cutoff{max_future_days}" if max_future_days > 0 else ""
     logger.info(
         "xgboost feature build: arrow=%s out=%s nonwear<=%d cutoff_days=%d users=%s",
-        arrow_dir, out, max_nonwear_minutes, max_future_days,
+        arrow_dir,
+        out,
+        max_nonwear_minutes,
+        max_future_days,
         len(cutoff_dates) if cutoff_dates else "all",
     )
 
@@ -156,8 +163,11 @@ def extract_xgboost_features(
     ckpt_dir = out / "timeseries_daily_chunks"
     if force or not ts_out.exists():
         build_user_features_chunked(
-            arrow_dir=arrow_dir, output_path=ts_out, checkpoint_dir=ckpt_dir,
-            max_nonwear_minutes=max_nonwear_minutes, variance_filter=variance_filter,
+            arrow_dir=arrow_dir,
+            output_path=ts_out,
+            checkpoint_dir=ckpt_dir,
+            max_nonwear_minutes=max_nonwear_minutes,
+            variance_filter=variance_filter,
             cutoff_dates=cutoff_dates,
         )
 
@@ -165,16 +175,20 @@ def extract_xgboost_features(
     dd_out = out / "pipeline_day_dynamics_user_features.parquet"
     if force or not dd_out.exists():
         build_signal_processing_features(
-            checkpoint_dir=ckpt_dir, output_path=dd_out, cutoff_dates=cutoff_dates,
+            checkpoint_dir=ckpt_dir,
+            output_path=dd_out,
+            cutoff_dates=cutoff_dates,
         )
 
     # 3. Curve analysis — independent of the timeseries pipeline.
     ca_out = out / "pipeline_curve_analysis_user_features.parquet"
     if force or not ca_out.exists():
         build_curve_analysis_features(
-            arrow_dir=arrow_dir, output_path=ca_out,
+            arrow_dir=arrow_dir,
+            output_path=ca_out,
             checkpoint_path=out / f"curve_analysis_avg_curves{suffix}.parquet",
-            max_nonwear_minutes=max_nonwear_minutes, variance_filter=variance_filter,
+            max_nonwear_minutes=max_nonwear_minutes,
+            variance_filter=variance_filter,
             cutoff_dates=cutoff_dates,
         )
     logger.info("xgboost features written -> %s", out)
@@ -202,14 +216,16 @@ class XGBoost:
         max_future_days: int = DEFAULT_MAX_FUTURE_DAYS,
         max_nonwear_minutes: int = DEFAULT_MAX_NONWEAR_MINUTES,
     ):
-        """Args:
-        data_dir: dataset root (``daily_hf`` + labels live under it); ``MHC_DATA_DIR`` if None.
-        seed: random_state for the trees.
-        features_dir: explicit feature-table dir to load/build into. Defaults to the
-            build-on-miss cache ``results/xgboost_features/from_raw`` (point this at a
-            prebuilt feature-table directory to load it instead of building).
-        max_future_days / max_nonwear_minutes: from-raw build parameters (future-data
-            cutoff, max non-wear minutes per day).
+        """Configure the predictor and its build-on-miss feature cache.
+
+        Args:
+            data_dir: dataset root (``daily_hf`` + labels live under it); ``MHC_DATA_DIR`` if None.
+            seed: random_state for the trees.
+            features_dir: explicit feature-table dir to load/build into. Defaults to the
+                build-on-miss cache ``results/xgboost_features/from_raw`` (point this at a
+                prebuilt feature-table directory to load it instead of building).
+            max_future_days: from-raw build parameter; per-user future-data cutoff in days.
+            max_nonwear_minutes: from-raw build parameter; max non-wear minutes per day.
         """
         self.seed = seed
         self._data_dir = data_dir
@@ -227,8 +243,11 @@ class XGBoost:
         return Path("results") / "xgboost_features" / "from_raw"
 
     def _load_features_from(self, features_dir) -> None:
-        """Load the joined per-user feature table from ``features_dir`` into
-        ``self._X`` / ``self._index``."""
+        """Load the joined per-user feature table into ``self._X`` / ``self._index``.
+
+        Reads from ``features_dir``, replaces infinities with NaN (XGBoost handles
+        NaN natively), and builds the ``user_id`` -> row-index map.
+        """
         merged = load_handcrafted_features(features_dir)
         feature_cols = [c for c in merged.columns if c != "user_id"]
         uids = [str(u) for u in merged["user_id"].to_list()]
@@ -256,6 +275,11 @@ class XGBoost:
         return self._X[[self._index[str(u)] for u in user_ids]]
 
     def fit(self, task_data: TaskData) -> None:
+        """Ensure features, then fit the task-type-routed XGBoost estimator.
+
+        Resolves the task type, gathers the cohort's feature rows and labels, and
+        fits the estimator built by :func:`_build_xgb` for that task type.
+        """
         from downstream_evaluation.evaluation.metrics import get_task_type
 
         self._ensure_features()
@@ -268,6 +292,11 @@ class XGBoost:
         self._clf.fit(X, y)
 
     def predict(self, task_data: TaskData) -> np.ndarray:
+        """Predict for the cohort: positive-class probability for binary, else labels.
+
+        For ``binary`` tasks returns ``predict_proba`` of the positive class; for
+        every other task type returns the estimator's point predictions.
+        """
         X = self._matrix(task_data.user_ids)
         if self._ttype == "binary":
             return self._clf.predict_proba(X)[:, 1]

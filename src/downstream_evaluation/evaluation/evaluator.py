@@ -50,9 +50,12 @@ def _metrics_for(task: str, y_true, y_pred) -> dict[str, float]:
 
 
 def _is_encoder(model) -> bool:
-    """An Encoder produces embeddings (``encode`` per participant, or ``encode_cohort``
+    """Return True if ``model`` is an Encoder (rather than a Predictor).
+
+    An Encoder produces embeddings (``encode`` per participant, or ``encode_cohort``
     for the cohort matrix); a Predictor produces predictions (``fit``/``predict``).
-    Encoder takes priority if a model exposes both."""
+    Encoder takes priority if a model exposes both.
+    """
     return hasattr(model, "encode") or hasattr(model, "encode_cohort")
 
 
@@ -60,9 +63,11 @@ class DownstreamEvaluator:
     """Run the per-task fit→predict→score loop for one model."""
 
     def __init__(self, seed: int = 42, pca_n_components: int | None = 50):
-        """Args:
-        seed: random_state for the probe / model.
-        pca_n_components: PCA dim for the encoder probe (``None`` to disable).
+        """Configure the probe's random seed and PCA dimensionality.
+
+        Args:
+            seed: random_state for the probe / model.
+            pca_n_components: PCA dim for the encoder probe (``None`` to disable).
         """
         self.seed = seed
         self.pca_n_components = pca_n_components

@@ -77,9 +77,19 @@ class Chronos2(TSFMEncoder):
     name = "chronos2"
     pooling_label = "chronos2_predict_last_latent"
 
-    def __init__(self, data_dir=None, cache_dir=None, checkpoint=DEFAULT_CHECKPOINT,
-                 base_checkpoint=DEFAULT_BASE_CHECKPOINT, chronos_repo=DEFAULT_CHRONOS_REPO,
-                 prediction_length=PREDICTION_LENGTH, window_hours=None, batch_size=32, seed=42):
+    def __init__(
+        self,
+        data_dir=None,
+        cache_dir=None,
+        checkpoint=DEFAULT_CHECKPOINT,
+        base_checkpoint=DEFAULT_BASE_CHECKPOINT,
+        chronos_repo=DEFAULT_CHRONOS_REPO,
+        prediction_length=PREDICTION_LENGTH,
+        window_hours=None,
+        batch_size=32,
+        seed=42,
+    ):
+        """Configure the Chronos-2 checkpoint, repo, window, and extraction settings."""
         super().__init__(data_dir=data_dir, cache_dir=cache_dir, batch_size=batch_size, seed=seed)
         self.checkpoint = checkpoint
         self.base_checkpoint = base_checkpoint
@@ -90,20 +100,26 @@ class Chronos2(TSFMEncoder):
     def _load_model(self, device):
         pipeline = _load_chronos2_pipeline(self.checkpoint, _resolve(self.chronos_repo), device)
         ctx = int(pipeline.model_context_length)
-        window_hours = ctx if self._window_override is None else min(int(self._window_override), ctx)
+        window_hours = (
+            ctx if self._window_override is None else min(int(self._window_override), ctx)
+        )
         return pipeline, window_hours
 
     def _run_batch(self, handle, examples, window_hours) -> np.ndarray:
         import torch
 
         x_np = np.stack(
-            [np.where(e.padding_mask, e.window, np.nan).astype(np.float32, copy=False)
-             for e in examples]
+            [
+                np.where(e.padding_mask, e.window, np.nan).astype(np.float32, copy=False)
+                for e in examples
+            ]
         )
         with torch.no_grad():
             latents = handle.predict_last_latent(
-                x_np, prediction_length=self.prediction_length,
-                batch_size=len(examples), context_length=window_hours,
+                x_np,
+                prediction_length=self.prediction_length,
+                batch_size=len(examples),
+                context_length=window_hours,
             )
         embeddings = torch.stack([latent.detach().float().cpu() for latent in latents], dim=0)
         return embeddings.numpy().astype(np.float32)

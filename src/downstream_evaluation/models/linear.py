@@ -58,9 +58,11 @@ class Linear:
     input = Raw(resolution="hourly")  # eligible raw daily (24-bin) days; pooled to mean/std
 
     def __init__(self, data_dir: str | None = None, seed: int = 42) -> None:
-        """Args:
-        data_dir: dataset root (for the demographics lookup); ``MHC_DATA_DIR`` if None.
-        seed: random_state for the probe.
+        """Store the data root and seed; defer the demographics lookup and probe.
+
+        Args:
+            data_dir: dataset root (for the demographics lookup); ``MHC_DATA_DIR`` if None.
+            seed: random_state for the probe.
         """
         self.seed = seed
         self._data_dir = data_dir
@@ -73,9 +75,8 @@ class Linear:
             return
         import pandas as pd
 
-        from openmhc._evaluate import _DatasetPaths
-
         from downstream_evaluation.demo_covariates import build_demo_user_lookup_from_labels_df
+        from openmhc._evaluate import _DatasetPaths
 
         paths = _DatasetPaths.resolve(self._data_dir)
         labels_df = pd.read_parquet(paths.daily_labels_lookup)
@@ -93,6 +94,7 @@ class Linear:
         return np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
 
     def fit(self, task_data: TaskData) -> None:
+        """Fit the task-type-appropriate linear probe on the pooled features + labels."""
         from downstream_evaluation.config import ClassifierConfig
         from downstream_evaluation.evaluation.metrics import get_task_type
         from downstream_evaluation.models.registry import create_model
@@ -109,6 +111,7 @@ class Linear:
         self._clf.fit(X, y)
 
     def predict(self, task_data: TaskData) -> np.ndarray:
+        """Predict per user: positive-class probability for binary, else the direct output."""
         X = self._features(task_data)
         if self._ttype == "binary":
             return self._clf.predict_proba(X)[:, 1]

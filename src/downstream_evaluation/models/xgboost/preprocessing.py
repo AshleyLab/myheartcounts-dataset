@@ -50,11 +50,11 @@ _SHORT_SLEEP_THRESHOLD: float = 180.0  # minutes (3 hours)
 # Matches ZeroToNaNTransform.__init__ defaults. Flights (ch 2) excluded
 # because ~55% of samples are legitimately all-zero.
 _ALL_ZERO_NAN_CHANNELS: tuple[int, ...] = (
-    IPHONE_STEPS,     # 0
+    IPHONE_STEPS,  # 0
     IPHONE_DISTANCE,  # 1
-    WATCH_STEPS,      # 3
-    WATCH_DISTANCE,   # 4
-    WATCH_ENERGY,     # 6
+    WATCH_STEPS,  # 3
+    WATCH_DISTANCE,  # 4
+    WATCH_ENERGY,  # 6
 )
 
 _MINUTES_PER_DAY = 1440
@@ -111,9 +111,7 @@ def apply_zero_to_nan(df: pl.DataFrame) -> pl.DataFrame:
         arr = arrays[ch]
         total_sleep = np.nansum(arr, axis=1)  # sum ignoring NaN, per row
         short = (total_sleep > 0) & (total_sleep < _SHORT_SLEEP_THRESHOLD)
-        arr[np.ix_(short, np.arange(T))] = np.where(
-            arr[short] == 0, np.nan, arr[short]
-        )
+        arr[np.ix_(short, np.arange(T))] = np.where(arr[short] == 0, np.nan, arr[short])
 
     # Reconstruct Array(List(Float32), 19) via PyArrow.
     stacked = np.empty((n, N_CHANNELS, T), dtype=np.float32)
@@ -215,7 +213,5 @@ def build_cutoff_dates(max_future_days: int = 365) -> dict[str, str]:
 
     delta = dt.timedelta(days=max_future_days)
     cutoffs = {uid: (d + delta).isoformat() for uid, d in user_latest.items()}
-    _log.info(
-        "Built cutoff dates: %d users, max_future_days=%d", len(cutoffs), max_future_days
-    )
+    _log.info("Built cutoff dates: %d users, max_future_days=%d", len(cutoffs), max_future_days)
     return cutoffs

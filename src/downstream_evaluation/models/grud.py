@@ -64,12 +64,11 @@ class _UserDataset:
         self.deltas = _parse_delta_torch(self.missing_mask)
         obs = self.missing_mask
         self.empirical_mean = torch.nan_to_num(
-            (self.values * obs).reshape(-1, X.shape[2]).sum(0)
-            / obs.reshape(-1, X.shape[2]).sum(0),
+            (self.values * obs).reshape(-1, X.shape[2]).sum(0) / obs.reshape(-1, X.shape[2]).sum(0),
             nan=0.0,
         )
         # group segment indices by user (preserve first-seen order)
-        order, seen = [], {}
+        seen = {}
         for i, u in enumerate(uids):
             seen.setdefault(u, []).append(i)
         self.user_ids = list(seen.keys())
@@ -77,8 +76,7 @@ class _UserDataset:
         self.y_by_task = {t: y_by_task[t] for t in task_names}
         # per-user label = the (broadcast) label of the user's first segment
         self.user_label = {
-            t: np.array([self.y_by_task[t][segs[0]] for segs in self.user_segs])
-            for t in task_names
+            t: np.array([self.y_by_task[t][segs[0]] for segs in self.user_segs]) for t in task_names
         }
 
     def __len__(self):
@@ -140,8 +138,11 @@ def _build_module(n_steps, n_features, cls_n, reg_tasks, ord_n):
 
         def forward(self, inp):
             _, hidden = self.backbone(
-                inp["values"], inp["missing_mask"], inp["deltas"],
-                inp["empirical_mean"], inp["X_filledLOCF"],
+                inp["values"],
+                inp["missing_mask"],
+                inp["deltas"],
+                inp["empirical_mean"],
+                inp["X_filledLOCF"],
             )
             rep = _scatter_mean(hidden, inp["segment_to_user"], inp["n_users"])
             out = {}
@@ -219,7 +220,9 @@ class _Trainer:
             lg = logits[t][m]
             ks = torch.arange(lg.shape[1], device=self.device).unsqueeze(0)
             cum = (y[m].unsqueeze(1) > ks).float()
-            total = total + F.binary_cross_entropy_with_logits(lg, cum, pos_weight=self._ord_w.get(t))
+            total = total + F.binary_cross_entropy_with_logits(
+                lg, cum, pos_weight=self._ord_w.get(t)
+            )
             nvalid += 1
         return total / max(nvalid, 1)
 
@@ -236,13 +239,19 @@ class _Trainer:
         opt = torch.optim.Adam(self.model.parameters(), lr=LR)
         coll = lambda b: _collate(b, self.task_names)  # noqa: E731
         tl = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True, collate_fn=coll)
-        vl = DataLoader(val_ds, batch_size=BATCH_SIZE, shuffle=False, collate_fn=coll) if val_ds else None
+        vl = (
+            DataLoader(val_ds, batch_size=BATCH_SIZE, shuffle=False, collate_fn=coll)
+            if val_ds
+            else None
+        )
 
         best, best_state, bad = float("inf"), None, 0
         for epoch in range(EPOCHS):
             self.model.train()
             for batch in tl:
-                batch = {k: (v.to(self.device) if torch.is_tensor(v) else v) for k, v in batch.items()}
+                batch = {
+                    k: (v.to(self.device) if torch.is_tensor(v) else v) for k, v in batch.items()
+                }
                 opt.zero_grad()
                 loss = self._loss(self.model(batch), batch)
                 if loss.item() == 0.0:
@@ -275,7 +284,9 @@ class _Trainer:
         s, n = 0.0, 0
         with torch.no_grad():
             for batch in loader:
-                batch = {k: (v.to(self.device) if torch.is_tensor(v) else v) for k, v in batch.items()}
+                batch = {
+                    k: (v.to(self.device) if torch.is_tensor(v) else v) for k, v in batch.items()
+                }
                 loss = self._loss(self.model(batch), batch)
                 s += loss.item() * batch["n_users"]
                 n += batch["n_users"]
@@ -291,7 +302,9 @@ class _Trainer:
         preds = []
         with torch.no_grad():
             for batch in loader:
-                batch = {k: (v.to(self.device) if torch.is_tensor(v) else v) for k, v in batch.items()}
+                batch = {
+                    k: (v.to(self.device) if torch.is_tensor(v) else v) for k, v in batch.items()
+                }
                 out = self.model(batch)[task]
                 if task_type == "binary":
                     preds.append(torch.softmax(out, dim=1)[:, 1].cpu().numpy())
@@ -317,6 +330,13 @@ class GRUD:
     needs_segments = False  # builds its own per-user segments from raw
 
     def __init__(self, data_dir=None, tasks=None, seed=42):
+        """Store the data root, multi-task list, and seed; defer model/segment loading.
+
+        Args:
+            data_dir: dataset root; ``MHC_DATA_DIR`` if None.
+            tasks: the task list to train jointly over (required before ``fit``).
+            seed: seed for torch / numpy training determinism.
+        """
         self._data_dir = data_dir
         self._tasks = list(tasks) if tasks is not None else None
         self.seed = seed
@@ -445,9 +465,11 @@ class GRUD:
             Xs.append(segs)
             uids.extend([u] * len(segs))
         dummy = {
-            t: (np.full(sum(len(self._segments[u]) for u in users), MISSING_LABEL)
+            t: (
+                np.full(sum(len(self._segments[u]) for u in users), MISSING_LABEL)
                 if self._task_types[t] != "regression"
-                else np.full(sum(len(self._segments[u]) for u in users), np.nan))
+                else np.full(sum(len(self._segments[u]) for u in users), np.nan)
+            )
             for t in self._tasks
         }
         ds = _UserDataset(
@@ -458,5 +480,6 @@ class GRUD:
             mu, sd = self._reg_stats[task]
             preds = preds * sd + mu  # reverse the train-split z-score
         pred_by_user = dict(zip(ds.user_ids, preds))
-        return np.array([pred_by_user.get(str(u), 0.0) for u in task_data.user_ids], dtype=np.float64)
-
+        return np.array(
+            [pred_by_user.get(str(u), 0.0) for u in task_data.user_ids], dtype=np.float64
+        )

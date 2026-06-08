@@ -13,8 +13,10 @@ import numpy as np
 
 @runtime_checkable
 class Encoder(Protocol):
-    """Protocol for health-prediction encoders — the model contract for Surface 1
-    (external submissions) and the bundled Surface-2 baselines alike.
+    """Protocol for health-prediction encoders.
+
+    The model contract for Surface 1 (external submissions) and the bundled
+    Surface-2 baselines alike.
 
     An encoder maps **one participant's eligible wearable data** — already filtered
     to the task's cohort and temporal window by the benchmark (IC + TC) — to a

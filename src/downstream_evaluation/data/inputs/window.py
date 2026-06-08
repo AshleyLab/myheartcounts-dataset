@@ -31,8 +31,11 @@ class WindowBuilder(InputBuilder):
     """Per-participant anchored hour-window of shape ``(1, hours, 19)``."""
 
     def __init__(self, data_dir: str | None, spec, temporal=None) -> None:
-        """Args: ``spec`` is a :class:`~...inputs.spec.Window`; ``temporal`` supplies the
-        per-task forward window for ``anchor="window_end"`` (defaults to the shared policy)."""
+        """Bind the spec and forward-window source for this builder.
+
+        ``spec`` is a :class:`~...inputs.spec.Window`; ``temporal`` supplies the
+        per-task forward window for ``anchor="window_end"`` (defaults to the shared policy).
+        """
         self.spec = spec
         self._data_dir = data_dir
         self._temporal = temporal
@@ -46,11 +49,10 @@ class WindowBuilder(InputBuilder):
             return
         import datasets as hf_ds
 
-        from openmhc._evaluate import _DatasetPaths
-
         from data.processing.hf_config import N_CHANNELS
         from downstream_evaluation.data.splits import load_split_file
         from downstream_evaluation.models.tsfm import _group_indices
+        from openmhc._evaluate import _DatasetPaths
 
         paths = _DatasetPaths.resolve(self._data_dir)
         self._ds = hf_ds.load_from_disk(str(paths.daily_hourly_hf))
@@ -60,8 +62,10 @@ class WindowBuilder(InputBuilder):
         self._n_channels = N_CHANNELS
 
     def _weeks_after(self, task: str) -> int:
-        """Forward-window length for the anchor: 0 for ``"label"``, the per-task policy
-        for ``"window_end"``."""
+        """Return the forward-window length for the anchor.
+
+        0 for ``"label"``, the per-task policy for ``"window_end"``.
+        """
         if getattr(self.spec, "anchor", "window_end") == "label":
             return 0
         if self._temporal is None:
@@ -71,6 +75,7 @@ class WindowBuilder(InputBuilder):
         return self._temporal.weeks_after(task)
 
     def iter_inputs(self, td: TaskData) -> Iterator[ParticipantData]:
+        """Yield one anchored ``(1, hours, 19)`` window per cohort user in ``td``."""
         import pandas as pd
 
         from downstream_evaluation.config import LABEL_REFERENCE_DATE
@@ -98,15 +103,23 @@ class WindowBuilder(InputBuilder):
                     label_ts = _label_timestamp(uid, td.task, reference_ts)
                     if label_ts is not None:
                         ex = build_window(
-                            timeline, uid, td.task, label_ts.strftime("%Y-%m-%d"),
-                            hours, nc, weeks_after,
+                            timeline,
+                            uid,
+                            td.task,
+                            label_ts.strftime("%Y-%m-%d"),
+                            hours,
+                            nc,
+                            weeks_after,
                         )
             yield _to_participant(ex, hours, nc)
 
 
 def _to_participant(ex, hours: int, nc: int) -> ParticipantData:
-    """``WindowExample`` (channel-first, zeros at gaps) → standard ``(1, hours, 19)``
-    ParticipantData (NaN at missing, mask 1 = missing). Empty → all-masked window."""
+    """Convert a ``WindowExample`` to standard ``(1, hours, 19)`` ParticipantData.
+
+    Channel-first window with zeros at gaps becomes values with NaN at missing and a
+    mask where 1 = missing. An empty (``None``) example yields an all-masked window.
+    """
     if ex is None:
         return ParticipantData(
             values=np.full((1, hours, nc), np.nan, dtype=np.float32),

@@ -105,7 +105,9 @@ class ClassifierConfig:
         "logreg_ordinal",
     ] = "logistic_regression"
     use_scaler: bool = True
-    scaler_type: Literal["robust", "standard"] = "robust"  # "robust" = z-score + clip ±10σ (prevents overflow), "standard" = z-score only
+    scaler_type: Literal["robust", "standard"] = (
+        "robust"  # "robust" = z-score + clip ±10σ (prevents overflow), "standard" = z-score only
+    )
     pca_n_components: int | None = None  # PCA dim reduction before classifier (None = disabled)
     pca_whiten: bool = False  # If True, whiten PCA output (unit variance per component)
     use_l2_norm: bool = False  # L2-normalize each sample before classifier

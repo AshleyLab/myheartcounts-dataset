@@ -291,24 +291,27 @@ def compute_downstream_skill_scores(
         if baseline_err <= 0:
             logger.warning(
                 "Task '%s': baseline error <= 0 (metric=%.4f), skipping",
-                task_name, baseline_val,
+                task_name,
+                baseline_val,
             )
             continue
 
         ratio = np.clip(model_err / baseline_err, clip_lower, clip_upper)
 
-        task_errors.append(TaskError(
-            task=task_name,
-            task_type=task_type,
-            domain=domain,
-            metric_name=metric_col,
-            model_metric=model_val,
-            baseline_metric=baseline_val,
-            model_error=model_err,
-            baseline_error=baseline_err,
-            ratio=float(ratio),
-            higher_is_better=hib,
-        ))
+        task_errors.append(
+            TaskError(
+                task=task_name,
+                task_type=task_type,
+                domain=domain,
+                metric_name=metric_col,
+                model_metric=model_val,
+                baseline_metric=baseline_val,
+                model_error=model_err,
+                baseline_error=baseline_err,
+                ratio=float(ratio),
+                higher_is_better=hib,
+            )
+        )
 
     # Per-domain skill scores
     domains = sorted({te.domain for te in task_errors})
@@ -316,11 +319,11 @@ def compute_downstream_skill_scores(
     n_tasks_per_domain: dict[str, int] = {}
 
     for domain in domains:
-        domain_ratios = np.array([
-            te.ratio for te in task_errors if te.domain == domain
-        ])
+        domain_ratios = np.array([te.ratio for te in task_errors if te.domain == domain])
         domain_scores[domain] = compute_skill_score(
-            domain_ratios, clip_lower, clip_upper,
+            domain_ratios,
+            clip_lower,
+            clip_upper,
         )
         n_tasks_per_domain[domain] = len(domain_ratios)
 
@@ -413,37 +416,36 @@ def compute_fairness_adjusted_skill_scores(
             ratio = np.clip(model_err / baseline_err, clip_lower, clip_upper)
 
             baseline_val = baseline_best[task_name][2]
-            task_errors.append(TaskError(
-                task=task_name,
-                task_type=task_type,
-                domain=domain,
-                metric_name=metric_col,
-                model_metric=model_val,
-                baseline_metric=baseline_val,
-                model_error=model_err,
-                baseline_error=baseline_err,
-                ratio=float(ratio),
-                higher_is_better=True,
-            ))
+            task_errors.append(
+                TaskError(
+                    task=task_name,
+                    task_type=task_type,
+                    domain=domain,
+                    metric_name=metric_col,
+                    model_metric=model_val,
+                    baseline_metric=baseline_val,
+                    model_error=model_err,
+                    baseline_error=baseline_err,
+                    ratio=float(ratio),
+                    higher_is_better=True,
+                )
+            )
 
         # Aggregate
         domains = sorted({te.domain for te in task_errors})
         domain_scores: dict[str, float] = {}
         n_tasks_per_domain: dict[str, int] = {}
         for domain in domains:
-            domain_ratios = np.array([
-                te.ratio for te in task_errors if te.domain == domain
-            ])
+            domain_ratios = np.array([te.ratio for te in task_errors if te.domain == domain])
             domain_scores[domain] = compute_skill_score(
-                domain_ratios, clip_lower, clip_upper,
+                domain_ratios,
+                clip_lower,
+                clip_upper,
             )
             n_tasks_per_domain[domain] = len(domain_ratios)
 
         # Overall: domain-balanced (macro). See compute_downstream_skill_scores.
-        overall = (
-            float(np.mean(list(domain_scores.values()))) if domain_scores
-            else float("nan")
-        )
+        overall = float(np.mean(list(domain_scores.values()))) if domain_scores else float("nan")
 
         results[str(subgroup_val)] = SkillScoreResult(
             overall=overall,

@@ -36,13 +36,38 @@ HOURS_PER_DAY = 24
 
 # The 32 headline cross-sectional tasks.
 FINAL_TASKS = [
-    "Atrial fibrillation (Afib)", "BMI_categories", "BMI_values", "BiologicalSex", "CAD",
-    "Cerebrovascular Disease", "Congenital Heart", "Diabetes", "GoSleepTime_categories", "Hdl",
-    "Heart Failure or CHF", "Hypertension", "Ldl", "PH", "Peripheral/Systemic Vascular Disease",
-    "SystolicBloodPressure", "TotalCholesterol", "WakeUpTime_categories", "WeightKilograms", "age",
-    "blood_pressure_categories", "cardiovascular_disease", "feel_worthwhile1", "feel_worthwhile2",
-    "feel_worthwhile3", "feel_worthwhile4", "framingham_risk", "satisfiedwith_life",
-    "sleep_diagnosis1", "sleep_time_categories", "vigorous_act", "work",
+    "Atrial fibrillation (Afib)",
+    "BMI_categories",
+    "BMI_values",
+    "BiologicalSex",
+    "CAD",
+    "Cerebrovascular Disease",
+    "Congenital Heart",
+    "Diabetes",
+    "GoSleepTime_categories",
+    "Hdl",
+    "Heart Failure or CHF",
+    "Hypertension",
+    "Ldl",
+    "PH",
+    "Peripheral/Systemic Vascular Disease",
+    "SystolicBloodPressure",
+    "TotalCholesterol",
+    "WakeUpTime_categories",
+    "WeightKilograms",
+    "age",
+    "blood_pressure_categories",
+    "cardiovascular_disease",
+    "feel_worthwhile1",
+    "feel_worthwhile2",
+    "feel_worthwhile3",
+    "feel_worthwhile4",
+    "framingham_risk",
+    "satisfiedwith_life",
+    "sleep_diagnosis1",
+    "sleep_time_categories",
+    "vigorous_act",
+    "work",
 ]
 
 
@@ -106,8 +131,9 @@ def build_user_timeline(ds, indices: list[int], n_channels: int):
     return UserTimeline(start_date=first_date, values=timeline, observed_hours=observed_hours)
 
 
-def build_window(timeline: UserTimeline, user_id, task, label_date, window_hours, n_channels,
-                 weeks_after):
+def build_window(
+    timeline: UserTimeline, user_id, task, label_date, window_hours, n_channels, weeks_after
+):
     """Create a left-padded/cropped TSFM input window for one user-task pair.
 
     ``weeks_after`` is the task's forward-window length (weeks), supplied by the
@@ -235,10 +261,13 @@ class _TaskWriter:
             self.file = h5py.File(self.path, "w")
             self.embed_dim = embed_dim
             self.embeddings_ds = self.file.create_dataset(
-                "embeddings", shape=(0, self.n_channels, embed_dim),
-                maxshape=(None, self.n_channels, embed_dim), dtype="float32",
+                "embeddings",
+                shape=(0, self.n_channels, embed_dim),
+                maxshape=(None, self.n_channels, embed_dim),
+                dtype="float32",
                 chunks=(min(256, max(1, bsz)), self.n_channels, embed_dim),
-                compression="gzip", compression_opts=4,
+                compression="gzip",
+                compression_opts=4,
             )
             dt = h5py.string_dtype()
             self.user_ids_ds = self.file.create_dataset(
@@ -284,8 +313,13 @@ class TSFMEncoder:
     needs_segments = False  # consumes its own build-on-miss HDF5 cache
     pooling_label = "last_latent"  # overridden (provenance only)
 
-    def __init__(self, data_dir: str | None = None, cache_dir: str | None = None,
-                 batch_size: int = 32, seed: int = 42):
+    def __init__(
+        self,
+        data_dir: str | None = None,
+        cache_dir: str | None = None,
+        batch_size: int = 32,
+        seed: int = 42,
+    ):
         """Configure data root, embedding cache dir, batch size, and seed."""
         self._data_dir = data_dir
         self._cache_dir = cache_dir
@@ -414,8 +448,13 @@ class TSFMEncoder:
                     if label_ts is None or user_id in guard[task]:
                         continue
                     ex = build_window(
-                        timeline, user_id, task, label_ts.strftime("%Y-%m-%d"),
-                        self._window_hours, n_channels, wa[task],
+                        timeline,
+                        user_id,
+                        task,
+                        label_ts.strftime("%Y-%m-%d"),
+                        self._window_hours,
+                        n_channels,
+                        wa[task],
                     )
                     if ex is None:
                         skips[task]["no_window"] += 1
@@ -494,7 +533,9 @@ class TSFMEncoder:
             return np.zeros((len(td.user_ids), 0), dtype=np.float32)
         chunks = [
             np.asarray(
-                self._run_batch(self._handle, examples[j : j + self._batch_size], self._window_hours),
+                self._run_batch(
+                    self._handle, examples[j : j + self._batch_size], self._window_hours
+                ),
                 dtype=np.float32,
             )
             for j in range(0, len(examples), self._batch_size)
@@ -507,8 +548,11 @@ class TSFMEncoder:
 
     @staticmethod
     def _participant_to_example(p, user_id: str, task: str) -> WindowExample:
-        """``ParticipantData`` (1, H, 19; NaN at missing) → ``WindowExample`` (19, H;
-        zeros at gaps + bool padding mask) — the inverse of the WindowBuilder's packing."""
+        """Convert one ``ParticipantData`` into a ``WindowExample``.
+
+        ``ParticipantData`` (1, H, 19; NaN at missing) → ``WindowExample`` (19, H;
+        zeros at gaps + bool padding mask) — the inverse of the WindowBuilder's packing.
+        """
         vals = np.asarray(p.values[0], dtype=np.float32)  # (H, 19)
         real = np.isfinite(vals)  # (H, 19) True where observed
         window = np.where(real, vals, 0.0).T.astype(np.float32)  # (19, H)

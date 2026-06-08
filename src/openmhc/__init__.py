@@ -15,6 +15,9 @@ Quick start:
     >>> openmhc.SENSOR_CHANNELS           # 19 channel names
 """
 
+# Input specs — what shape of data your model receives. Declare one as ``input`` on your
+# Encoder/Predictor; the framework hands you each cohort participant's IC/TC-bounded data.
+from downstream_evaluation.data.inputs import Raw, Window
 from openmhc._constants import MASKING_SCENARIOS, SENSOR_CHANNELS
 from openmhc._dataset import data_dir, download_dataset
 from openmhc._protocols import Encoder, Forecaster, Imputer, Predictor
@@ -23,10 +26,6 @@ from openmhc._results import (
     ImputationResults,
     PredictionResults,
 )
-
-# Input specs — what shape of data your model receives. Declare one as ``input`` on your
-# Encoder/Predictor; the framework hands you each cohort participant's IC/TC-bounded data.
-from downstream_evaluation.data.inputs import Raw, Window
 
 __all__ = [
     # Protocols

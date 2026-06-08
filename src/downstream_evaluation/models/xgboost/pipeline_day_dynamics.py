@@ -66,14 +66,15 @@ def build_signal_processing_features(
         elif daily_df["date"].dtype != pl.Date:
             daily_df = daily_df.with_columns(pl.col("date").cast(pl.Date))
         cutoff_rows = [
-            {"user_id": uid, "_cutoff": dt.date.fromisoformat(d)}
-            for uid, d in cutoff_dates.items()
+            {"user_id": uid, "_cutoff": dt.date.fromisoformat(d)} for uid, d in cutoff_dates.items()
         ]
         cutoff_df = pl.DataFrame(cutoff_rows).with_columns(pl.col("_cutoff").cast(pl.Date))
         before = daily_df.shape[0]
-        daily_df = daily_df.join(cutoff_df, on="user_id", how="left").filter(
-            pl.col("_cutoff").is_null() | (pl.col("date") <= pl.col("_cutoff"))
-        ).drop("_cutoff")
+        daily_df = (
+            daily_df.join(cutoff_df, on="user_id", how="left")
+            .filter(pl.col("_cutoff").is_null() | (pl.col("date") <= pl.col("_cutoff")))
+            .drop("_cutoff")
+        )
         after = daily_df.shape[0]
         if after < before:
             logger.info("  Cutoff filter: %d -> %d rows (-%d)", before, after, before - after)
@@ -104,7 +105,8 @@ def build_signal_processing_features(
     )
     logger.info(
         "  ARIMA/CC features: %d columns for %d users",
-        arima_cc_df.shape[1] - 1, arima_cc_df.shape[0],
+        arima_cc_df.shape[1] - 1,
+        arima_cc_df.shape[0],
     )
 
     # ── Join phases ──────────────────────────────────────────────────────────

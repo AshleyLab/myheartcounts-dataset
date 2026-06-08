@@ -41,9 +41,11 @@ class SegmentBinder:
     """
 
     def __init__(self, data_dir: str | None, granularity: str = "daily") -> None:
-        """Args:
-        data_dir: dataset root (``MHC_DATA_DIR`` / openmhc cache if ``None``).
-        granularity: only ``"daily"`` is supported.
+        """Load the row-aligned segment source once for the given granularity.
+
+        Args:
+            data_dir: dataset root (``MHC_DATA_DIR`` / openmhc cache if ``None``).
+            granularity: only ``"daily"`` is supported.
         """
         if granularity != "daily":
             raise NotImplementedError(
@@ -53,9 +55,8 @@ class SegmentBinder:
 
         import datasets as hf_ds
 
-        from openmhc._evaluate import _DatasetPaths
-
         from downstream_evaluation.data.data_loader import prepare_daily_hourly_hf
+        from openmhc._evaluate import _DatasetPaths
 
         paths = _DatasetPaths.resolve(data_dir)
         ds = hf_ds.load_from_disk(str(paths.daily_hourly_hf))

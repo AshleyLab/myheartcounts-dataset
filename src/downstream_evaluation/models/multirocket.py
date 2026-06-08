@@ -132,8 +132,11 @@ def extract_multirocket(output_dir, data_dir=None, tasks=None, seed=42, chunk_si
         logger.info("task %s: %d eligible (user,date) segments", t, len(eligible[t]))
 
     transformer = MultiRocketMultivariate(
-        num_kernels=NUM_KERNELS, max_dilations_per_kernel=MAX_DILATIONS_PER_KERNEL,
-        n_features_per_kernel=N_FEATURES_PER_KERNEL, normalise=NORMALISE, n_jobs=N_JOBS,
+        num_kernels=NUM_KERNELS,
+        max_dilations_per_kernel=MAX_DILATIONS_PER_KERNEL,
+        n_features_per_kernel=N_FEATURES_PER_KERNEL,
+        normalise=NORMALISE,
+        n_jobs=N_JOBS,
         random_state=seed,
     )
     logger.info("fitting MultiRocket on %d train segments...", len(train_idx))
@@ -175,8 +178,9 @@ def extract_multirocket(output_dir, data_dir=None, tasks=None, seed=42, chunk_si
             logger.warning("task %s: no pooled features", t)
             continue
         feat = np.stack([bl_sums[t][u] / max(bl_counts[t][u], 1) for u in uids]).astype(np.float16)
-        np.savez(out / f"{quote(t, safe='')}.npz",
-                 user_ids=np.array(uids, dtype=object), features=feat)
+        np.savez(
+            out / f"{quote(t, safe='')}.npz", user_ids=np.array(uids, dtype=object), features=feat
+        )
     logger.info("wrote per-(task, user) MultiRocket features -> %s", out)
 
 
@@ -184,9 +188,10 @@ def extract_multirocket(output_dir, data_dir=None, tasks=None, seed=42, chunk_si
 # Stage 2 — the MultiRocket Encoder (build-on-miss internal)
 # --------------------------------------------------------------------------- #
 class MultiRocket:
-    """MultiRocket encoder for the engine. ``encode_cohort`` returns the cohort's
-    per-user pooled 49,728-d features (built on a cache miss, loaded on a hit); the
-    engine then runs the uniform PCA-50 + probe.
+    """MultiRocket encoder for the engine.
+
+    ``encode_cohort`` returns the cohort's per-user pooled 49,728-d features (built on
+    a cache miss, loaded on a hit); the engine then runs the uniform PCA-50 + probe.
     """
 
     name = "multirocket"
@@ -194,6 +199,7 @@ class MultiRocket:
     needs_segments = False  # consumes its own build-on-miss feature cache
 
     def __init__(self, data_dir=None, cache_dir=None, tasks=None, seed=42):
+        """Store data/cache dirs, the task list, and seed; features build lazily."""
         self._data_dir = data_dir
         self._cache_dir = cache_dir
         self._tasks = list(tasks) if tasks is not None else None
@@ -214,7 +220,9 @@ class MultiRocket:
             raise ValueError("MultiRocket requires the task list (per-(task,user) pooling)")
         missing = [t for t in tasks if not (cache / f"{quote(t, safe='')}.npz").exists()]
         if missing:
-            logger.info("MultiRocket cache miss (%d tasks) — extracting from raw (CPU)", len(missing))
+            logger.info(
+                "MultiRocket cache miss (%d tasks) — extracting from raw (CPU)", len(missing)
+            )
             extract_multirocket(str(cache), data_dir=self._data_dir, tasks=tasks, seed=self.seed)
 
     def _load_task(self, task: str) -> dict[str, np.ndarray]:
