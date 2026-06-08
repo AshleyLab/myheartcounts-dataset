@@ -19,7 +19,7 @@ Aggregation convention: the ``overall`` skill score (and overall average rank)
 is **domain-balanced** — the arithmetic mean of per-domain skill scores —
 so that domains with more tasks (e.g. Medical conditions, 12/33) do not
 dominate the headline number. A task-flat (micro) aggregate is intentionally
-not surfaced on the public dataclasses.
+not provided.
 """
 
 from __future__ import annotations

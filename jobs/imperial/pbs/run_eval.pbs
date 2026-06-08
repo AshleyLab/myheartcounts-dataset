@@ -31,6 +31,8 @@ export PYTHONNOUSERSITE=1
 export PYTHONPATH="$PWD/src:${PYTHONPATH:-}"
 export TMPDIR="${EPHEMERAL:-/tmp}/pbs_${PBS_JOBID:-$$}"
 export HF_HOME="${HF_HOME:-$TMPDIR/hf_cache}"
+# hf-xet's temp/lock file ops fail on the RDS network filesystem; force plain HTTPS.
+export HF_HUB_DISABLE_XET=1
 mkdir -p "$HF_HOME"
 
 # Dataset root (daily_hf + labels live under it). NOTE: do NOT set LABEL_*_PATH to

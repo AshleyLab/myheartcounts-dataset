@@ -1,6 +1,6 @@
 """Aggregation utilities for week-to-user pooling.
 
-Reuses the aggregation logic from baseline_dataset.py and baseline_module.py.
+Mean-pools week-level features and labels to one row per user.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ def aggregate_by_user(
         features: (N_weeks, D) feature array.
         labels: (N_weeks,) label array.
         user_ids: (N_weeks,) user ID array (strings).
-        method: Aggregation method ("mean" only for now).
+        method: Aggregation method. Only "mean" is supported.
 
     Returns:
         Tuple of (user_features, user_labels, unique_user_ids) where:

@@ -1,12 +1,12 @@
 """MAE / LSM2 daily encoder (masked-autoencoder 1D Vision Transformer).
 
-Two stages, both public code (the from-raw contract):
+Two stages, both run from raw data:
 
   - **Stage 1 (extraction, GPU):** ``extract_mae_embeddings`` loads the pretrained
     LSM2 MAE checkpoint and runs the *dense* encoder (no artificial masking) over the
     minute-level daily tensors in ``daily_hf``, pooling the non-masked tokens per day
-    into one 384-d embedding per (user, day). This regenerates the intermediate from
-    raw; it is never a shipped cache. The ViT forward wants a GPU → run as a job.
+    into one 384-d embedding per (user, day). This regenerates the embeddings from raw
+    data rather than loading a prebuilt cache. The ViT forward pass requires a GPU.
 
   - **Stage 2 (eval):** the ``MAE`` Encoder loads that intermediate and mean-pools
     each user's eligible daily embeddings (``td.dates``) → 384-d; the engine then runs
@@ -33,11 +33,14 @@ PATCH_SIZE = 10
 BATCH_SIZE = 64
 # min_wear_fraction=0.5 → keep days with at most (1-0.5)*1440 = 720 nonwear minutes.
 MAX_NONWEAR_MINUTES = 720
-DEFAULT_CHECKPOINT = "wandb:nschuetz-org/wandb-registry-model/MHC-MAE-LSM2-Pretrained:v1"
+# Public default: the LSM2 daily checkpoint published on the Hugging Face Hub, so a
+# fresh user with no W&B account / no local copy can still fetch it. Override with a
+# local .ckpt path (or any wandb:/hf:// ref) via the MAE_CHECKPOINT env var.
+DEFAULT_CHECKPOINT = "hf://MyHeartCounts/openmhc-lsm2-daily"
 
 
 # --------------------------------------------------------------------------- #
-# Stage-1 helpers (ported from the private mae_extractor.extract_on_the_fly)
+# Stage-1 helpers: model load and input transforms.
 # --------------------------------------------------------------------------- #
 def _load_mae_model(checkpoint: str, device):
     """Load + freeze the LSM2 MAE from a Lightning checkpoint.
@@ -49,7 +52,7 @@ def _load_mae_model(checkpoint: str, device):
     """
     import torch
 
-    from utils.wandb_artifact import resolve_checkpoint_path
+    from utils.checkpoints import resolve_checkpoint_path
 
     from downstream_evaluation.models.mae.mae_vit1d import MaskedAutoencoderViT1D_LSM2
 

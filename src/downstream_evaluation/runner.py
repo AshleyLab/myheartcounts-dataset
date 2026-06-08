@@ -1,9 +1,9 @@
 """Prediction engine — ``run_eval(config, model)``.
 
-Mirrors the imputation/forecasting runners: ``run_eval`` sets up the data provider
-and segment binder, hands them to a :class:`DownstreamEvaluator`, and attaches run
-provenance. It powers both surfaces — Surface 1 (an external model, wrapped by the
-openmhc adapter) and Surface 2 (our bundled baselines) — through one engine.
+``run_eval`` sets up the data provider and segment binder, hands them to a
+:class:`DownstreamEvaluator`, and attaches run provenance. It supports both an
+external model (wrapped by the openmhc adapter) and the bundled baseline models
+through one engine.
 
   - ``Encoder``   — ``encode(data) -> (D,)`` per participant; the evaluator fits a
                     *uniform* PCA + linear probe, so the score reflects the
@@ -26,8 +26,8 @@ from downstream_evaluation.evaluation.evaluator import DownstreamEvaluator
 
 logger = logging.getLogger(__name__)
 
-# Re-export the config here too, so ``from ...runner import EvalConfig`` keeps working
-# (the config canonically lives in config.py, mirroring the imputation track).
+# Re-export the config so ``from ...runner import EvalConfig`` works; it canonically
+# lives in config.py.
 __all__ = ["EvalConfig", "TemporalWindowConfig", "run_eval"]
 
 

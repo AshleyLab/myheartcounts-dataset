@@ -3,14 +3,13 @@
 The upstream SSL pipeline applies two quality steps before feeding daily data to
 the Transformer encoder:
 
-1. ``ZeroToNaNTransform`` (src/data/transforms/nan_transforms.py:237) — converts
-   physiologically impossible zeros to NaN so normalization ignores them.
-2. ``LowChannelVarianceFilter`` (src/data/filters/daily_filters.py:69) — drops
-   daily samples where a monitored channel has near-zero variance (flat signal
-   = sensor malfunction or device not worn).
+1. ``ZeroToNaNTransform`` — converts physiologically impossible zeros to NaN so
+   normalization ignores them.
+2. ``LowChannelVarianceFilter`` — drops daily samples where a monitored channel has
+   near-zero variance (flat signal = sensor malfunction or device not worn).
 
-Those implementations are PyTorch/HuggingFace-based. This module provides
-Polars/numpy equivalents for the FE-XGBoost feature extraction pipeline.
+This module provides Polars/numpy equivalents of those two steps for the XGBoost
+feature extraction pipeline.
 
 Variance thresholds are imported from the canonical source
 (``data.processing.hf_config.DEFAULT_VARIANCE_THRESHOLDS``) so configuration
@@ -64,8 +63,7 @@ _MINUTES_PER_DAY = 1440
 def apply_zero_to_nan(df: pl.DataFrame) -> pl.DataFrame:
     """Convert sensor zeros to NaN in the ``data`` column.
 
-    Polars equivalent of ``ZeroToNaNTransform``
-    (src/data/transforms/nan_transforms.py:237).
+    Polars equivalent of the dataset's ``ZeroToNaNTransform``.
 
     Applied per-row to the ``data`` column (Array(List(Float32), 19)):
 
@@ -136,8 +134,7 @@ def apply_variance_filter(
 ) -> pl.DataFrame:
     """Drop daily samples where a monitored channel has near-zero variance.
 
-    Polars equivalent of ``LowChannelVarianceFilter``
-    (src/data/filters/daily_filters.py:69).
+    Polars equivalent of the dataset's ``LowChannelVarianceFilter``.
 
     Reads the pre-computed ``channel_variance`` column (list of per-channel
     variance values) and rejects rows where any monitored channel's variance
@@ -145,7 +142,7 @@ def apply_variance_filter(
     are skipped, not penalized.
 
     Silent no-op if the ``channel_variance`` column is absent (e.g. older
-    Arrow files that predate commit 90a5b54).
+    Arrow files produced before that column was added).
 
     Args:
         df: DataFrame that may contain a ``channel_variance`` column.

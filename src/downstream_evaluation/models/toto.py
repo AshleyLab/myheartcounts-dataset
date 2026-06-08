@@ -33,7 +33,7 @@ DEFAULT_CHECKPOINT = os.environ.get(
 
 
 def _resolve(path: str | Path) -> Path:
-    """Resolve a path against the repo root (the public repo top level)."""
+    """Resolve a path against the repo root."""
     p = Path(path)
     if p.is_absolute():
         return p
@@ -42,7 +42,7 @@ def _resolve(path: str | Path) -> Path:
 
 
 # --------------------------------------------------------------------------- #
-# Model load (base Toto + merged LoRA fine-tune) — ported from the golden script
+# Model load: base Toto + merged LoRA fine-tune.
 # --------------------------------------------------------------------------- #
 def _add_toto_repo_to_path(toto_repo: Path) -> None:
     if not (toto_repo / "toto" / "model" / "toto.py").exists():

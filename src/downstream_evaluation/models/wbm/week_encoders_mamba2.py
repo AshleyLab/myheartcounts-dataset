@@ -3,7 +3,7 @@
 Only the encoder + forward pass are needed downstream: load the pretrained
 checkpoint and run a forward pass on weekly tensors to get the 256-d
 representation ``r``. Training (contrastive loss, Lightning module) is not
-ported. ``mamba_ssm`` is a CUDA-only optional dependency.
+included here. ``mamba_ssm`` is a CUDA-only optional dependency.
 """
 
 import torch

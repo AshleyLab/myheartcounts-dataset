@@ -43,7 +43,7 @@ class SegmentBinder:
     def __init__(self, data_dir: str | None, granularity: str = "daily") -> None:
         """Args:
         data_dir: dataset root (``MHC_DATA_DIR`` / openmhc cache if ``None``).
-        granularity: only ``"daily"`` is supported in this phase.
+        granularity: only ``"daily"`` is supported.
         """
         if granularity != "daily":
             raise NotImplementedError(

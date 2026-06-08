@@ -1,9 +1,9 @@
 """DownstreamEvaluator — the per-task evaluation loop for the prediction track.
 
-Mirrors imputation's ``ImputationEvaluator`` / forecasting's evaluator: ``run_eval``
-sets up the data provider + segment binder and the model, then hands them here. For
-each task this binds the cohort's eligible data, runs the model (``Encoder`` → the
-uniform PCA probe, or ``Predictor`` → direct predictions), and scores the test split.
+``run_eval`` sets up the data provider + segment binder and the model, then hands
+them here. For each task this binds the cohort's eligible data, runs the model
+(``Encoder`` → the uniform PCA probe, or ``Predictor`` → direct predictions), and
+scores the test split.
 """
 
 from __future__ import annotations
@@ -40,8 +40,8 @@ def _metrics_for(task: str, y_true, y_pred) -> dict[str, float]:
         return compute_binary_metrics(y_true, y_pred)
     # multiclass/ordinal scores discrete class predictions. The uniform ordinal probe
     # already predicts ints; a Predictor may hand back raw floats (e.g. the hybrid's
-    # rank-combined scores), which the golden pipeline rounds to int before scoring —
-    # mirror that so Spearman reproduces (a no-op when predictions are already discrete).
+    # rank-combined scores), so round to int before scoring (a no-op when predictions
+    # are already discrete).
     if ttype == "multiclass":
         return compute_multiclass_metrics(y_true, np.round(y_pred).astype(int))
     if ttype == "ordinal":

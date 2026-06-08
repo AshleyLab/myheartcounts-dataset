@@ -11,7 +11,7 @@ Usage:
     >>> from pathlib import Path
     >>> result = build_user_features(
     ...     Path("data/processed/daily_hf"),
-    ...     Path("data/features/fe_xgboost/user_features.parquet")
+    ...     Path("data/features/xgboost/user_features.parquet")
     ... )
 """
 
@@ -231,16 +231,10 @@ def build_user_features_chunked(
     if not arrow_files:
         raise ValueError(f"No Arrow files found in {arrow_dir}")
 
-    # Set up checkpoint directory (check old name for backward compat)
+    # Checkpoint directory for per-file daily-feature chunks.
     if checkpoint_dir is None:
-        if output_path is not None:
-            parent = Path(output_path).parent
-        else:
-            parent = arrow_dir.parent
-        # Prefer existing old-name dir for backward compat, else use new name
-        old_dir = parent / "pipeline_a_chunks"
-        new_dir = parent / "timeseries_daily_chunks"
-        checkpoint_dir = old_dir if old_dir.exists() else new_dir
+        parent = Path(output_path).parent if output_path is not None else arrow_dir.parent
+        checkpoint_dir = parent / "timeseries_daily_chunks"
     checkpoint_dir = Path(checkpoint_dir)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
@@ -374,7 +368,7 @@ def build_user_features(
     Example:
         >>> result = build_user_features(
         ...     Path("data/processed/daily_hf"),
-        ...     Path("data/features/fe_xgboost/user_features.parquet")
+        ...     Path("data/features/xgboost/user_features.parquet")
         ... )
         >>> print(result.shape)
     """

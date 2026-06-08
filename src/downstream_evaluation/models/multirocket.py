@@ -3,12 +3,12 @@
 MultiRocket applies random convolutional kernels (4 pooling operators over raw +
 first-order-differenced series) to each daily ``(19, 24)`` segment, yielding a
 49,728-d feature vector per segment. The daily-segment matrix (~1M segments ×
-49,728 ≈ 200 GB) is far too large to materialize, so — exactly like the golden
-``_chunked_transform_incremental`` — we chunk-transform and pool into **per-(task,
-user)** running means over the segments whose label cell is non-sentinel for that
-task (the embedded-temporal before-label window, IC + TC, from the daily lookup).
+49,728 ≈ 200 GB) is far too large to materialize, so we chunk-transform and pool
+into **per-(task, user)** running means over the segments whose label cell is
+non-sentinel for that task (the embedded-temporal before-label window, IC + TC,
+from the daily lookup).
 
-Both stages are public code (the from-raw contract):
+Both stages run from raw data:
 
   - **Stage 1 (build-on-miss, CPU):** fit the kernels on the train-split segments,
     z-score with train channel stats, chunk-transform every segment, accumulate the
@@ -38,7 +38,7 @@ CHUNK_SIZE = 50000
 
 
 # --------------------------------------------------------------------------- #
-# Stage-1 helpers (ported from the golden multirocket_extractor)
+# Stage-1 helpers: norm-stat computation and z-score/zero-fill.
 # --------------------------------------------------------------------------- #
 def _compute_norm_stats(values, mask, train_idx):
     """Per-channel mean/std over observed (mask<0.5) train values — all 19 channels."""

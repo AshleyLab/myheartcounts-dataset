@@ -5,8 +5,8 @@ it derives both from the **shipped embedded-temporal labels lookup** — never b
 recomputing IC/TC from raw labels. A lookup cell is *non-sentinel* iff that
 segment is a valid wearable day (IC) inside the task's forward window (TC), so the
 non-sentinel mask is simultaneously the cohort, the temporal scope, and the label
-value. Deriving everything from that one artifact is what guarantees the public
-cohort is identical to the one the reference results were generated from.
+value. Deriving everything from this one lookup keeps the cohort and temporal scope
+reproducible and self-consistent.
 
 The provider hands each model **eligible data + labels per (user, task)** at a
 declared granularity; the model never sees the lookup, the segment grid, or the

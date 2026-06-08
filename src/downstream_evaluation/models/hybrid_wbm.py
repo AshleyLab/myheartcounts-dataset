@@ -1,6 +1,6 @@
-"""Hybrid (paper name: WBM, the headline) — WBM encoder primary + Linear fallback.
+"""Hybrid model (paper name: WBM) — WBM encoder primary + Linear fallback.
 
-The headline WBM result is this hybrid, evaluated on the full cohort:
+The reported WBM model is this hybrid, evaluated on the full cohort:
   - users with a WBM (weekly) embedding → the **SSL branch** (pooled 256-d → PCA-50
     → no-scaler linear probe, fit on SSL-users only, no demographics);
   - everyone else → the **Linear fallback** (38-d daily mean/std + demographics +
@@ -37,7 +37,7 @@ _PROBE_BY_TASKTYPE = {
 class Hybrid:
     """WBM-primary + Linear-fallback, per-user routed, full-cohort."""
 
-    name = "wbm"  # the headline WBM result IS this hybrid
+    name = "wbm"  # the reported WBM model is this hybrid
     input_granularity = "daily"  # full cohort + Linear fallback come from the daily lookup
     needs_segments = True  # the Linear branch needs the daily binder
 

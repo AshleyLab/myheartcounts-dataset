@@ -1,4 +1,4 @@
-"""Linear baseline (paper name; internal: stat_simple).
+"""Linear baseline.
 
 Summarizes each participant by the per-channel mean/std (38-d) of their eligible
 raw daily segments, pooled per participant, with demographics appended (per-task
@@ -32,9 +32,9 @@ _PROBE_BY_TASKTYPE = {
 def _pool_mean_std(values: np.ndarray) -> np.ndarray:
     """Pool a participant's eligible segments to a 38-d ``[mean(19) | std(19)]``.
 
-    Per segment: NaN-safe mean/std over time (matches the baseline extractor).
-    Across segments: a plain mean (matches the feature store's ``aggregate_for_task``,
-    which propagates NaN from all-missing channels to be zero-filled downstream).
+    Per segment: NaN-safe mean/std over time.
+    Across segments: a plain mean (NaN from all-missing channels propagates and is
+    zero-filled downstream).
 
     Args:
         values: ``(n_segments, T, 19)`` raw values, NaN at missing positions.

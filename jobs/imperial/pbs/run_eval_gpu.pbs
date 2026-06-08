@@ -8,12 +8,12 @@
 # Usage (submit from the repo root):
 #   qsub -v METHOD=mae,MHC_DATA_DIR=$HOME/yuze_mhc_ws/data jobs/imperial/pbs/run_eval_gpu.pbs
 #
-# NOTE (mae): the registry checkpoint is access-restricted, so pass a LOCAL .ckpt via
-# MAE_CHECKPOINT (Option C) — no internet needed on the GPU node:
+# NOTE (mae): the default checkpoint is the public HF ref hf://MyHeartCounts/openmhc-lsm2-daily,
+# fetched on a cache miss (needs internet on the node; HF_HUB_DISABLE_XET=1 is set below for the
+# RDS filesystem). To run fully offline, pass a LOCAL .ckpt via MAE_CHECKPOINT instead:
 #   qsub -v METHOD=mae,MHC_DATA_DIR=$HOME/yuze_mhc_ws/data,MAE_CHECKPOINT=$HOME/yuze_mhc_ws/models/mae_lsm2.ckpt \
 #        jobs/imperial/pbs/run_eval_gpu.pbs
-# (Avoid '=' in the .ckpt filename — qsub -v parses VAR=VALUE on '='. If instead using
-# the wandb ref, pre-cache it first on a node with internet.)
+# (Avoid '=' in the .ckpt filename — qsub -v parses VAR=VALUE on '='.)
 #PBS -N run_eval_gpu
 #PBS -l select=1:ncpus=8:mem=64gb:ngpus=1
 #PBS -l walltime=24:00:00
@@ -35,13 +35,15 @@ export PYTHONNOUSERSITE=1
 export PYTHONPATH="$PWD/src:${PYTHONPATH:-}"
 export TMPDIR="${EPHEMERAL:-/tmp}/pbs_${PBS_JOBID:-$$}"
 export HF_HOME="${HF_HOME:-$TMPDIR/hf_cache}"
+# hf-xet's temp/lock file ops fail on the RDS network filesystem; force plain HTTPS.
+export HF_HUB_DISABLE_XET=1
 mkdir -p "$HF_HOME"
 
 # Do NOT set LABEL_*_PATH to src/labels/* (stale 33-task subset); use data/labels defaults.
 export METHOD="${METHOD:-mae}"
 : "${MHC_DATA_DIR:?set MHC_DATA_DIR to the dataset root (e.g. \$HOME/yuze_mhc_ws/data)}"
 export OUT_CSV="${OUT_CSV:-eval_${METHOD}.csv}"
-echo "MAE_CHECKPOINT=${MAE_CHECKPOINT:-(default registry ref)}"
+echo "MAE_CHECKPOINT=${MAE_CHECKPOINT:-(default: hf://MyHeartCounts/openmhc-lsm2-daily)}"
 
 python jobs/imperial/slurm/run_eval.py
 

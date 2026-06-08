@@ -1,8 +1,6 @@
-"""Configuration for downstream evaluation (mirrors the imputation track).
+"""Configuration for downstream evaluation.
 
-The config lives here; the engine lives in ``runner.py`` — the same split the
-imputation track uses (``ImputationEvalConfig`` in its ``config.py``, ``run_eval``
-in its ``runner.py``).
+The config lives here; the engine lives in ``runner.py``.
 
   - ``EvalConfig`` (+ ``TemporalWindowConfig``) — what ``run_eval(config, model)``
     consumes for the prediction engine.
@@ -32,7 +30,8 @@ class TemporalWindowConfig:
     lookups the cohort methods read, and applied live by the from-raw window builders
     (Toto/Chronos-2). Keeping it here makes it the single source of truth: the runner
     owns the policy, and any from-raw model is handed the window rather than redefining
-    it. age/BiologicalSex widen to 156 (the cohort-asymmetry TC expansion).
+    it. age and BiologicalSex widen to a 156-week window (these demographic tasks
+    include data further from the label date).
     """
 
     default_weeks_after: int = 52
@@ -96,9 +95,8 @@ class ClassifierConfig:
 
     The engine fits only linear probes — logistic regression (binary/multiclass),
     a K−1 binary ordinal decomposition (``logreg_ordinal``, which reuses the
-    logistic-regression hyperparameters), and OLS (regression). Tree/SVM probes
-    were dropped: no method requests them, and the only tree method (FE-XGBoost)
-    is self-contained.
+    logistic-regression hyperparameters), and OLS (regression). The tree-based
+    XGBoost method is self-contained and does not use this probe.
     """
 
     type: Literal[

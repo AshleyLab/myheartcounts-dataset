@@ -45,6 +45,8 @@ export PYTHONNOUSERSITE=1
 export PYTHONPATH="$REPO/src:${PYTHONPATH:-}"
 export TMPDIR="/tmp/slurm_${SLURM_JOB_ID:-$$}"
 export HF_HOME="${HF_HOME:-$TMPDIR/hf_cache}"
+# hf-xet's temp/lock file ops fail on the RDS network filesystem; force plain HTTPS.
+export HF_HUB_DISABLE_XET=1
 mkdir -p "$HF_HOME"
 
 : "${MHC_DATA_DIR:?set MHC_DATA_DIR to the dataset root}"

@@ -8,8 +8,8 @@ ordinal). Trained jointly over all tasks with a masked multi-task loss (a user w
 a label for task *t* is excluded from task *t*'s term).
 
 This is **trained from scratch** — there is no checkpoint and no determinism beyond a
-fixed seed, so it reproduces the golden only **metric-close** (within training
-variance), unlike the deterministic / cached methods.
+fixed seed, so results are reproducible only to within training variance, unlike the
+deterministic / cached methods.
 
 Engine fit: the per-task ``fit(train_td)`` loop would retrain 32×, so the adapter
 trains the one multi-task model on the **first** ``fit`` (assembling every task's
@@ -417,8 +417,9 @@ class GRUD:
 
         # Train-split z-score stats for regression targets. Raw-scale MSE (age² ≈
         # 2500 vs CE ≈ 0.7) would dominate the averaged multi-task loss and starve
-        # every head; the golden normalizes targets for training and reverses at
-        # predict. Pearson r is linear-invariant, so the reverse is cosmetic.
+        # every head, so regression targets are normalized for training and the
+        # transform reversed at predict. Pearson r is linear-invariant, so the
+        # reverse is cosmetic.
         for t in reg_tasks:
             y = train_td_labels[t].astype(float)
             y = y[~np.isnan(y)]

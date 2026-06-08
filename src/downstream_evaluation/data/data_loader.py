@@ -6,8 +6,7 @@ operations plus Arrow ``ds.select()`` for fast HF dataset subsetting.
 
 The labels parquet is built once by ``scripts/labels/build_labels_lookup.py`` and
 contains one column per task (33 total) aligned by index with the weekly HF
-dataset.  This eliminates the expensive per-task label attachment that
-previously dominated runtime.
+dataset, which avoids attaching labels per task at runtime.
 """
 
 from __future__ import annotations
@@ -310,8 +309,6 @@ class DownstreamDataLoader:
 
     def _get_user_splits(self, user_ids: list[str]) -> dict[str, set[str]]:
         """Load or generate user splits.
-
-        Uses the same functions as baseline_datamodule.py to ensure consistency.
 
         Raises:
             FileNotFoundError: If split_file is set but the file does not exist.

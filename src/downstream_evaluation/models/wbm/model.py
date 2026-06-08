@@ -1,12 +1,12 @@
 """WBM (Wearable Behavior Model — Mamba2 contrastive SSL encoder).
 
-Two stages, both public code (the from-raw contract):
+Two stages, both run from raw data:
 
   - **Stage 1 (extraction, GPU):** ``extract_wbm_embeddings`` loads the pretrained
     Mamba2 week encoder checkpoint and runs a forward pass over the weekly tensors
     built on-the-fly from ``daily_hourly_hf`` + the window index, writing the
-    per-(user, week) 256-d embeddings. This regenerates the intermediate from raw;
-    it is never a shipped cache. ``mamba_ssm`` kernels are CUDA-only → run as a job.
+    per-(user, week) 256-d embeddings. This regenerates the embeddings from raw data
+    rather than loading a prebuilt cache. ``mamba_ssm`` kernels are CUDA-only.
 
   - **Stage 2 (eval):** the ``WBM`` Encoder loads that intermediate and pools each
     user's eligible weeks → 256-d; the engine then runs the uniform PCA-50 + probe.
@@ -29,7 +29,7 @@ DEFAULT_CHECKPOINT = "wandb:MHC_Dataset/mhc-apple-contrastive-transformer/WBM_Fi
 
 
 # --------------------------------------------------------------------------- #
-# Stage-1 helpers (copied from the private encoder_extractor inference path)
+# Stage-1 helpers: normalization-stat loading and per-example input assembly.
 # --------------------------------------------------------------------------- #
 def _resolve_norm_stats(paths):
     """Load the canonical hourly normalization constants.
@@ -61,8 +61,7 @@ def _resolve_norm_stats(paths):
 def _process_example(ex, means, stds) -> np.ndarray:
     """Build the (168, 38) input the checkpoint expects: [z-scored values | missing].
 
-    Missing-flag convention (1=missing), matching the WBM pretraining input — NOT
-    the presence convention used by the public external-encoder path.
+    Missing-flag convention (1=missing), matching the WBM pretraining input.
     """
     values = np.asarray(ex["values"], dtype=np.float32)  # (168, 19)
     missing = np.asarray(ex["mask"], dtype=np.float32)  # (168, 19), 1=missing
@@ -76,7 +75,7 @@ def _load_wbm_encoder(checkpoint: str, device):
     """Load + freeze the Mamba2 week encoder from a Lightning checkpoint."""
     import torch
 
-    from utils.wandb_artifact import resolve_checkpoint_path
+    from utils.checkpoints import resolve_checkpoint_path
 
     from downstream_evaluation.models.wbm.week_encoders_mamba2 import (
         Mamba2WeekEncoder,

@@ -1,16 +1,16 @@
-"""Signal processing feature extraction for the FE-XGBoost pipeline.
+"""Signal-processing feature extraction for the XGBoost pipeline.
 
-Provides 3 extraction functions (originally from MyHeartCounts-PH/utils/utils_timeseries.py):
+Provides three extraction functions:
 1. Statistical features (time domain) — pure Polars expressions (10 per metric)
 2. ARIMA features (autoregressive model) — statsmodels
 3. Cross-correlation features — statsmodels
 
-FFT features and redundant stat features (MIN, MAX, MEAN) were removed after an
-ablation study showed zero impact on AUROC across 6 clinical disease targets.
-MIN/MAX/MEAN are fully redundant with PEAK/P2P and the mean-based stat features.
+FFT features and redundant stat features (MIN, MAX, MEAN) are omitted: an ablation
+showed zero impact on AUROC across 6 clinical disease targets, and MIN/MAX/MEAN are
+fully redundant with PEAK/P2P and the mean-based stat features.
 
-These operate on user-level daily time series (the sequence of daily values
-from Pipeline A checkpoints, ~30-365 points per user).
+These operate on user-level daily time series (the sequence of daily values from the
+timeseries pipeline's daily checkpoints, ~30-365 points per user).
 """
 
 from __future__ import annotations
@@ -21,8 +21,8 @@ import numpy as np
 import polars as pl
 
 # ── Metrics to process ────────────────────────────────────────────────────────
-# Daily columns from Pipeline A checkpoints that serve as time series
-PIPELINE_JUAN_ICL_METRICS = [
+# Daily columns from the timeseries pipeline's checkpoints that serve as time series
+SIGNAL_PROCESSING_METRICS = [
     "daily_watch_steps_sum",
     "daily_iphone_steps_sum",
     "daily_iphone_flights_sum",
@@ -84,7 +84,7 @@ def build_stat_expressions(metrics: list[str] | None = None) -> list[pl.Expr]:
     ablation showed zero AUROC impact across 6 clinical targets).
     """
     if metrics is None:
-        metrics = PIPELINE_JUAN_ICL_METRICS
+        metrics = SIGNAL_PROCESSING_METRICS
 
     exprs: list[pl.Expr] = []
 
@@ -144,7 +144,6 @@ def arima_feature_extraction(
 ) -> dict[str, float | None]:
     """ARIMA model coefficients as features.
 
-    Replicates utils_timeseries.ARIMA_feature_extraction:
     - Fits ARIMA(2,1,0) to the series
     - Returns canonical parameter dict with keys from ARIMA_PARAM_NAMES
 
@@ -169,7 +168,6 @@ def cc_feature_extraction(
 ) -> dict[str, float]:
     """Cross-correlation features for all pairs of metrics.
 
-    Replicates utils_timeseries.CC_feature_extraction:
     - For each pair (a, b) in combinations(metrics, 2): compute ccf at lags 0..2
     - Returns cc_lag{N}_{a}__{b} keys
 
@@ -207,7 +205,7 @@ def extract_arima_cc_for_user(user_df: pl.DataFrame) -> pl.DataFrame:
     row: dict[str, object] = {"user_id": user_id}
 
     # Per-metric ARIMA
-    for m in PIPELINE_JUAN_ICL_METRICS:
+    for m in SIGNAL_PROCESSING_METRICS:
         s = _short_name(m)
 
         if m not in user_df.columns:

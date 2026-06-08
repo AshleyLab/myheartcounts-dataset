@@ -1,6 +1,6 @@
 """Demographic covariate augmentation for the downstream-eval prediction track.
 
-Only the demographic-aware baseline (stat_simple) appends demographic columns
+Only the demographic-aware Linear baseline appends demographic columns
 (``age``, ``BiologicalSex``, ``BMI_values``) onto its feature matrix before the
 probe; every other method leaves them off. Two responsibilities live here:
 

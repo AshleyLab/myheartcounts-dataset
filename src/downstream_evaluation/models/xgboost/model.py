@@ -1,10 +1,10 @@
-"""XGBoost baseline (paper name; internal/old name: fe_xgboost).
+"""XGBoost baseline.
 
 A gradient-boosted-tree ``Predictor`` on hand-crafted per-participant features
 (timeseries / curve-analysis / day-dynamics summaries). Tree model: features keep
 NaN (XGBoost handles them natively), no scaler, no PCA, no demographics.
 
-Self-contained from-raw flow, like the other bundled models:
+Self-contained two-stage from-raw flow:
 
   - **Stage 1 (build-on-miss, CPU):** ``extract_xgboost_features`` runs the three
     feature pipelines (timeseries → day-dynamics, which reads the timeseries daily
@@ -14,8 +14,8 @@ Self-contained from-raw flow, like the other bundled models:
   - **Stage 2 (eval):** the ``XGBoost`` Predictor loads that feature table (built on a
     cache miss, loaded on a hit) and fits/predicts end-to-end, routed by task type.
 
-The shipped ``<data>/features/fe_xgboost`` table is the **validation reference** the
-from-raw build should reproduce — point ``features_dir`` at it to load instead of build.
+To skip the from-raw build, point ``features_dir`` at a prebuilt feature-table
+directory to load it directly instead of rebuilding.
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ from downstream_evaluation.data.provider import TaskData
 
 logger = logging.getLogger(__name__)
 
-# 1000 shallow, regularized trees — the eval's exact recipe.
+# 1000 shallow, regularized trees.
 _XGB_PARAMS = dict(
     n_estimators=1000,
     max_depth=2,
@@ -43,10 +43,10 @@ _XGB_PARAMS = dict(
 def _build_xgb(task_type: str, seed: int):
     """Build the bundled XGBoost estimator for a task type.
 
-    FE-XGBoost is self-contained: it constructs its own trees instead of routing
-    through the engine's ``create_model`` (which is linear-probe-only). Per-type
-    estimator choice + hyperparameters replicate the validated recipe exactly
-    (the engine applies no scaler / PCA to this predictor path).
+    This model is self-contained: it builds its own trees instead of routing
+    through the engine's ``create_model`` (which is linear-probe-only). Estimator
+    choice and hyperparameters are fixed per task type; no scaler or PCA is applied
+    to this predictor path.
     """
     from xgboost import XGBClassifier, XGBRegressor
 
@@ -63,8 +63,8 @@ def _build_xgb(task_type: str, seed: int):
     if task_type == "regression":
         return XGBRegressor(**_XGB_PARAMS, objective="reg:squarederror", random_state=seed)
     if task_type == "ordinal":
-        # K-1 cumulative-link wrapper (Frank & Hall). No random_state — matches the
-        # validated build, whose sub-classifiers use XGBoost's default seed.
+        # K-1 cumulative-link wrapper (Frank & Hall). No random_state — the
+        # sub-classifiers use XGBoost's default seed.
         return XGBOrdinalWrapper(params={**_XGB_PARAMS, "objective": "binary:logistic"})
     raise ValueError(f"unsupported task type: {task_type!r}")
 
@@ -77,9 +77,8 @@ _PARQUET_NAMES = [
 # Diagnostic/metadata columns to drop (they would leak coverage info).
 _METADATA_PREFIXES = ("n_", "total_")
 
-# The canonical "_156a" build: per user, keep daily data up to (latest valid label date
-# + 1092 days = 156 weeks) and days with <=720 nonwear minutes (50% of 1440). These
-# reproduce the golden feature table (curve_analysis_avg_curves_cutoff1092.parquet).
+# Per user, keep daily data up to (latest valid label date + 1092 days = 156 weeks)
+# and days with <=720 nonwear minutes (50% of 1440).
 DEFAULT_MAX_FUTURE_DAYS = 1092
 DEFAULT_MAX_NONWEAR_MINUTES = 720
 
@@ -98,7 +97,7 @@ def load_handcrafted_features(features_dir: str | Path):
     fd = Path(features_dir)
     dfs = [pl.read_parquet(fd / n) for n in _PARQUET_NAMES if (fd / n).exists()]
     if not dfs:
-        raise FileNotFoundError(f"no fe_xgboost feature tables found in {fd}")
+        raise FileNotFoundError(f"no XGBoost feature tables found in {fd}")
     merged = dfs[0]
     for d in dfs[1:]:
         merged = merged.join(d, on="user_id", how="full", coalesce=True)
@@ -122,7 +121,7 @@ def extract_xgboost_features(
     Runs the three pipelines in order — timeseries → day-dynamics (reads the timeseries
     daily checkpoints, so it must run second) → curve-analysis — and writes
     ``pipeline_{timeseries,day_dynamics,curve_analysis}_user_features.parquet`` plus
-    intermediates under ``output_dir``. Mirrors ``scripts/run_fe_xgboost_prepare.py``.
+    intermediates under ``output_dir``.
     """
     from openmhc._evaluate import _DatasetPaths, _ensure_labels_env
 
@@ -207,9 +206,10 @@ class XGBoost:
         data_dir: dataset root (``daily_hf`` + labels live under it); ``MHC_DATA_DIR`` if None.
         seed: random_state for the trees.
         features_dir: explicit feature-table dir to load/build into. Defaults to the
-            build-on-miss cache ``results/xgboost_features/from_raw`` (point this at the
-            shipped ``<data>/features/fe_xgboost`` to load the reference instead of building).
-        max_future_days / max_nonwear_minutes: from-raw build knobs (the _156a recipe).
+            build-on-miss cache ``results/xgboost_features/from_raw`` (point this at a
+            prebuilt feature-table directory to load it instead of building).
+        max_future_days / max_nonwear_minutes: from-raw build parameters (future-data
+            cutoff, max non-wear minutes per day).
         """
         self.seed = seed
         self._data_dir = data_dir
@@ -235,7 +235,7 @@ class XGBoost:
         X = merged.select(feature_cols).to_numpy().astype(np.float32)
         self._X = np.where(np.isinf(X), np.nan, X).astype(np.float32)  # XGBoost handles NaN
         self._index = {u: i for i, u in enumerate(uids)}
-        logger.info("loaded fe_xgboost features: %d users x %d cols", len(uids), len(feature_cols))
+        logger.info("loaded XGBoost features: %d users x %d cols", len(uids), len(feature_cols))
 
     def _ensure_features(self) -> None:
         if self._index is not None:

@@ -19,7 +19,7 @@ from pathlib import Path
 import polars as pl
 
 from .signal_features import (
-    PIPELINE_JUAN_ICL_METRICS,
+    SIGNAL_PROCESSING_METRICS,
     build_stat_expressions,
     extract_arima_cc_for_user,
 )
@@ -80,10 +80,10 @@ def build_signal_processing_features(
 
     # Verify required metrics exist
     available = set(daily_df.columns)
-    missing = [m for m in PIPELINE_JUAN_ICL_METRICS if m not in available]
+    missing = [m for m in SIGNAL_PROCESSING_METRICS if m not in available]
     if missing:
         logger.warning("%d metrics missing from checkpoints: %s", len(missing), missing)
-    metrics_to_use = [m for m in PIPELINE_JUAN_ICL_METRICS if m in available]
+    metrics_to_use = [m for m in SIGNAL_PROCESSING_METRICS if m in available]
     logger.info("Using %d metrics for signal processing", len(metrics_to_use))
 
     # ── Phase 1: Stat features (pure Polars) ─────────────────────────────────

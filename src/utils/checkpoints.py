@@ -1,20 +1,28 @@
-"""Resolve checkpoint paths that may reference W&B artifacts.
+"""Resolve checkpoint paths that may reference remote artifacts.
 
-Supports two path formats:
+Supports three path formats:
 - Local paths: ``"/path/to/checkpoint.ckpt"`` — returned as-is (with existence check).
+- Hugging Face Hub references: ``"hf://ORG/REPO"`` — downloaded from the public Hub
+  and cached locally. This is the public default for shipped checkpoints (a fresh
+  user with no W&B account / no local copy can still fetch them).
 - W&B artifact references: ``"wandb:ENTITY/PROJECT/ARTIFACT:VERSION"`` — downloaded
   via the W&B public API and cached locally.
 
-To select a specific file from a multi-file artifact, append ``#filename``::
+To select a specific file from a multi-file artifact, append ``#filename``; to pin a
+HF revision, append ``@revision`` (before any ``#filename``)::
 
     "wandb:ENTITY/PROJECT/ARTIFACT:VERSION#MyModel_epoch21_MAE0.1416.pypots"
+    "hf://MyHeartCounts/openmhc-lsm2-daily@v1.0#loss=0.2706.ckpt"
 
 Examples::
 
-    from utils.wandb_artifact import resolve_checkpoint_path
+    from utils.checkpoints import resolve_checkpoint_path
 
     # Local path (unchanged)
     path = resolve_checkpoint_path("results/mae/best.ckpt")
+
+    # Hugging Face Hub (downloaded + cached; single .ckpt auto-selected)
+    path = resolve_checkpoint_path("hf://MyHeartCounts/openmhc-lsm2-daily")
 
     # W&B artifact (downloaded + cached)
     path = resolve_checkpoint_path("wandb:MHC_Dataset/mhc-mae-ssl/mae:latest")
@@ -33,12 +41,18 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 WANDB_PREFIX = "wandb:"
+HF_PREFIX = "hf://"
 DEFAULT_CACHE_DIR = Path.home() / ".cache" / "mhc-benchmark" / "artifacts"
 
 
 def is_wandb_reference(path: str) -> bool:
     """Check whether *path* uses the ``wandb:`` prefix."""
     return path.startswith(WANDB_PREFIX)
+
+
+def is_hf_reference(path: str) -> bool:
+    """Check whether *path* uses the ``hf://`` prefix."""
+    return path.startswith(HF_PREFIX)
 
 
 def resolve_checkpoint_path(path: str, cache_dir: str | Path | None = None) -> Path:
@@ -56,13 +70,85 @@ def resolve_checkpoint_path(path: str, cache_dir: str | Path | None = None) -> P
         FileNotFoundError: If a local path does not exist.
         ValueError: If a ``wandb:`` reference is malformed.
     """
-    if not is_wandb_reference(path):
-        local = Path(path)
-        if not local.exists():
-            raise FileNotFoundError(f"Checkpoint not found: {local}")
-        return local
+    if is_hf_reference(path):
+        return _download_hf_artifact(path, cache_dir)
 
-    return _download_wandb_artifact(path, cache_dir)
+    if is_wandb_reference(path):
+        return _download_wandb_artifact(path, cache_dir)
+
+    local = Path(path)
+    if not local.exists():
+        raise FileNotFoundError(f"Checkpoint not found: {local}")
+    return local
+
+
+def _download_hf_artifact(path: str, cache_dir: str | Path | None = None) -> Path:
+    """Download a checkpoint from a Hugging Face Hub model repo.
+
+    Reference format: ``hf://ORG/REPO[@REVISION][#FILENAME]``. When no ``#FILENAME``
+    is given, the single ``.ckpt`` in the repo is auto-selected (``.pypots`` is used
+    as a fallback, mirroring the W&B path).
+    """
+    from huggingface_hub import hf_hub_download, list_repo_files
+
+    ref = path[len(HF_PREFIX) :]  # strip prefix
+
+    # Split off optional #filename selector, then optional @revision pin.
+    filename = None
+    if "#" in ref:
+        ref, filename = ref.rsplit("#", 1)
+    revision = None
+    if "@" in ref:
+        ref, revision = ref.rsplit("@", 1)
+
+    repo_id = ref
+    if repo_id.count("/") != 1:
+        raise ValueError(
+            f"Malformed hf reference: '{path}'. "
+            "Expected format: hf://ORG/REPO[@revision][#filename]"
+        )
+
+    if filename is None:
+        files = list_repo_files(repo_id, revision=revision)
+        candidates = [f for f in files if f.endswith(".ckpt")]
+        if not candidates:
+            candidates = [
+                f
+                for f in files
+                if f.endswith(".pypots") and not Path(f).name.startswith("events.out.tfevents")
+            ]
+        if not candidates:
+            raise FileNotFoundError(
+                f"No .ckpt or .pypots file in HF repo '{repo_id}'. Files: {files}"
+            )
+        if len(candidates) > 1:
+            candidates = sorted(candidates)
+            logger.warning(
+                "Multiple checkpoints in %s, using %s. All: %s",
+                repo_id,
+                candidates[0],
+                candidates,
+            )
+        filename = candidates[0]
+
+    cache_root = Path(cache_dir) if cache_dir else DEFAULT_CACHE_DIR
+    cache_root.mkdir(parents=True, exist_ok=True)
+    logger.info(
+        "Downloading HF checkpoint: %s/%s%s",
+        repo_id,
+        filename,
+        f"@{revision}" if revision else "",
+    )
+    resolved = Path(
+        hf_hub_download(
+            repo_id=repo_id,
+            filename=filename,
+            revision=revision,
+            cache_dir=str(cache_root),
+        )
+    )
+    logger.info(f"Resolved HF checkpoint to: {resolved}")
+    return resolved
 
 
 def _download_wandb_artifact(path: str, cache_dir: str | Path | None = None) -> Path:

@@ -13,8 +13,8 @@ A concrete encoder (Toto, Chronos-2) supplies the two model-specific pieces:
   - ``_load_model(device) -> (handle, window_hours)``
   - ``_run_batch(handle, examples, window_hours) -> (B, 19, D) float32``
 
-Both stages are public code (the from-raw contract): the per-(split, task) HDF5
-is regenerated from ``daily_hourly_hf`` each cold run, never a shipped cache. The
+Both stages run from raw data: the per-(split, task) HDF5 is regenerated from
+``daily_hourly_hf`` on each cold run rather than from a prebuilt cache. The
 window is anchored to the label date at extraction time (2048 h of strictly-prior
 history), so the eval's temporal-window knob does not apply — features are aligned
 to the per-task cohort as produced.
@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 
 HOURS_PER_DAY = 24
 
-# 32 headline cross-sectional tasks (identical to the golden build scripts).
+# The 32 headline cross-sectional tasks.
 FINAL_TASKS = [
     "Atrial fibrillation (Afib)", "BMI_categories", "BMI_values", "BiologicalSex", "CAD",
     "Cerebrovascular Disease", "Congenital Heart", "Diabetes", "GoSleepTime_categories", "Hdl",
@@ -47,12 +47,12 @@ FINAL_TASKS = [
 
 
 def safe_task_filename(task: str) -> str:
-    """Filesystem-safe filename stem for a task name (URL-escaped, matches golden)."""
+    """Filesystem-safe filename stem for a task name (URL-escaped)."""
     return quote(task, safe="")
 
 
 # --------------------------------------------------------------------------- #
-# Window construction (ported verbatim from the golden build scripts)
+# Window construction.
 # --------------------------------------------------------------------------- #
 @dataclass(frozen=True)
 class WindowExample:
