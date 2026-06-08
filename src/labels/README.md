@@ -5,7 +5,7 @@ This module exposes a fast, in-memory lookup for label values and age computatio
 ## Public surface
 - `labels.get_labels(health_code: str, timestamp: pandas.Timestamp, label: str, enforce_type: bool = True, return_valid_only: bool = True) -> LabelResult`
 - `labels.LABEL_NAMES`: list of available labels (including `"age"`).
-- `labels.LABEL_TYPES`: dict mapping label names to their semantic types (`binary`, `ordinal`, `categorical`, `continuous`).
+- `labels.LABEL_TYPES`: dict mapping label names to their semantic types (`binary`, `ordinal`, `categorical`, `multi_categorical`, `continuous`).
 - `labels.get_labels_statistics() -> pandas.DataFrame`: returns statistics for all labels as a DataFrame.
 - `labels.print_labels_statistics()`: prints a table with statistics for all labels.
 - `LabelResult`: carries `matched_timestamp` and `value`.
@@ -18,7 +18,7 @@ This module exposes a fast, in-memory lookup for label values and age computatio
 ## Data sources
 - `labels.json`: per-label → healthCode → `timestamps`/`values`.
 - `enrollment_info.json`: per-healthCode metadata with de-identified `birth_year`.
-- `label_types.json`: maps each label to its semantic type (`binary`, `ordinal`, `categorical`, `continuous`).
+- `label_types.json`: maps each label to its semantic type (`binary`, `ordinal`, `categorical`, `multi_categorical`, `continuous`).
 
 ## Variable dictionary
 See [`data/labels/survey_documentation/INDEX.md`](../../data/labels/survey_documentation/INDEX.md) for a per-variable reference (question text, answer options, observed value distributions, iOS source) covering all 169 labels.
@@ -83,6 +83,7 @@ By default, `get_labels()` enforces type conversion based on `label_types.json`:
 | `binary` | `bool` | "Male"→True, "Female"→False, 0/1→bool, "true"/"false"→bool |
 | `ordinal` | `int` | String/float with integer value → int |
 | `categorical` | `int` | String/float with integer value → int |
+| `multi_categorical` | `tuple[int, ...]` | List of ints (multi-select survey answers) → sorted tuple of ints |
 | `continuous` | `float` | Any numeric → float. GoSleepTime/WakeUpTime: datetime string → decimal hours (e.g., "23:30" → 23.5) |
 
 **Exceptions:**
@@ -102,7 +103,7 @@ from labels import LABEL_TYPES
 # Check a label's type
 print(LABEL_TYPES["BiologicalSex"])  # "binary"
 print(LABEL_TYPES["happiness"])       # "ordinal"
-print(LABEL_TYPES["heart_disease"])   # "categorical"
+print(LABEL_TYPES["field_race"])      # "multi_categorical"
 print(LABEL_TYPES["WeightKilograms"]) # "continuous"
 ```
 

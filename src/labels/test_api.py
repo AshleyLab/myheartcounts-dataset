@@ -1635,3 +1635,26 @@ def test_years_between_birth_year_export_present() -> None:
     """years_between_birth_year is re-exported from labels package."""
     import labels
     assert hasattr(labels, "years_between_birth_year")
+
+
+def test_shipped_multi_categorical_fields_have_ordinal_dictionary_entries() -> None:
+    """Every label declared ``multi_categorical`` must have an ordinal_dictionary entry.
+
+    Regression test for the silent schema drift between the initial public scaffold
+    and the labels-API port: ``api.py`` decodes ``multi_categorical`` values via
+    ``ordinal_dictionary.json``, so a missing entry breaks ``_to_tuple_of_int``.
+    """
+    repo_root = Path(__file__).resolve().parents[2]
+    types = json.loads((repo_root / "data/labels/label_types.json").read_text())
+    ords = json.loads((repo_root / "data/labels/ordinal_dictionary.json").read_text())
+    missing = [
+        k for k, v in types.items() if v.get("type") == "multi_categorical" and k not in ords
+    ]
+    assert not missing, f"multi_categorical fields missing from ordinal_dictionary: {missing}"
+
+
+def test_shipped_label_types_target_count_is_pinned() -> None:
+    """Pin the target count at 41 so silent target/context promotion fails CI."""
+    repo_root = Path(__file__).resolve().parents[2]
+    types = json.loads((repo_root / "data/labels/label_types.json").read_text())
+    assert sum(1 for v in types.values() if v.get("target")) == 41

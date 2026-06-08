@@ -67,5 +67,220 @@
     "Short": 1,
     "Normal": 0,
     "Too Long": 2
+  },
+  "field_activity1_intensity": {
+    "light": 0,
+    "moderate": 1,
+    "vigorous": 2
+  },
+  "field_activity2_intensity": {
+    "light": 0,
+    "moderate": 1,
+    "vigorous": 2
+  },
+  "field_activity1_type": {
+    "walking": 0,
+    "jogging": 1,
+    "cycling": 2,
+    "tennis": 3,
+    "team_sports": 4,
+    "weight_lifting": 5,
+    "swimming": 6
+  },
+  "field_activity2_type": {
+    "walking": 0,
+    "jogging": 1,
+    "cycling": 2,
+    "tennis": 3,
+    "team_sports": 4,
+    "weight_lifting": 5,
+    "swimming": 6
+  },
+  "field_phone_on_user": {
+    "all_the_time": 0,
+    "all_day_and_night": 1,
+    "all_day_not_night": 2,
+    "most_of_the_time": 3,
+    "half_of_time": 4,
+    "rarely_if_at_all": 5
+  },
+  "field_country": {
+    "US": 0,
+    "UK": 1,
+    "HK": 2
+  },
+  "field_zip": {
+    "UK": 1000,
+    "HK": 1001
+  },
+  "field_FitzpatrickSkinType": {
+    "light": 0,
+    "medium": 1,
+    "dark": 2
+  },
+  "field_Ethnicity_heartage": {
+    "Alaska Native": 0,
+    "American Indian": 1,
+    "Asian": 2,
+    "Black": 3,
+    "Hispanic": 4,
+    "Pacific Islander": 5,
+    "White": 6,
+    "Other": 7,
+    "I prefer not to indicate an ethnicity": 8
+  },
+  "field_Gender": {
+    "Male": 0,
+    "Female": 1,
+    "Other": 2
+  },
+  "field_healthcare_worker": {
+    "1": 1,
+    "2": 2,
+    "3": 3,
+    "4": 4,
+    "5": 5,
+    "6": 6,
+    "7": 7,
+    "Other": 99
+  },
+  "field_labwork": {
+    "1": 1,
+    "2": 2
+  },
+  "field_race": {
+    "1": "White",
+    "2": "Black, African-American, or Negro",
+    "3": "American Indian",
+    "4": "Alaska Native",
+    "5": "Asian Indian",
+    "6": "Chinese",
+    "7": "Filipino",
+    "8": "Japanese",
+    "9": "Korean",
+    "10": "Vietnamese",
+    "11": "Pacific Islander",
+    "12": "Some other race"
+  },
+  "field_family_history": {
+    "1": "Father or brother with heart attack or coronary artery disease before age 55",
+    "2": "Mother or sister with heart attack or coronary artery disease before age 65",
+    "3": "None of the above"
+  },
+  "field_medications_to_treat": {
+    "1": "To treat and lower cholesterol",
+    "2": "To treat hypertension and lower blood pressure",
+    "3": "To treat diabetes/pre-diabetes and lower blood sugar",
+    "4": "None of the above"
+  },
+  "field_sodium": {
+    "1": "I avoid eating prepackaged and processed foods",
+    "2": "I avoid eating out, but when I do, I seek out low-sodium options",
+    "3": "I avoid salt when I'm cooking at home",
+    "4": "None of the above"
+  },
+  "field_tobaccoProducts": {
+    "1": "Manufactured cigarettes",
+    "2": "Hand rolled cigarettes",
+    "3": "Pipe full of tobacco",
+    "4": "Cigars, cigarillos",
+    "5": "Water Pipe (hookah)",
+    "6": "E-cigarettes",
+    "7": "Chew tobacco",
+    "8": "None of the above"
+  },
+  "field_tobaccoProductsEver": {
+    "1": "Manufactured cigarettes",
+    "2": "Hand rolled cigarettes",
+    "3": "Pipe full of tobacco",
+    "4": "Cigars, cigarillos",
+    "5": "Water Pipe (hookah)",
+    "6": "E-cigarettes",
+    "7": "Chew tobacco",
+    "8": "None of the above"
+  },
+  "field_sleep_diagnosis2": {
+    "1": "Sleep Apnea (breathing stops at night)",
+    "2": "Insomnia",
+    "3": "Circadian Rhythm Disturbance (Advanced/Delayed Sleep Phase, Shift work)",
+    "4": "Restless Legs Syndrome and/or Periodic Limb Movements",
+    "5": "Narcolepsy or Cataplexy",
+    "6": "REM Behavior Disorder (act out dreams in your sleep)",
+    "7": "Sleepwalking",
+    "8": "None of the above"
+  },
+  "field_durationQuitSmoking": {
+    "1": "Days",
+    "2": "Months",
+    "3": "Years",
+    "4": "Never",
+    "5": "Don't know"
+  },
+  "field_durationQuitVaping": {
+    "1": "Days",
+    "2": "Months",
+    "3": "Years",
+    "4": "Never",
+    "5": "Don't know"
+  },
+  "field_durationQuitSmokeless": {
+    "1": "Days",
+    "2": "Months",
+    "3": "Years",
+    "4": "Never",
+    "5": "Don't know"
+  },
+  "field_antibiotics": {
+    "0": "None",
+    "1": "Azithromycin",
+    "2": "Doxycycline",
+    "3": "Other antibiotic (not azithromycin or doxycycline)",
+    "4": "Hydrochloroquine (Plaquenil)",
+    "5": "Oral corticosteroids (eg prednisone)",
+    "6": "Inhaled corticosteroids (eg budesonide, beclamethasone)",
+    "7": "Tocilizumab (Actemra)",
+    "8": "Other Disease Modifying Anti-Rheumatic Drugs",
+    "9": "Other immuno-suppressives",
+    "10": "Study drug (Investigational agent)",
+    "11": "Remdesivir"
+  },
+  "field_conditions": {
+    "0": "None",
+    "1": "Cardiovascular disease, including hypertension",
+    "2": "Immunodeficiency, including HIV",
+    "3": "Diabetes",
+    "4": "Renal disease (ESRD on dialysis or not)",
+    "5": "Liver disease",
+    "6": "Chronic lung disease",
+    "7": "Healthcare worker",
+    "8": "Pregnancy or Post-partum (< 6 weeks)"
+  },
+  "field_symptoms_past_week": {
+    "0": "None",
+    "1": "Cough",
+    "2": "Fever",
+    "3": "Shortness of breath",
+    "4": "Loss of smell / taste",
+    "5": "Fatigue / lethargy",
+    "6": "Chest pain",
+    "7": "Sore throat",
+    "8": "Muscle aches / muscle pain",
+    "9": "Anorexia, loss of appetite",
+    "10": "Diarrhea",
+    "11": "Nausea/vomiting"
+  },
+  "field_symptoms_week_preceding": {
+    "0": "None",
+    "1": "Cough",
+    "2": "Fever",
+    "3": "Shortness of breath",
+    "4": "Loss of smell / taste",
+    "5": "Fatigue / lethargy",
+    "6": "Chest pain",
+    "7": "Sore throat",
+    "8": "Muscle aches / muscle pain",
+    "9": "Anorexia, loss of appetite",
+    "10": "Diarrhea",
+    "11": "Nausea/vomiting"
   }
 }
