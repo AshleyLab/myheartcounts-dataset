@@ -215,7 +215,7 @@ def imputation_to_submission_yaml(
         notes=notes,
         aggregate_lines=[
             f"skill_score: {_fmt(agg['skill_score'])}",
-            "fair_skill_score: —  # computed by maintainers from subgroup runs",
+            "fair_skill_score: —  # computed by maintainers from the disparity-ratio bootstrap",
             "avg_rank: —  # computed by maintainers vs current leaderboard",
         ],
         subgroup_lines=[
