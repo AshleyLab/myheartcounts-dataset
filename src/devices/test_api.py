@@ -10,12 +10,51 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-_SAMPLE_FIXTURE = (
-    Path(__file__).resolve().parent.parent.parent
-    / "data"
-    / "labels"
-    / "user_device_info_sample.json"
-)
+_SAMPLE_DATA: dict[str, dict[str, list[list[str]]]] = {
+    "sample-user-phone-and-watch": {
+        "phone": [
+            ["2017-12-18", "2023-05-18", "iPhone 8 Plus"],
+            ["2023-05-19", "2024-09-30", "iPhone 14 Pro"],
+        ],
+        "watch": [
+            ["2019-04-05", "2023-12-19", "Apple Watch Series 5 44mm GPS"],
+        ],
+    },
+    "sample-user-phone-only": {
+        "phone": [
+            ["2016-09-01", "2019-08-31", "iPhone 6s"],
+        ],
+        "watch": [],
+    },
+    "sample-user-watch-only": {
+        "phone": [],
+        "watch": [
+            ["2021-01-15", "2022-06-30", "Apple Watch Series 6 44mm GPS"],
+        ],
+    },
+    "sample-user-unknown-bucket": {
+        "phone": [
+            ["2018-05-10", "2020-12-31", "iPhone Unknown Model"],
+        ],
+        "watch": [
+            ["2018-05-10", "2020-12-31", "Apple Watch Unknown Model"],
+        ],
+    },
+    "sample-user-single-short-interval": {
+        "phone": [
+            ["2022-07-01", "2022-07-07", "iPhone 13"],
+        ],
+        "watch": [],
+    },
+}
+
+
+@pytest.fixture
+def sample_fixture(tmp_path: Path) -> Path:
+    """Write the 5-user sample dict to a tmp file and return its path."""
+    path = tmp_path / "user_device_info.json"
+    path.write_text(json.dumps(_SAMPLE_DATA))
+    return path
 
 
 @pytest.fixture(autouse=True)
@@ -41,9 +80,9 @@ def _load_devices_api(device_info_path: Path):
     return importlib.reload(devices.api)
 
 
-def test_get_devices_returns_snapshot_with_phone_and_watch() -> None:
+def test_get_devices_returns_snapshot_with_phone_and_watch(sample_fixture: Path) -> None:
     """get_devices returns a DeviceSnapshot with both fields populated."""
-    api = _load_devices_api(_SAMPLE_FIXTURE)
+    api = _load_devices_api(sample_fixture)
 
     snap = api.get_devices(
         "sample-user-phone-and-watch",
@@ -55,9 +94,9 @@ def test_get_devices_returns_snapshot_with_phone_and_watch() -> None:
     assert snap.watch.name == "Apple Watch Series 5 44mm GPS"
 
 
-def test_get_devices_picks_correct_interval_after_upgrade() -> None:
+def test_get_devices_picks_correct_interval_after_upgrade(sample_fixture: Path) -> None:
     """After a phone upgrade, the later interval is returned."""
-    api = _load_devices_api(_SAMPLE_FIXTURE)
+    api = _load_devices_api(sample_fixture)
 
     snap = api.get_devices(
         "sample-user-phone-and-watch",
@@ -68,9 +107,9 @@ def test_get_devices_picks_correct_interval_after_upgrade() -> None:
     assert snap.watch is None
 
 
-def test_get_devices_returns_none_outside_coverage() -> None:
+def test_get_devices_returns_none_outside_coverage(sample_fixture: Path) -> None:
     """Querying before the first record yields None for both classes."""
-    api = _load_devices_api(_SAMPLE_FIXTURE)
+    api = _load_devices_api(sample_fixture)
 
     snap = api.get_devices(
         "sample-user-phone-and-watch",
@@ -80,9 +119,9 @@ def test_get_devices_returns_none_outside_coverage() -> None:
     assert snap.watch is None
 
 
-def test_get_devices_phone_only_user() -> None:
+def test_get_devices_phone_only_user(sample_fixture: Path) -> None:
     """A user with no watch records yields watch=None."""
-    api = _load_devices_api(_SAMPLE_FIXTURE)
+    api = _load_devices_api(sample_fixture)
 
     snap = api.get_devices(
         "sample-user-phone-only",
@@ -92,9 +131,9 @@ def test_get_devices_phone_only_user() -> None:
     assert snap.watch is None
 
 
-def test_get_devices_watch_only_user() -> None:
+def test_get_devices_watch_only_user(sample_fixture: Path) -> None:
     """A user with no phone records yields phone=None."""
-    api = _load_devices_api(_SAMPLE_FIXTURE)
+    api = _load_devices_api(sample_fixture)
 
     snap = api.get_devices(
         "sample-user-watch-only",
@@ -104,9 +143,9 @@ def test_get_devices_watch_only_user() -> None:
     assert snap.watch.name == "Apple Watch Series 6 44mm GPS"
 
 
-def test_get_devices_unknown_bucket_returned_as_is() -> None:
+def test_get_devices_unknown_bucket_returned_as_is(sample_fixture: Path) -> None:
     """'Unknown Model' strings flow through unchanged."""
-    api = _load_devices_api(_SAMPLE_FIXTURE)
+    api = _load_devices_api(sample_fixture)
 
     snap = api.get_devices(
         "sample-user-unknown-bucket",
@@ -116,9 +155,9 @@ def test_get_devices_unknown_bucket_returned_as_is() -> None:
     assert snap.watch.name == "Apple Watch Unknown Model"
 
 
-def test_get_devices_inclusive_endpoints() -> None:
+def test_get_devices_inclusive_endpoints(sample_fixture: Path) -> None:
     """Start and end dates of an interval are both included."""
-    api = _load_devices_api(_SAMPLE_FIXTURE)
+    api = _load_devices_api(sample_fixture)
 
     start = api.get_devices(
         "sample-user-single-short-interval",
@@ -132,17 +171,17 @@ def test_get_devices_inclusive_endpoints() -> None:
     assert end.phone.name == "iPhone 13"
 
 
-def test_get_devices_unknown_healthcode_raises() -> None:
+def test_get_devices_unknown_healthcode_raises(sample_fixture: Path) -> None:
     """A healthCode not in the file raises KeyError."""
-    api = _load_devices_api(_SAMPLE_FIXTURE)
+    api = _load_devices_api(sample_fixture)
 
     with pytest.raises(KeyError, match="Unknown healthCode"):
         api.get_devices("not-a-real-user", pd.Timestamp("2020-01-01"))
 
 
-def test_get_device_timeline_returns_sorted_intervals() -> None:
+def test_get_device_timeline_returns_sorted_intervals(sample_fixture: Path) -> None:
     """get_device_timeline returns DeviceInterval tuples sorted by start."""
-    api = _load_devices_api(_SAMPLE_FIXTURE)
+    api = _load_devices_api(sample_fixture)
 
     timeline = api.get_device_timeline("sample-user-phone-and-watch")
     assert timeline.health_code == "sample-user-phone-and-watch"
@@ -173,9 +212,9 @@ def test_import_succeeds_without_data_file(tmp_path: Path) -> None:
     assert hasattr(api, "DeviceTimeline")
 
 
-def test_get_devices_using_built_timeline_snapshot_at() -> None:
+def test_get_devices_using_built_timeline_snapshot_at(sample_fixture: Path) -> None:
     """DeviceTimeline.snapshot_at matches get_devices for the same query."""
-    api = _load_devices_api(_SAMPLE_FIXTURE)
+    api = _load_devices_api(sample_fixture)
 
     timeline = api.get_device_timeline("sample-user-phone-and-watch")
     ts = pd.Timestamp("2020-06-01")

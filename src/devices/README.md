@@ -45,10 +45,6 @@ guaranteed to be in every Dataverse bundle. Importing `devices` works
 either way; the first lookup raises `FileNotFoundError` with guidance if
 the file is missing.
 
-A 5-user sample fixture is included at
-`data/labels/user_device_info_sample.json` for tests and runnable
-examples.
-
 ## Schema
 
 ```json
