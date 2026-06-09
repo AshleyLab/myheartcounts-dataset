@@ -32,7 +32,10 @@ from forecasting_evaluation.forecasting_training.standard_scaler import (
 
 logger = logging.getLogger(__name__)
 SCALER_VARIANT = "train_only_standard_scaler_v1"
-MANIFEST_VERSION = 1
+# v2: the row-group manifest is model-agnostic — it no longer drops windows whose
+# history is shorter than a model's fixed context length (`n_steps`). That is now
+# a per-model concern. Bumped so any v1 manifests on disk are rebuilt.
+MANIFEST_VERSION = 2
 
 
 @dataclass(frozen=True)
@@ -115,16 +118,17 @@ class ForecastingSampleIndexBuilder:
             for current_day in candidate_days:
                 history_end = current_day * self.HOURS_PER_DAY
                 pred_end = history_end + self._n_pred_steps
-                latest_possible_history_end = history_end + (self.HOURS_PER_DAY - 1)
 
+                # Data-quality drops only, applied equally to every model: no
+                # history before the day boundary, and ground truth must exist for
+                # the full horizon. Model-capability filtering (e.g. a fixed
+                # context length `n_steps`) is intentionally NOT applied here — the
+                # manifest is model-agnostic so every model sees the same window
+                # set. Training datasets that need fixed windows re-filter at
+                # runtime in `resolve_runtime_row_groups`.
                 if history_end <= 0:
                     continue
                 if pred_end > trajectory_length:
-                    continue
-                # Keep a day-level manifest independent of the runtime offset.
-                # The actual offset-specific validity is resolved later when
-                # slicing windows from loaded row tensors.
-                if latest_possible_history_end < self._n_steps:
                     continue
 
                 windows.append(
@@ -259,6 +263,15 @@ def write_row_group_manifest(
     return manifest_path
 
 
+def _manifest_version_matches(manifest_path: str | Path) -> bool:
+    """Return whether a persisted manifest matches the current MANIFEST_VERSION."""
+    try:
+        payload = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return int(payload.get("manifest_version", 0)) == MANIFEST_VERSION
+
+
 def load_row_group_manifest(manifest_path: str | Path) -> list[ForecastingRowGroup]:
     """Load row-group manifest from JSON."""
     manifest_path = Path(manifest_path)
@@ -295,7 +308,7 @@ def load_or_build_row_group_manifest(
 ) -> list[ForecastingRowGroup]:
     """Reuse manifest JSON when present, otherwise rebuild and persist it."""
     manifest_path = Path(manifest_path)
-    if manifest_path.exists() and not overwrite:
+    if manifest_path.exists() and not overwrite and _manifest_version_matches(manifest_path):
         row_groups = load_row_group_manifest(manifest_path)
         logger.info(
             "Manifest cache already exists at %s, reusing it (%d rows, %d samples)",
@@ -304,6 +317,12 @@ def load_or_build_row_group_manifest(
             sum(len(group.windows) for group in row_groups),
         )
         return row_groups
+    if manifest_path.exists() and not overwrite:
+        logger.info(
+            "Manifest cache at %s is stale (version != %d); rebuilding",
+            manifest_path,
+            MANIFEST_VERSION,
+        )
 
     logger.info("Building %s manifest cache at %s", split_name, manifest_path)
     row_groups = ForecastingSampleIndexBuilder(

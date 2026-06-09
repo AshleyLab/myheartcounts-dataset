@@ -9,7 +9,6 @@ import torch
 from chronos import Chronos2Pipeline
 
 from forecasting_evaluation.config import Chronos2ModelConfig
-from forecasting_evaluation.data.types import SubTrajectoryInput
 from forecasting_evaluation.models.base import BasePredictionModel
 
 
@@ -157,20 +156,24 @@ class Chronos2Model(BasePredictionModel):
 
     def predict(
         self,
-        inputs: SubTrajectoryInput,
+        history: np.ndarray,
+        horizon: int,
+        *,
+        past_covariates: dict[str, np.ndarray] | None = None,
+        future_covariates: dict[str, np.ndarray] | None = None,
     ) -> tuple[np.ndarray | None, np.ndarray | None]:
         """Generate forecasts for the given time series.
 
         Parameters
         ----------
-        inputs : SubTrajectoryInput
-            Typed forecasting sub-trajectory input.
-        batch_size : int, optional
-            Batch size for prediction, by default 256
-        context_length : int | None, optional
-            Maximum context length for inference, by default None (uses model default)
-        **kwargs
-            Additional arguments passed to pipeline.predict()
+        history : np.ndarray
+            Full-prefix history of shape (n_features, history_length), may contain NaN.
+        horizon : int
+            Number of future hours to forecast.
+        past_covariates : dict[str, np.ndarray] | None, optional
+            Optional past-only covariates (forwarded by the harness if declared).
+        future_covariates : dict[str, np.ndarray] | None, optional
+            Optional covariates spanning history + horizon.
 
         Returns:
         -------
@@ -179,10 +182,8 @@ class Chronos2Model(BasePredictionModel):
             - quantiles_result: Quantile predictions of shape (n_features, prediction_length, n_quantiles)
               or None if quantiles cannot be computed
         """
-        target = inputs.history
-        past_covariates = inputs.past_covariates
-        future_covariates = inputs.future_covariates
-        prediction_length = inputs.prediction_hours
+        target = history
+        prediction_length = horizon
 
         # Construct input in the format expected by Chronos2Pipeline
         model_inputs = {

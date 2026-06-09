@@ -129,32 +129,25 @@ So downstream behavior such as window length, quantile output capability, and wh
 6. Intersect each split with sample-index-eligible users.
 7. Return `train_ds, val_ds, test_ds`.
 
-Even though predictions are written only for `test_ds`, the evaluator must load all three splits at once because cache/scaler statistics are prepared at this stage.
+`load_splits()` returns all three splits, but evaluation now builds only the
+**test**-split raw history cache (the prior train/val/test standardized bundle
+and its scaler-stats step are no longer part of the eval path).
 
-### 3.4 Step 2: Build/reuse history_cf cache bundle
+### 3.4 Step 2: Build/reuse history_cf cache (test split only)
 
-Then [prepare_history_cf_cache_bundle()](forecasting_training/cache_bundle.py#L52) is used to prepare cache and row-group manifests for all three splits in one shot.
+Then [prepare_history_cf_raw_cache_for_split()](forecasting_training/cache_bundle.py) prepares the **raw** history cache and row-group manifest for the **test split only**, via one model-agnostic path. There is no per-model cache selection and no standardized-cache variant: every model reads the same raw full-trajectory history and the same data-quality-only window manifest (manifest schema `v2`). Models that need a fixed context window slice it themselves; models trained on standardized inputs standardize internally at predict time.
 
-Typical directory layout:
+The cache still lives under:
 
 ```text
 data/processed/forecasting_eval_h5/history_cf_cache/<hash>/
-  train.h5
-  train_standard.h5
-  val.h5
-  val_standard.h5
-  test.h5
-  test_standard.h5
-  train_manifest.json
-  val_manifest.json
-  test_manifest.json
-  config.yaml
-  standard_scaler_stats.json
 ```
+
+but only the raw **test** H5 and its row-group manifest are built for evaluation (no train/val or `_standard` variants).
 
 The evaluator stores two key objects in context for later sequential inference:
 
-- `test_cache_path`: the actual test H5 selected for the current model
+- `test_cache_path`: the raw test H5 (same for every model)
 - `test_row_groups`: window list grouped by trajectory row
 
 ### 3.5 Step 3: Initialize writers and enter sequential inference
@@ -177,19 +170,26 @@ history_end_hour = current_day * 24 + daily_start_hour_offset
 pred_end_hour = history_end_hour + forecasting_length
 ```
 
-Runtime validity filtering is applied again:
+Data-quality validity filtering is applied (the same drops for every model — no
+model-capability filtering):
 
 - Skip if `history_end_hour <= 0`
-- Skip if PyPOTS and `history_end_hour < n_steps`
 - Skip if `pred_end_hour > trajectory_length`
 
-Window semantics depend on model type:
+Window semantics are now model-agnostic — every model receives the same
+full-prefix history and owns any truncation/padding it needs:
 
-- Non-PyPOTS: `history_window = history_cf[:, :history_end_hour]`
-- PyPOTS: `history_window = history_cf[:, history_end_hour - n_steps:history_end_hour]`
-- Shared target: `target_window = history_cf[:, history_end_hour:pred_end_hour]`
+- `history_window = history_cf[:, :history_end_hour]` (full prefix, all models)
+- `target_window = history_cf[:, history_end_hour:pred_end_hour]`
 
-Then it builds [SubTrajectoryInput](data/types.py#L16) and calls `model.predict_wrapper(...)`.
+The model is then invoked through the unified call path
+`_invoke_forecaster(model, history_window, prediction_hours, meta)`, which
+forwards only the optional metadata kwargs the model's
+`predict(history, horizon, ...)` declares, times the call, tracks peak memory,
+and normalizes the return to `(point, quantiles)`. Any `NaN` cells in the point
+forecast are filled with the Seasonal-Naive baseline so every in-scope cell is
+scored; the per-channel substitution rate is logged and surfaced as
+`overall_fallback_rate` / `fallback_rate`.
 
 When writing each prediction row, `history_length` is persisted as the absolute forecast origin `history_end_hour` (not model-consumed context length). This guarantees unambiguous reconstruction of ground-truth slices in offline metrics.
 
@@ -212,7 +212,8 @@ Each row corresponds to one forecasting window, with major fields:
 - `history_length`: absolute hour index of forecast origin in the full trajectory.
 - `point_predictions`: expected shape `(n_features, forecasting_length)`.
 - `quantile_predictions`: expected shape `(n_features, forecasting_length, n_quantiles)`, can be empty.
-- `performance`: auxiliary inference metadata recorded by model, such as runtime and memory.
+- `fallback_mask`: boolean `(n_features, forecasting_length)`; `True` where the model emitted `NaN` and the Seasonal-Naive baseline was substituted before scoring.
+- `performance`: auxiliary inference metadata recorded by the harness, such as runtime and memory.
 
 Entrypoint example:
 

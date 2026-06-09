@@ -4,7 +4,6 @@ import random
 
 import numpy as np
 
-from forecasting_evaluation.data.types import SubTrajectoryInput
 from forecasting_evaluation.models.base import BasePredictionModel
 
 
@@ -29,7 +28,8 @@ class SeasonalNaiveAverageModel(BasePredictionModel):
 
     def predict(
         self,
-        inputs: SubTrajectoryInput,
+        history: np.ndarray,
+        horizon: int,
     ) -> tuple[np.ndarray | None, np.ndarray | None]:
         """Predict future values using averaged seasonal naive approach.
 
@@ -38,7 +38,9 @@ class SeasonalNaiveAverageModel(BasePredictionModel):
         uses their mean as the prediction template.
 
         Args:
-            inputs: Typed forecasting sub-trajectory input.
+            history: Full-prefix history of shape (n_features, history_length),
+                may contain NaN.
+            horizon: Number of future hours to forecast.
 
         Returns:
             Tuple containing (point_result, quantiles_result):
@@ -48,8 +50,7 @@ class SeasonalNaiveAverageModel(BasePredictionModel):
         point_result = None
         quantiles_result = None
 
-        history = inputs.history
-        prediction_length = inputs.prediction_hours
+        prediction_length = horizon
 
         n_features, history_length = history.shape
         effective_seasonal = min(self.seasonal, history_length)

@@ -45,7 +45,7 @@ class _CustomModelEvaluator(ForecastingEvaluator):
 
         print_config(self.config)
         model = self._injected_model
-        data_context = self._load_evaluation_data(model)
+        data_context = self._load_evaluation_data()
 
         public_writer = PublicWriter(
             self.config,
@@ -57,6 +57,7 @@ class _CustomModelEvaluator(ForecastingEvaluator):
             "run_dir": str(run_dir),
             "prediction_samples": public_writer.total_written,
             "skipped_users": public_writer.skipped_users,
+            **self._fallback_summary,
         }
 
 
@@ -81,6 +82,9 @@ def run_eval(
         - ``metrics_dir``: where offline metrics were written
         - ``per_channel``: aggregated per-channel metrics
         - ``n_samples``: prediction samples emitted
+        - ``overall_fallback_rate``: fraction of forecast cells where the model
+          returned NaN and the Seasonal-Naive baseline was substituted
+        - ``fallback_rate``: per-channel Seasonal-Naive substitution fractions
     """
     # Phase 1: prediction generation.
     evaluator = _CustomModelEvaluator(config, model)
@@ -108,6 +112,8 @@ def run_eval(
         "metrics_dir": str(metrics_output_dir),
         "per_channel": per_channel,
         "n_samples": int(eval_summary["prediction_samples"]),
+        "overall_fallback_rate": float(eval_summary.get("overall_fallback_rate", 0.0)),
+        "fallback_rate": dict(eval_summary.get("fallback_rate", {})),
     }
 
 

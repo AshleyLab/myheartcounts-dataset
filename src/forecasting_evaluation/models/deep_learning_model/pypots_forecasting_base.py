@@ -12,7 +12,6 @@ import numpy as np
 import torch
 
 from forecasting_evaluation.config import FeaturesConfig
-from forecasting_evaluation.data.types import SubTrajectoryInput
 from forecasting_evaluation.forecasting_training.online_dataset import (
     history_cf_cache_subdir,
     resolve_cache_base_dir,
@@ -91,6 +90,16 @@ class BasePyPOTSForecastingModel(BasePredictionModel, ABC):
         self._checkpoint_dir = resolve_checkpoint_path(self.checkpoint_path)
         self._training_config = self._load_training_config(self._checkpoint_dir)
         self._scaler_stats = self._load_scaler_stats()
+        # The harness feeds raw history and this model standardizes internally, so
+        # missing scaler stats can no longer be caught by the eval cache builder.
+        # Fail fast here instead of silently predicting in standardized space.
+        if self.uses_standard_scaler and self._scaler_stats is None:
+            raise FileNotFoundError(
+                "PyPOTS checkpoint was trained with standard scaling, but "
+                "standard_scaler_stats.json could not be resolved from the saved "
+                "training config or co-located with the checkpoint. Predictions "
+                "would otherwise be produced in standardized space."
+            )
         self._model = self._load_model()
 
     def _load_model(self):
@@ -257,10 +266,52 @@ class BasePyPOTSForecastingModel(BasePredictionModel, ABC):
 
     def predict(
         self,
-        inputs: SubTrajectoryInput,
+        history: np.ndarray,
+        horizon: int,
     ) -> tuple[np.ndarray | None, np.ndarray | None]:
-        """Forecast with the loaded PyPOTS model using evaluator inputs."""
-        history_cf = np.asarray(inputs.history, dtype=np.float32)
+        """Forecast with the loaded PyPOTS model (PyPOTS missing-value idiom).
+
+        The harness passes the **raw** full-prefix history (shape
+        ``(n_features, history_length)``, possibly shorter than ``n_steps`` and
+        possibly containing NaN). This model owns its own input handling:
+        standardization (when the checkpoint was trained on standardized
+        windows), trailing fixed-window selection, and NaN left-padding for
+        short histories.
+
+        Short histories are **NaN-left-padded** to ``n_steps`` rather than
+        dropped or returned as NaN. This is the PyPOTS idiom for partial
+        observation: PyPOTS' loader (``pygrinder.fill_and_get_mask_torch``,
+        ``nan=0``) fills ``NaN -> 0`` and builds a ``missing_mask`` the model
+        consumes (``SaitsEmbedding`` concatenates it onto ``X``). In
+        standardized space ``0`` is the channel mean, so a short history is just
+        "the leading positions are missing" fed through the exact mechanism the
+        checkpoint was trained on. The forecast is therefore **finite** — these
+        models do not return NaN for short history and do not trigger the
+        evaluator's Seasonal-Naive fallback.
+
+        Caveat: training dropped sub-``n_steps`` windows, so a very short history
+        is an in-mechanism extrapolation (a quality nuance, not a correctness
+        issue); no retraining is required.
+
+        Args:
+            history: Full-prefix history of shape (n_features, history_length).
+            horizon: Number of future hours requested (the model emits its
+                trained ``n_pred_steps``; the evaluator asserts they match).
+        """
+        history_cf = np.asarray(history, dtype=np.float32)
+        # The harness feeds raw history to every model; standardize internally
+        # to match training-time input space. Channel-wise affine scaling is
+        # applied per timestep, so transform-then-slice is equivalent to the
+        # previous slice-of-pre-standardized-cache path.
+        if self._scaler_stats is not None:
+            history_cf = (
+                self._scaler_stats.transform_history_cf(
+                    torch.as_tensor(history_cf, dtype=torch.float32)
+                )
+                .cpu()
+                .numpy()
+                .astype(np.float32, copy=False)
+            )
         if history_cf.shape[1] < self.n_steps:
             # Match training-time fixed-window shape while preserving all available
             # recent history: left-pad the older missing context with NaNs.
@@ -273,8 +324,8 @@ class BasePyPOTSForecastingModel(BasePredictionModel, ABC):
             history_cf = padded_history
 
         # Match training-time H5 export: keep only the most recent fixed window.
-        history = history_cf[:, -self.n_steps :].T
-        result = self._model.predict({"X": history[None, ...]})
+        model_input = history_cf[:, -self.n_steps :].T
+        result = self._model.predict({"X": model_input[None, ...]})
         forecasting = result["forecasting"]
 
         if hasattr(forecasting, "detach"):

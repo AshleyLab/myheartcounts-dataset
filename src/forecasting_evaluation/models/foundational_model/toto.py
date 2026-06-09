@@ -15,7 +15,6 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from forecasting_evaluation.data.types import SubTrajectoryInput
 from forecasting_evaluation.models.base import BasePredictionModel
 
 logger = logging.getLogger(__name__)
@@ -174,12 +173,15 @@ class TotoModel(BasePredictionModel):
 
     def predict(
         self,
-        inputs: SubTrajectoryInput,
+        history: np.ndarray,
+        horizon: int,
     ) -> tuple[np.ndarray | None, np.ndarray | None]:
-        """Generate zero-shot forecasts for the given sub-trajectory.
+        """Generate zero-shot forecasts for the given history window.
 
         Args:
-            inputs: Sub-trajectory with history shape (n_features, history_length).
+            history: Full-prefix history of shape (n_features, history_length),
+                may contain NaN.
+            horizon: Number of future hours to forecast.
 
         Returns:
             Tuple of:
@@ -187,8 +189,7 @@ class TotoModel(BasePredictionModel):
                 - quantiles_result: Quantile forecasts, shape
                     (n_features, prediction_length, n_quantiles).
         """
-        history = inputs.history  # (n_features, history_length)
-        prediction_length = inputs.prediction_hours
+        prediction_length = horizon
         n_features, history_length = history.shape
 
         # Trim history to configured context window

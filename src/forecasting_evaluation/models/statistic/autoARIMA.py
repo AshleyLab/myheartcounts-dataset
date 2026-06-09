@@ -12,7 +12,6 @@ try:
 except ImportError:  # pragma: no cover - optional dependency in some envs
     ConvergenceWarning = Warning
 
-from forecasting_evaluation.data.types import SubTrajectoryInput
 from forecasting_evaluation.models.base import BasePredictionModel
 
 
@@ -105,22 +104,25 @@ class AutoARIMAModel(BasePredictionModel):
 
     def predict(
             self,
-            inputs: SubTrajectoryInput,
+            history: np.ndarray,
+            horizon: int,
         ) -> tuple[np.ndarray | None, np.ndarray | None]:
         """Predict future values using AutoARIMA.
 
         Fits a new model on all available historical data for each prediction.
 
         Args:
-            inputs: Typed forecasting sub-trajectory input.
+            history: Full-prefix history of shape (n_features, history_length),
+                may contain NaN.
+            horizon: Number of future hours to forecast.
 
         Returns:
             Tuple containing (point_result, quantiles_result):
             - point_result: (n_features, prediction_length) array of point predictions.
             - quantiles_result: (n_features, prediction_length, n_quantiles) quantile forecasts.
         """
-        target = inputs.history
-        prediction_length = inputs.prediction_hours
+        target = history
+        prediction_length = horizon
 
         n_features, _ = target.shape
         n_quantiles = 0 if self.quantile_levels is None else len(self.quantile_levels)

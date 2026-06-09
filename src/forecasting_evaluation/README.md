@@ -6,7 +6,7 @@ Current scope in code:
 
 - Load trajectory data from Hugging Face disk format.
 - Split by user into train/validation/test (evaluation runs on test split only).
-- Build sub-trajectories from pre-generated per-user day indices.
+- Build forecast windows from a data-quality-only per-user day-index manifest (shared by all models).
 - Run one configured forecasting model per task.
 - Persist predictions to parquet.
 - Compute offline metrics from saved prediction outputs.
@@ -158,10 +158,17 @@ Core orchestrator: `ForecastingEvaluator` in `evaluation/evaluator.py`.
 3. Create run directory and save run config via `PublicWriter`.
 4. Run configured model on test trajectories (sequential only).
 5. For each `(model, trajectory)`:
-   - extract features using `MultivariateFeatureExtractor.extract()`
-   - generate sub-trajectories using `SubTrajectoryGenerator.generate()`
-   - call `model.predict_wrapper(sub_traj)`
-   - append one prediction record per sub-trajectory with `PredictResultWriter.append()`
+   - load the cached **raw** history row and iterate its manifest windows
+   - slice the **full-prefix** history up to each forecast origin (every model
+     gets the same window; it owns any context truncation/padding it needs)
+   - call the model via the unified call path
+     `_invoke_forecaster(model, history, horizon, meta)` — forwards only the
+     optional metadata kwargs the model's `predict` declares, times the call,
+     and normalizes the return to `(point, quantiles)`
+   - fill any `NaN` predictions with the Seasonal-Naive baseline so gaps are
+     scored (not dropped); the per-channel substitution rate is logged and
+     surfaced as `overall_fallback_rate` / `fallback_rate`
+   - append one prediction record per window with `PredictResultWriter.append()`
 6. Finalize run output.
 
 Important behavior in current implementation:
@@ -169,7 +176,15 @@ Important behavior in current implementation:
 - Only `test_ds` is evaluated.
 - One prediction parquet file is maintained per `(model_name, user_id)`.
 - Evaluator does not compute metrics online.
-- `SubTrajectoryGenerator` requires a precomputed sample index and has no fallback generation path.
+- The eval window set is a **data-quality-only** manifest shared by all models
+  (no model-capability drops): a window is included iff it has history before
+  the day boundary and ground truth for the full horizon.
+- PyPOTS models follow the **PyPOTS missing-value idiom** for short histories: a
+  history shorter than the model's fixed `n_steps` is `NaN`-left-padded to
+  `n_steps`, and PyPOTS fills `NaN → 0` (= channel mean in standardized space)
+  plus a `missing_mask` the model consumes. The forecast is therefore finite, so
+  the Seasonal-Naive fallback is **not** exercised for PyPOTS short-history
+  windows (it remains a safety net for any model that emits `NaN`).
 
 ---
 
@@ -353,27 +368,35 @@ Channel selection is controlled by `features.channel`:
 
 - `all` -> fixed 19-channel feature set
 
-### 3.3 Sub-Trajectory Output
+### 3.3 Per-Window Model Input
 
-`SubTrajectoryGenerator.generate()` yields `SubTrajectoryInput` with:
+The evaluator no longer builds a `SubTrajectoryInput`. For each manifest window
+it slices the window directly from the cached raw history row and calls the model
+under the unified contract `predict(history, horizon, *optional kwargs)`:
 
-- `history`: `(n_features, index_hours)`
-- `ground_truth`: `(n_features, forecasting_length)`
-- `variable_names`
-- optional covariates
-- `index_days`
-- `prediction_hours`
+- `history`: `(n_features, index_hours)` — the full prefix up to the forecast origin
+- `horizon`: `forecasting_length`
+- optional metadata kwargs, forwarded only if the model's `predict` declares
+  them: `variable_names`, `past_covariates`, `future_covariates`, `index_days`
 
 Slicing logic:
 
 - `index_hours = index_days * 24 + daily_start_hour_offset`
 - `history = series[:, :index_hours]`
-- `ground_truth = series[:, index_hours:index_hours + forecasting_length]`
+- `target (for metrics) = series[:, index_hours:index_hours + forecasting_length]`
+
+Every model receives the same full-prefix `history` (the window set is
+data-quality-filtered only); a model that needs a fixed context window
+truncates/pads it internally.
 
 `daily_start_hour_offset` is a runtime-only forecasting setup parameter. It
 does not change `sample_index_file`, cache/storage layout, or persisted
 manifests; it only shifts the effective slice boundary when samples are cut
 from loaded trajectories.
+
+> Note: `SubTrajectoryGenerator` / `SubTrajectoryInput` still exist in `data/`,
+> but the evaluator main path has converged on the raw history cache +
+> row-group manifest and no longer uses them.
 
 ### 3.4 Prediction Parquet Row
 
@@ -399,6 +422,7 @@ One row per sample, with columns:
 - `history_length`
 - `point_predictions` (nested list or null)
 - `quantile_predictions` (nested list or null)
+- `fallback_mask` (nested bool list): `True` where the model returned `NaN` and the Seasonal-Naive baseline was substituted
 - `performance` (dict, e.g. prediction time and memory usage)
 
 ---

@@ -12,7 +12,6 @@ try:
 except ImportError:  # pragma: no cover - optional dependency in some envs
     ConvergenceWarning = Warning
 
-from forecasting_evaluation.data.types import SubTrajectoryInput
 from forecasting_evaluation.models.base import BasePredictionModel
 
 SEASONAL_CYCLE_ERROR_MSG = (
@@ -75,14 +74,20 @@ class AutoETSModel(BasePredictionModel):
 
     def predict(
             self,
-            inputs: SubTrajectoryInput,
+            history: np.ndarray,
+            horizon: int,
         ) -> tuple[np.ndarray | None, np.ndarray | None]:
         """Predict future values using AutoETS.
-        
+
         Fits a new model on all available historical data for each prediction.
+
+        Args:
+            history: Full-prefix history of shape (n_features, history_length),
+                may contain NaN.
+            horizon: Number of future hours to forecast.
         """
-        target = inputs.history
-        prediction_length = inputs.prediction_hours
+        target = history
+        prediction_length = horizon
         n_features, _ = target.shape
         n_quantiles = 0 if self.quantile_levels is None else len(self.quantile_levels)
         
