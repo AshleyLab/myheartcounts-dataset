@@ -973,9 +973,12 @@ def evaluate_forecasting(
     """Run forecasting evaluation (Track 3) with a custom forecaster.
 
     Args:
-        forecaster: Object satisfying the :class:`Forecaster` protocol —
-            has ``predict(history, horizon)`` returning a ``(n_channels,
-            horizon)`` array.
+        forecaster: Object satisfying the :class:`Forecaster` protocol — has
+            ``predict(history, horizon)`` returning a ``(n_channels, horizon)``
+            point forecast (optionally a ``(point, quantiles)`` tuple).
+            ``history`` is the full-prefix window; emit ``NaN`` for any cell the
+            model cannot predict and the harness substitutes the Seasonal-Naive
+            baseline (reported via ``ForecastingResults.overall_fallback_rate``).
         version: ``"xs"`` or ``"full"``. Required — cross-checked against
             the dataset root's ``dataset_version.json`` marker.
         forecasting_length: Forecast horizon in hours. Defaults to 24
@@ -1041,40 +1044,15 @@ def evaluate_forecasting(
             evaluator=EvaluatorConfig(),
             output=OutputConfig(results_dir=tmp_results),
         )
-        adapter = _build_forecaster_adapter(forecaster)
-        result = run_eval(cfg, model=adapter)
+        # The user's forecaster satisfies the unified Forecaster contract
+        # (``predict(history, horizon, *optional kwargs)``); the evaluator
+        # invokes it directly through its duck-typed call path — no adapter.
+        result = run_eval(cfg, model=forecaster)
 
     return ForecastingResults(
         per_channel=result.get("per_channel", {}),
         run_dir=str(result.get("run_dir", "")),
         n_samples=int(result.get("n_samples", 0)),
+        overall_fallback_rate=float(result.get("overall_fallback_rate", 0.0)),
+        fallback_rate=dict(result.get("fallback_rate", {})),
     )
-
-
-def _build_forecaster_adapter(forecaster):
-    """Wrap a user's ``Forecaster`` as an internal ``BasePredictionModel``.
-
-    Subclasses ``BasePredictionModel`` so we inherit ``predict_wrapper`` (which
-    adds timing + memory tracking around the user's ``predict()`` call).
-    """
-    from forecasting_evaluation.models.base import BasePredictionModel
-
-    class _ForecasterAdapter(BasePredictionModel):
-        model_name = "openmhc_custom_forecaster"
-        quantile_levels = None
-        uses_standard_scaler = False
-        scaler_stats = None
-
-        def __init__(self, forecaster):
-            self._forecaster = forecaster
-
-        def predict(self, inputs):
-            """Translate ``SubTrajectoryInput`` → user's ``predict(history, horizon)``."""
-            point = self._forecaster.predict(inputs.history, inputs.prediction_hours)
-            return np.asarray(point, dtype=np.float32), None
-
-        def reset(self):
-            if hasattr(self._forecaster, "reset"):
-                self._forecaster.reset()
-
-    return _ForecasterAdapter(forecaster)

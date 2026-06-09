@@ -282,20 +282,34 @@ class ForecastingResults:
         run_dir: Path to the directory where per-user prediction parquets +
             offline metric outputs were written.
         n_samples: Total prediction samples emitted.
+        overall_fallback_rate: Fraction of forecast cells where the model
+            returned NaN and the Seasonal-Naive baseline was substituted before
+            scoring. A high value means the model could not predict much of the
+            in-scope window set; metrics should be read alongside this number.
+        fallback_rate: Per-channel Seasonal-Naive substitution fractions, keyed
+            like ``per_channel`` (``ch_<i>``).
     """
 
     per_channel: dict = field(repr=False)
     run_dir: str = ""
     n_samples: int = 0
+    overall_fallback_rate: float = 0.0
+    fallback_rate: dict = field(default_factory=dict, repr=False)
 
     def to_dataframe(self) -> pd.DataFrame:
-        """Flatten per-channel metrics into a long DataFrame."""
+        """Flatten per-channel metrics into a long DataFrame.
+
+        Per-channel Seasonal-Naive ``fallback_rate`` is included as an extra
+        metric row so it surfaces alongside the error metrics.
+        """
         rows = []
         for channel, metrics in self.per_channel.items():
             if not isinstance(metrics, dict):
                 continue
             for metric_name, value in metrics.items():
                 rows.append({"channel": channel, "metric": metric_name, "value": value})
+        for channel, rate in self.fallback_rate.items():
+            rows.append({"channel": channel, "metric": "fallback_rate", "value": rate})
         return pd.DataFrame(rows)
 
     def to_csv(self, path: str | Path) -> None:
@@ -352,7 +366,10 @@ class ForecastingResults:
 
     def __repr__(self) -> str:
         n = len(self.per_channel)
-        return f"ForecastingResults({n} channels, n_samples={self.n_samples})"
+        return (
+            f"ForecastingResults({n} channels, n_samples={self.n_samples}, "
+            f"overall_fallback_rate={self.overall_fallback_rate:.4f})"
+        )
 
 
 def _json_default(obj):
