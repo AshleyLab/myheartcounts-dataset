@@ -534,3 +534,229 @@ class TestTorchImputer:
             t = target_bool[0, ch]
             if t.any():
                 np.testing.assert_allclose(out[0, ch][t], 0.0, atol=1e-5)
+
+
+# ---------------------------------------------------------------------------
+# Fallback substitution: parity for finite imputers + visibility for NaN
+# ---------------------------------------------------------------------------
+
+
+class TestAdapterFallbackFill:
+    """The adapter's single fit pass should populate ``fallback_fill`` correctly."""
+
+    def test_fit_sets_fallback_fill_with_correct_shape_and_dtype(self):
+        class FakeImputer:
+            def impute(self, data, observed_mask, target_mask):
+                return data
+
+        adapter = _ImputerMethodAdapter(FakeImputer())
+        adapter.fit([_make_synthetic_batch(20, seed=0), _make_synthetic_batch(20, seed=1)])
+        fill = adapter.fallback_fill
+        assert fill is not None
+        assert fill.shape == (N_CHANNELS,)
+        assert fill.dtype == np.float32
+        assert np.all(np.isfinite(fill))
+
+    def test_binary_channels_are_zero_or_one(self):
+        class FakeImputer:
+            def impute(self, data, observed_mask, target_mask):
+                return data
+
+        adapter = _ImputerMethodAdapter(FakeImputer())
+        adapter.fit([_make_synthetic_batch(40, seed=0), _make_synthetic_batch(40, seed=1)])
+        fill = adapter.fallback_fill
+        for ch in range(7, N_CHANNELS):
+            assert fill[ch] in (0.0, 1.0), f"channel {ch} fill={fill[ch]} not majority class"
+
+    def test_binary_majority_class_matches_observed_mean(self):
+        """If observed mean > 0.5 → fill=1.0; else fill=0.0."""
+        class FakeImputer:
+            def impute(self, data, observed_mask, target_mask):
+                return data
+
+        # Construct a synthetic batch where binary channel 7 is mostly 1 and channel 8 is mostly 0.
+        rng = np.random.default_rng(0)
+        data = rng.standard_normal((10, N_CHANNELS, SEQ_LEN)).astype(np.float32)
+        mask = np.ones_like(data)  # everything observed
+        data[:, 7, :] = 1.0  # majority class 1
+        data[:, 8, :] = 0.0  # majority class 0
+        # Other binary channels mixed.
+        data[:, 9:, :] = (rng.random((10, N_CHANNELS - 9, SEQ_LEN)) < 0.3).astype(np.float32)
+
+        adapter = _ImputerMethodAdapter(FakeImputer())
+        adapter.fit([(data, mask)])
+        fill = adapter.fallback_fill
+        assert fill[7] == 1.0
+        assert fill[8] == 0.0
+
+
+class TestApplyFallbackParity:
+    """A finite imputed array must be byte-identical after _apply_fallback (no-op)."""
+
+    def test_finite_imputed_is_unchanged_and_counts_are_zero(self):
+        from imputation_evaluation.evaluation.evaluator import _apply_fallback
+
+        rng = np.random.default_rng(0)
+        imputed = rng.standard_normal((4, N_CHANNELS, 100)).astype(np.float32)
+        artificial = (rng.random(imputed.shape) < 0.2).astype(np.float32)
+        fill = np.arange(N_CHANNELS, dtype=np.float32)
+
+        before = imputed.copy()
+        sub, asked = _apply_fallback(imputed, artificial, fill)
+
+        # No non-finite cells to substitute → array byte-identical.
+        np.testing.assert_array_equal(imputed, before)
+        # sub counts must all be zero.
+        assert sub.dtype == np.int64
+        assert sub.shape == (N_CHANNELS,)
+        assert int(sub.sum()) == 0
+        # asked counts equal the target-cell count per channel.
+        expected_asked = (artificial == 1).sum(axis=(0, 2)).astype(np.int64)
+        np.testing.assert_array_equal(asked, expected_asked)
+
+    def test_fill_none_is_complete_noop(self):
+        from imputation_evaluation.evaluation.evaluator import _apply_fallback
+
+        rng = np.random.default_rng(0)
+        imputed = rng.standard_normal((2, N_CHANNELS, 50)).astype(np.float32)
+        # Inject NaN at some target cells.
+        artificial = (rng.random(imputed.shape) < 0.2).astype(np.float32)
+        imputed[artificial == 1] = np.nan
+        before = imputed.copy()
+
+        sub, asked = _apply_fallback(imputed, artificial, None)
+
+        # fill=None → array unchanged (NaN survives), counts zero.
+        np.testing.assert_array_equal(
+            np.isnan(imputed), np.isnan(before)
+        )
+        assert int(sub.sum()) == 0
+        assert int(asked.sum()) == 0
+
+
+class TestApplyFallbackSubstitution:
+    """When the imputer returns NaN at target cells, those cells must be substituted and counted."""
+
+    def test_nan_cells_at_target_get_filled_and_counted(self):
+        from imputation_evaluation.evaluation.evaluator import _apply_fallback
+
+        # Build a controlled scenario: 1 sample, target spans first 10 timesteps on every channel.
+        T = 20
+        imputed = np.zeros((1, N_CHANNELS, T), dtype=np.float32)
+        artificial = np.zeros_like(imputed)
+        artificial[0, :, :10] = 1  # target = first 10 timesteps per channel
+        # Imputer returns NaN at ALL target cells on channels 0 and 7; finite (0.0) elsewhere.
+        imputed[0, 0, :10] = np.nan
+        imputed[0, 7, :10] = np.nan
+        fill = np.arange(N_CHANNELS, dtype=np.float32) + 1.0  # ch0→1.0, ch7→8.0, etc.
+
+        sub, asked = _apply_fallback(imputed, artificial, fill)
+
+        # Cells substituted: ch 0 → 1.0, ch 7 → 8.0.
+        np.testing.assert_allclose(imputed[0, 0, :10], 1.0)
+        np.testing.assert_allclose(imputed[0, 7, :10], 8.0)
+        # No remaining NaN at target cells.
+        assert not np.any(np.isnan(imputed[artificial == 1]))
+        # Per-channel sub counts: ch 0 and ch 7 each contributed 10 substitutions.
+        assert int(sub[0]) == 10
+        assert int(sub[7]) == 10
+        assert int(sub.sum()) == 20
+        # Asked counts: 10 per channel (target spans 10 timesteps on every channel).
+        np.testing.assert_array_equal(asked, np.full(N_CHANNELS, 10, dtype=np.int64))
+
+
+class TestMetricAccumulatorFallback:
+    """The accumulator's fallback fields must merge correctly and surface in compute()."""
+
+    def _make_acc(self):
+        from imputation_evaluation.evaluation.evaluator import MetricAccumulator
+
+        return MetricAccumulator(channel_stds=np.ones(N_CHANNELS, dtype=np.float32))
+
+    def test_compute_emits_zero_rate_when_no_substitutions(self):
+        acc = self._make_acc()
+        # Drive a single batch through the accumulator with finite values.
+        rng = np.random.default_rng(0)
+        gt = rng.standard_normal((2, N_CHANNELS, 10)).astype(np.float32)
+        imputed = gt.copy()
+        mask = np.ones_like(gt)
+        acc.update(gt, imputed, mask)
+        # Record the no-substitution accounting.
+        asked = mask.sum(axis=(0, 2)).astype(np.int64)
+        acc.add_fallback(np.zeros(N_CHANNELS, dtype=np.int64), asked)
+
+        metrics = acc.compute()
+        assert metrics["overall_fallback_rate"] == 0.0
+        for ch in range(N_CHANNELS):
+            assert metrics["fallback_rate"][f"ch_{ch}"] == 0.0
+
+    def test_compute_emits_nonzero_rate_when_substitutions_occur(self):
+        acc = self._make_acc()
+        rng = np.random.default_rng(1)
+        gt = rng.standard_normal((2, N_CHANNELS, 10)).astype(np.float32)
+        imputed = gt.copy()
+        mask = np.ones_like(gt)
+        acc.update(gt, imputed, mask)
+        asked = mask.sum(axis=(0, 2)).astype(np.int64)
+        # Pretend channel 0 had half its target cells substituted.
+        sub = np.zeros(N_CHANNELS, dtype=np.int64)
+        sub[0] = asked[0] // 2
+        acc.add_fallback(sub, asked)
+
+        metrics = acc.compute()
+        # Overall rate = sub.sum() / asked.sum() = (asked[0]/2) / (N_CHANNELS * asked[0])
+        expected_overall = float(sub.sum()) / float(asked.sum())
+        assert metrics["overall_fallback_rate"] == pytest.approx(expected_overall)
+        # Per-channel: ch_0 == 0.5, others == 0.0.
+        assert metrics["fallback_rate"]["ch_0"] == pytest.approx(0.5)
+        for ch in range(1, N_CHANNELS):
+            assert metrics["fallback_rate"][f"ch_{ch}"] == 0.0
+
+    def test_merge_sums_fallback_counters(self):
+        acc_a = self._make_acc()
+        acc_b = self._make_acc()
+        sub_a = np.zeros(N_CHANNELS, dtype=np.int64); sub_a[0] = 3
+        sub_b = np.zeros(N_CHANNELS, dtype=np.int64); sub_b[0] = 5
+        asked_a = np.full(N_CHANNELS, 10, dtype=np.int64)
+        asked_b = np.full(N_CHANNELS, 10, dtype=np.int64)
+        acc_a.add_fallback(sub_a, asked_a)
+        acc_b.add_fallback(sub_b, asked_b)
+        acc_a.merge(acc_b)
+        assert int(acc_a.fallback_substituted[0]) == 8
+        assert int(acc_a.fallback_asked[0]) == 20
+
+    def test_parity_existing_metrics_unchanged_when_no_substitutions(self):
+        """A finite imputer (no fallback) must produce byte-identical existing metric values."""
+        acc_with_fb = self._make_acc()
+        acc_without_fb = self._make_acc()
+        rng = np.random.default_rng(0)
+        gt = rng.standard_normal((4, N_CHANNELS, 50)).astype(np.float32)
+        # Make binary channels actually binary so balanced_accuracy is well-defined.
+        gt[:, 7:, :] = (rng.random((4, 12, 50)) < 0.5).astype(np.float32)
+        imputed = gt + 0.1 * rng.standard_normal(gt.shape).astype(np.float32)
+        mask = np.ones_like(gt)
+        for acc in (acc_with_fb, acc_without_fb):
+            acc.update(gt, imputed, mask)
+        # Only one accumulator records the (zero) fallback counts.
+        asked = mask.sum(axis=(0, 2)).astype(np.int64)
+        acc_with_fb.add_fallback(np.zeros(N_CHANNELS, dtype=np.int64), asked)
+
+        m_with = acc_with_fb.compute()
+        m_without = acc_without_fb.compute()
+
+        # The new keys exist on m_with and not on m_without.
+        assert "overall_fallback_rate" in m_with
+        # Existing metric values must be identical (parity).
+        assert m_with["n_samples"] == m_without["n_samples"]
+        np.testing.assert_array_equal(
+            [m_with["continuous"]["mean_normalized_rmse"]],
+            [m_without["continuous"]["mean_normalized_rmse"]],
+        )
+        for ch in range(N_CHANNELS):
+            ch_w = m_with["per_channel"][f"ch_{ch}"]
+            ch_wo = m_without["per_channel"][f"ch_{ch}"]
+            # Every key present in the without-fb dict must match.
+            for k, v in ch_wo.items():
+                assert ch_w[k] == v or (
+                    isinstance(v, float) and np.isnan(v) and np.isnan(ch_w[k])
+                )

@@ -627,6 +627,7 @@ def evaluate_imputation(
     *,
     n_days: int = 1,
     bootstrap: bool | dict = False,
+    max_samples: int | None = None,
 ) -> ImputationResults:
     """Run imputation evaluation with a custom imputer.
 
@@ -669,6 +670,9 @@ def evaluate_imputation(
             (gt, pred) pairs are written to a temporary directory that is
             cleaned up before this function returns; CI/SE fields appear as
             sibling columns in ``ImputationResults.to_dataframe()``.
+        max_samples: Limit samples per split for testing/debugging (None =
+            no limit). Mirrors ``evaluate_forecasting``. Plumbs into
+            ``DataConfig.max_samples_per_split``.
 
     Returns:
         An ImputationResults instance with per-scenario, per-split metrics.
@@ -759,6 +763,7 @@ def evaluate_imputation(
         num_eval_workers=1,
         pin_memory=False,
         n_days=n_days,
+        max_samples_per_split=max_samples,
     )
 
     eval_cfg = EvalConfig(
@@ -818,6 +823,11 @@ class _ImputerMethodAdapter:
        signature so methods that only declare three positional args
        still work, and personalized methods receive ``user_ids`` /
        ``dates`` / ``sample_indices``.
+    4. **Compute a channel-aware global fallback fill** during the same
+       train pass: per-channel observed mean for continuous channels
+       (0–6) and per-channel majority class for binary channels
+       (7–18). Exposed via :attr:`fallback_fill` so the harness can
+       substitute NaN cells the user's ``impute`` failed to produce.
     """
 
     def __init__(self, imputer: Imputer) -> None:
@@ -829,6 +839,7 @@ class _ImputerMethodAdapter:
             )
         self._imputer = imputer
         self._channel_stds: np.ndarray | None = None
+        self._fallback_fill: np.ndarray | None = None
         # Per-split metadata, populated by prepare_split.
         self._current_user_ids: list[str] | None = None
         self._current_dates: list[str] | None = None
@@ -860,12 +871,24 @@ class _ImputerMethodAdapter:
     def channel_stds(self) -> np.ndarray | None:
         return self._channel_stds
 
+    @property
+    def fallback_fill(self) -> np.ndarray | None:
+        """Per-channel global fill used to substitute NaN cells the imputer fails to produce."""
+        return self._fallback_fill
+
     def fit(self, train_loader) -> None:
-        """Stream the train loader once to compute per-channel stds.
+        """Stream the train loader once to compute per-channel stds and a fallback fill.
 
         Does not invoke any user method — all imputer setup happens
-        in the user's ``__init__``.
+        in the user's ``__init__``. The same single pass produces both
+        ``channel_stds`` (metric normalization) and ``fallback_fill``
+        (channel-aware global substitution for non-finite imputed cells).
         """
+        from data.processing.hf_config import (
+            BINARY_CHANNEL_INDICES,
+            CONTINUOUS_CHANNEL_INDICES,
+        )
+
         sums = np.zeros(_N_CHANNELS, dtype=np.float64)
         sq_sums = np.zeros(_N_CHANNELS, dtype=np.float64)
         counts = np.zeros(_N_CHANNELS, dtype=np.float64)
@@ -885,6 +908,14 @@ class _ImputerMethodAdapter:
         stds = np.sqrt(np.maximum(variance, 0.0))
         stds = np.where(counts > 1, stds, 1.0)
         self._channel_stds = np.maximum(stds, 1e-6).astype(np.float32)
+
+        # Fallback fill: continuous channels → mean, binary channels → majority class.
+        fallback = np.zeros(_N_CHANNELS, dtype=np.float32)
+        for ch in CONTINUOUS_CHANNEL_INDICES:
+            fallback[ch] = float(means[ch])
+        for ch in BINARY_CHANNEL_INDICES:
+            fallback[ch] = 1.0 if means[ch] > 0.5 else 0.0
+        self._fallback_fill = fallback
 
     def prepare_split(self, hf_dataset, split_indices, zero_to_nan_transform) -> None:
         """Cache per-split user_id and date arrays.

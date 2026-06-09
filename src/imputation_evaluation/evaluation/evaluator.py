@@ -38,6 +38,7 @@ _worker_mask_cache: MaskCache | None = None
 _worker_method: ImputationMethod | None = None
 _worker_scenarios: list[str] | None = None
 _worker_channel_stds: np.ndarray | None = None
+_worker_fallback_fill: np.ndarray | None = None
 _worker_split_name: str | None = None
 _worker_subgroup_mapping: dict[int, dict[str, str]] | None = None
 _worker_n_days: int = 1
@@ -48,6 +49,48 @@ _worker_save_pairs: bool = True
 
 # Number of channels
 N_CHANNELS = 19
+
+
+def _apply_fallback(
+    imputed: np.ndarray,
+    artificial_masks: np.ndarray,
+    fill: np.ndarray | None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Substitute non-finite cells at target positions with a per-channel fill.
+
+    Counts every target cell (``artificial_masks == 1``) the imputer left
+    non-finite, and replaces those cells in-place with the corresponding
+    channel's value from ``fill``. Mirrors the forecasting harness's
+    fallback substitution — the model's inability is now visible
+    instead of being silently dropped at downstream ``isfinite`` filters.
+
+    Args:
+        imputed: Imputed values, shape ``(N, C, T)``. Modified in place.
+        artificial_masks: Binary masks of shape ``(N, C, T)``; ``1`` = was
+            artificially masked (target cell).
+        fill: Per-channel fill values, shape ``(C,)``. If ``None`` the
+            function is a no-op and returns zero counts (legacy passthrough).
+
+    Returns:
+        A pair ``(sub, asked)`` of per-channel ``int64`` arrays of length ``C``:
+            ``sub[c]`` is the number of target cells substituted in channel ``c``;
+            ``asked[c]`` is the total number of target cells in channel ``c``.
+    """
+    if fill is None:
+        return (
+            np.zeros(N_CHANNELS, dtype=np.int64),
+            np.zeros(N_CHANNELS, dtype=np.int64),
+        )
+    target = artificial_masks == 1
+    nan_at_target = target & ~np.isfinite(imputed)
+    # Per-channel substitution: broadcast fill[ch] across (N, T) where needed.
+    for ch in range(N_CHANNELS):
+        ch_nan = nan_at_target[:, ch, :]
+        if ch_nan.any():
+            imputed[:, ch, :][ch_nan] = fill[ch]
+    sub = nan_at_target.sum(axis=(0, 2)).astype(np.int64)
+    asked = target.sum(axis=(0, 2)).astype(np.int64)
+    return sub, asked
 
 
 class MetricAccumulator:
@@ -70,6 +113,14 @@ class MetricAccumulator:
         self.channel_stds = channel_stds
         self.n_applicable: int = 0
         self.n_total: int = 0
+
+        # Fallback substitution counters (per-channel).
+        # ``fallback_substituted[c]`` = number of target cells in channel ``c`` that
+        # were filled because the imputer returned non-finite there.
+        # ``fallback_asked[c]``       = total number of target cells in channel ``c``.
+        # The ratio is the model-capability gap, mirroring Track 3 forecasting.
+        self.fallback_substituted = np.zeros(N_CHANNELS, dtype=np.int64)
+        self.fallback_asked = np.zeros(N_CHANNELS, dtype=np.int64)
 
         # Continuous channel accumulators (channels 0-6)
         # Global stats (running sums)
@@ -148,6 +199,17 @@ class MetricAccumulator:
         """Increment the total sample count (including non-applicable)."""
         self.n_total += count
 
+    def add_fallback(self, substituted: np.ndarray, asked: np.ndarray) -> None:
+        """Record per-channel fallback substitution counts for a batch.
+
+        Args:
+            substituted: Per-channel ``(C,)`` int counts of target cells the
+                imputer left non-finite (and the harness filled in).
+            asked: Per-channel ``(C,)`` int counts of total target cells.
+        """
+        self.fallback_substituted += np.asarray(substituted, dtype=np.int64)
+        self.fallback_asked += np.asarray(asked, dtype=np.int64)
+
     def merge(self, other: MetricAccumulator) -> None:
         """Merge another accumulator into this one.
 
@@ -156,6 +218,8 @@ class MetricAccumulator:
         """
         self.n_applicable += other.n_applicable
         self.n_total += other.n_total
+        self.fallback_substituted += other.fallback_substituted
+        self.fallback_asked += other.fallback_asked
         self._cont_sum_sq_errors += other._cont_sum_sq_errors
         self._cont_sum_abs_errors += other._cont_sum_abs_errors
         self._cont_counts += other._cont_counts
@@ -318,6 +382,24 @@ class MetricAccumulator:
         else:
             metrics["binary"]["macro_roc_auc"] = float("nan")
 
+        # Fallback substitution visibility (model-capability gap, orthogonal to
+        # n_applicable/n_total which is data-quality). 0.0 when the imputer
+        # produced finite values at every target cell — preserves parity for
+        # the historical contract.
+        asked_total = int(self.fallback_asked.sum())
+        sub_total = int(self.fallback_substituted.sum())
+        metrics["overall_fallback_rate"] = (
+            float(sub_total) / asked_total if asked_total > 0 else 0.0
+        )
+        metrics["fallback_rate"] = {
+            f"ch_{ch}": (
+                float(self.fallback_substituted[ch]) / int(self.fallback_asked[ch])
+                if self.fallback_asked[ch] > 0
+                else 0.0
+            )
+            for ch in range(N_CHANNELS)
+        }
+
         return metrics
 
 
@@ -432,6 +514,7 @@ def _init_worker(
     window_day_offsets: list[list[int]] | None = None,
     compute_metrics: bool = True,
     save_pairs: bool = True,
+    fallback_fill: np.ndarray | None = None,
 ) -> None:
     """Initialize worker process with shared read-only data.
 
@@ -453,15 +536,19 @@ def _init_worker(
             RoPE-aware imputation methods via ``impute(... day_offsets=...)``.
         compute_metrics: Whether to accumulate metrics in-memory.
         save_pairs: Whether to extract pairs for the main-process PairWriter.
+        fallback_fill: Optional per-channel ``(C,)`` float32 array. When set,
+            NaN cells at target positions are substituted in place and counted
+            via ``MetricAccumulator.add_fallback``. ``None`` disables substitution.
     """
     global _worker_mask_cache, _worker_method, _worker_scenarios
-    global _worker_channel_stds, _worker_split_name
+    global _worker_channel_stds, _worker_fallback_fill, _worker_split_name
     global _worker_subgroup_mapping, _worker_n_days, _worker_window_descriptors
     global _worker_window_day_offsets, _worker_compute_metrics, _worker_save_pairs
     _worker_mask_cache = mask_cache
     _worker_method = method
     _worker_scenarios = scenarios
     _worker_channel_stds = channel_stds
+    _worker_fallback_fill = fallback_fill
     _worker_split_name = split_name
     _worker_subgroup_mapping = subgroup_mapping
     _worker_n_days = n_days
@@ -528,6 +615,14 @@ def _evaluate_batch_all_scenarios(
                 imputed = _worker_method.impute(
                     corrupted, applicable_orig, batch_art_masks, **impute_kwargs
                 )
+
+                # Substitute NaN target cells with the channel-aware fallback fill
+                # so they get scored (not silently dropped) and report visibility.
+                fb_sub, fb_asked = _apply_fallback(
+                    imputed, batch_art_masks, _worker_fallback_fill
+                )
+                if accumulator is not None:
+                    accumulator.add_fallback(fb_sub, fb_asked)
 
                 if accumulator is not None:
                     accumulator.update(
@@ -633,6 +728,14 @@ def _evaluate_batch_all_scenarios(
                     corrupted, applicable_orig, batch_art_masks, **impute_kwargs
                 )
 
+                # Substitute NaN target cells once on the full multi-day window.
+                # Per-channel counts sum across days via the (0,2) reduction.
+                fb_sub, fb_asked = _apply_fallback(
+                    imputed, batch_art_masks, _worker_fallback_fill
+                )
+                if accumulator is not None:
+                    accumulator.add_fallback(fb_sub, fb_asked)
+
                 # Per-day metric computation and pair data
                 for i, w_local in enumerate(applicable_windows):
                     window_idx = batch_global_indices[w_local]
@@ -710,6 +813,8 @@ class ImputationEvaluator:
         self.compute_metrics = compute_metrics
         self.save_pairs = save_pairs
         self.pairs_dir = Path(pairs_dir) if pairs_dir is not None else None
+        # Per-channel fallback fill for non-finite target cells; populated in ``run``.
+        self._fallback_fill: np.ndarray | None = None
 
         if save_pairs and pairs_dir is None:
             raise ValueError("pairs_dir is required when save_pairs=True")
@@ -730,6 +835,7 @@ class ImputationEvaluator:
         hf_dataset=None,
         split_indices: dict[str, list[int]] | None = None,
         zero_to_nan_transform=None,
+        fallback_fill: np.ndarray | None = None,
     ) -> dict:
         """Run the imputation evaluation on val and test splits.
 
@@ -747,10 +853,18 @@ class ImputationEvaluator:
             hf_dataset: Optional HuggingFace dataset (for personalized methods).
             split_indices: Optional dict mapping split name to list of global indices.
             zero_to_nan_transform: Optional preprocessing transform (for personalized methods).
+            fallback_fill: Optional per-channel ``(C,)`` float32 array used to
+                substitute NaN cells at target positions the imputer failed
+                to produce. ``None`` disables substitution (legacy passthrough);
+                downstream ``isfinite`` filters then silently drop those cells
+                as they did historically.
 
         Returns:
             Results dictionary with per-scenario metrics for val and test splits.
         """
+        # Stash fallback_fill for sequential impute sites and the worker initializer.
+        self._fallback_fill = fallback_fill
+
         # Save channel_stds alongside pairs for post-hoc aggregation
         if self.save_pairs and self.pairs_dir is not None:
             stds_path = self.pairs_dir / "channel_stds.npy"
@@ -925,6 +1039,7 @@ class ImputationEvaluator:
                     window_day_offsets,
                     compute_metrics,
                     self.save_pairs,
+                    self._fallback_fill,
                 ),
             ) as executor:
                 for batch_idx, batch_data in enumerate(dataloader):
@@ -1031,6 +1146,13 @@ class ImputationEvaluator:
                         imputed = method.impute(
                             corrupted, applicable_orig, batch_art_masks, **impute_kwargs
                         )
+
+                        # Substitute NaN target cells with the channel-aware fallback fill.
+                        fb_sub, fb_asked = _apply_fallback(
+                            imputed, batch_art_masks, self._fallback_fill
+                        )
+                        if compute_metrics:
+                            accumulators[scenario_name].add_fallback(fb_sub, fb_asked)
 
                         if compute_metrics:
                             accumulators[scenario_name].update(
@@ -1140,6 +1262,13 @@ class ImputationEvaluator:
                         imputed = method.impute(
                             corrupted, applicable_orig, batch_art_masks, **impute_kwargs
                         )
+
+                        # Substitute NaN target cells once on the full multi-day window.
+                        fb_sub, fb_asked = _apply_fallback(
+                            imputed, batch_art_masks, self._fallback_fill
+                        )
+                        if compute_metrics:
+                            accumulators[scenario_name].add_fallback(fb_sub, fb_asked)
 
                         # Per-day metric computation and pair writing
                         for i, w_local in enumerate(applicable_windows):

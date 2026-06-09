@@ -78,6 +78,14 @@ def log_results(results: dict) -> None:
             # n_samples
             if "n_samples" in metrics:
                 flat_metrics[f"{prefix}/n_samples"] = metrics["n_samples"]
+            if "n_total" in metrics:
+                flat_metrics[f"{prefix}/n_total"] = metrics["n_total"]
+
+            # Fallback substitution visibility (model-capability gap).
+            if "overall_fallback_rate" in metrics:
+                flat_metrics[f"{prefix}/overall_fallback_rate"] = metrics[
+                    "overall_fallback_rate"
+                ]
 
             # Continuous aggregate metrics
             cont = metrics.get("continuous", {})
@@ -106,6 +114,10 @@ def log_results(results: dict) -> None:
                     flat_metrics[f"{ch_prefix}/nMAE"] = ch_metrics["normalized_mae"]
                 if "balanced_accuracy" in ch_metrics:
                     flat_metrics[f"{ch_prefix}/bal_acc"] = ch_metrics["balanced_accuracy"]
+
+            # Per-channel fallback rates (model-capability gap, per channel).
+            for ch_key, rate in metrics.get("fallback_rate", {}).items():
+                flat_metrics[f"{prefix}/channel/{ch_key}/fallback_rate"] = rate
 
             # Subgroup metrics (sensitivity analysis)
             subgroups = metrics.get("subgroups")

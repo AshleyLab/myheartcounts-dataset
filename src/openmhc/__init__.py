@@ -100,6 +100,7 @@ def evaluate_imputation(
     seed: int = 42,
     *,
     bootstrap: bool | dict = False,
+    max_samples: int | None = None,
 ) -> ImputationResults:
     """Run imputation evaluation with a custom imputer.
 
@@ -116,6 +117,8 @@ def evaluate_imputation(
         bootstrap: Opt-in participant-level cluster bootstrap. See
             :func:`openmhc._evaluate.evaluate_imputation` for the full
             shape of the option.
+        max_samples: Limit samples per split for testing/debugging
+            (None = no limit). Mirrors ``evaluate_forecasting``.
 
     Returns:
         ImputationResults with per-scenario, per-split metrics.
@@ -129,6 +132,7 @@ def evaluate_imputation(
         data_dir=data_dir,
         seed=seed,
         bootstrap=bootstrap,
+        max_samples=max_samples,
     )
 
 

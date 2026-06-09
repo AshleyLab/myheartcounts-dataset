@@ -121,9 +121,38 @@ class ImputationResults:
     Attributes:
         scenarios: Dict mapping scenario name to per-split metric dicts.
             Structure: {scenario_name: {split_name: {group: {metric: value}}}}.
+            Each per-split dict also carries ``overall_fallback_rate`` (scalar)
+            and ``fallback_rate`` (per-channel) — the fraction of target cells
+            the imputer left non-finite and that the harness substituted with
+            a channel-aware global baseline. This is a **model-capability**
+            metric, orthogonal to ``n_applicable``/``n_total`` (data quality):
+            ``n_applicable`` reports samples a masking scenario could be
+            applied to; ``overall_fallback_rate`` reports the fraction of
+            target cells the model itself failed to produce.
     """
 
     scenarios: dict = field(repr=False)
+
+    @property
+    def overall_fallback_rate(self) -> float:
+        """Max ``overall_fallback_rate`` across all (scenario, split) entries.
+
+        Returns 0.0 when no scenario/split reports a fallback rate (e.g. the
+        harness was run with no fallback fill, or every model output was
+        finite at target cells). Mirrors ``ForecastingResults`` in surfacing
+        the worst-case substitution rate at the top level.
+        """
+        worst = 0.0
+        for split_map in self.scenarios.values():
+            if not isinstance(split_map, dict):
+                continue
+            for metrics in split_map.values():
+                if not isinstance(metrics, dict):
+                    continue
+                rate = metrics.get("overall_fallback_rate")
+                if isinstance(rate, (int, float)) and rate > worst:
+                    worst = float(rate)
+        return worst
 
     def to_dataframe(self) -> pd.DataFrame:
         """Flatten scenario results into a DataFrame.

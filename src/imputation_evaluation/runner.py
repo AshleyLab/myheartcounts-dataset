@@ -108,6 +108,12 @@ def run_eval(
     if channel_stds is None:
         channel_stds = np.ones(19)
 
+    # Optional per-channel fallback fill: when the method exposes it, the
+    # evaluator substitutes non-finite imputed cells at target positions and
+    # surfaces the substitution rate. Adapters built by the public OpenMHC API
+    # populate this from the same train-pass means.
+    fallback_fill = getattr(method, "fallback_fill", None)
+
     # 5. Pre-filter eval samples to only those with at least one mask.
     applicable_indices = None
     if mask_cache is not None:
@@ -171,7 +177,10 @@ def run_eval(
         hf_dataset=loaded_data.hf_dataset,
         split_indices=loaded_data.split_indices,
         zero_to_nan_transform=loaded_data.zero_to_nan_transform,
+        fallback_fill=fallback_fill,
     )
+
+    _summarize_fallback(results)
 
     if bootstrap_enabled:
         _run_bootstrap(
@@ -187,6 +196,37 @@ def run_eval(
         "mask_seed": config.masking.mask_seed,
     }
     return results
+
+
+def _summarize_fallback(results: dict) -> None:
+    """Emit a prominent warning for any (scenario, split) with non-zero fallback rate.
+
+    The fallback rate reports the fraction of target cells the imputer left
+    non-finite and that the harness substituted with the channel-aware global
+    fill. A non-zero rate is a model-capability gap — orthogonal to data-quality
+    drops (``n_applicable`` / ``n_total``). Mirrors Track 3 forecasting's
+    fallback summary.
+    """
+    scenarios = results.get("scenarios", {})
+    flagged: list[tuple[str, str, float]] = []
+    for scenario, split_map in scenarios.items():
+        if not isinstance(split_map, dict):
+            continue
+        for split, metrics in split_map.items():
+            if not isinstance(metrics, dict):
+                continue
+            rate = metrics.get("overall_fallback_rate")
+            if isinstance(rate, (int, float)) and rate > 0.0:
+                flagged.append((scenario, split, float(rate)))
+    if not flagged:
+        return
+    logger.warning(
+        "Imputer fallback substitution detected (model returned non-finite at "
+        "target cells; harness filled with channel-aware global baseline). "
+        "Per-(scenario, split) rates:"
+    )
+    for scenario, split, rate in flagged:
+        logger.warning("  %s/%s: overall_fallback_rate=%.4f", scenario, split, rate)
 
 
 # Suffixes appended to each scalar metric when bootstrap is enabled.
