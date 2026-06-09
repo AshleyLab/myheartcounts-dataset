@@ -98,7 +98,7 @@ class AutoETSModel(BasePredictionModel):
         
         for i in range(n_features):
             y = target[i, :]
-            y = np.where(np.isnan(y), 0.0, y)
+            y = self._forward_fill_nan(y)
             
             # Truncate to most recent data if max_history_length is specified
             if self.max_history_length is not None and len(y) > self.max_history_length:
@@ -165,6 +165,28 @@ class AutoETSModel(BasePredictionModel):
                     quantiles[i, :, :] = y[-1]
         
         return predictions, quantiles
+
+    @staticmethod
+    def _forward_fill_nan(y: np.ndarray) -> np.ndarray:
+        """Fill missing values from the previous timestamp."""
+        y_filled = np.asarray(y, dtype=float).copy()
+        nan_mask = np.isnan(y_filled)
+        if not np.any(nan_mask):
+            return y_filled
+
+        valid_indices = np.flatnonzero(~nan_mask)
+        if valid_indices.size == 0:
+            return np.zeros_like(y_filled, dtype=float)
+
+        first_valid = valid_indices[0]
+        if first_valid > 0:
+            y_filled[:first_valid] = y_filled[first_valid]
+
+        valid_mask = ~np.isnan(y_filled)
+        previous_valid_indices = np.maximum.accumulate(
+            np.where(valid_mask, np.arange(y_filled.size), 0)
+        )
+        return y_filled[previous_valid_indices]
 
     @staticmethod
     def _validate_quantile_levels(
