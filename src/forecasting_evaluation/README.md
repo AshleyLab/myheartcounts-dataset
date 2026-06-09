@@ -149,6 +149,9 @@ or fairness-adjusted score without the other model outputs.
 
 ## 1. Execution Flow (Code-Aligned)
 
+> For a step-by-step, code-linked walkthrough of `run()`, the preprocessing
+> chain, and the offline metric math, see [INTERNALS.md](INTERNALS.md).
+
 Core orchestrator: `ForecastingEvaluator` in `evaluation/evaluator.py`.
 
 `ForecastingEvaluator.run()` executes:
@@ -343,6 +346,9 @@ Additional required preprocessing artifact:
 
 - `data.sample_index_file`: required JSON mapping `user_id -> [day indices]`
 - Generate it before evaluation with `scripts/precompute_forecasting_inputs.py`
+  (the full preprocessing chain — hourly trajectory build, day-retain mask, and
+  sample-index generation — is documented in
+  [INTERNALS.md](INTERNALS.md#1-data-preprocessing))
 
 Important note:
 

@@ -17,8 +17,9 @@ logger = logging.getLogger(__name__)
 class MultivariateFeatureExtractor:
     """Extract multivariate forecasting features from one trajectory row.
 
-    Output schema is consumed by ``SubTrajectoryGenerator.generate`` and includes
-    both values and observed-value masks in channel-first format.
+    Output schema is consumed by the evaluator's raw history cache + row-group
+    manifest path and includes both values and observed-value masks in
+    channel-first format.
     """
 
     def __init__(self, config: FeaturesConfig, forecasting_length: int = 24):

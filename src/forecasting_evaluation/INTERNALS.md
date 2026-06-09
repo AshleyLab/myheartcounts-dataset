@@ -1,4 +1,10 @@
-# Forecasting Evaluation
+# Forecasting Evaluation — Internals
+
+> Deep-dive companion to [README.md](README.md). The README covers how to *run*
+> evaluation (Hydra CLI, config schema, checkpoints, quick start); this document
+> covers how the pipeline *works* internally: the preprocessing chain, a
+> code-linked walkthrough of `ForecastingEvaluator.run()`, and the offline metric
+> math. Code line references may drift over time — treat them as starting points.
 
 ## 1. Data Preprocessing
 
@@ -228,19 +234,9 @@ Imperial array entrypoint is [run_forecasting_eval.slurm](../../jobs/imperial/sl
 
 ## 6. Supported model types
 
-Current supported `model.type` values:
-
-- `seasonal_naive`
-- `seasonal_naive_average_history`
-- `autoARIMA`
-- `autoETS`
-- `chronos2`
-- `toto`
-- `mixlinear`
-- `dlinear`
-- `segrnn`
-
-If `model.name` is empty, output directory naming and parquet `model` field default to `model.type`.
+See [README.md](README.md#6-supported-model-types) for the canonical `model.type`
+list. If `model.name` is empty, output directory naming and the parquet `model`
+field default to `model.type`.
 
 ## 7. Offline metric computation
 
