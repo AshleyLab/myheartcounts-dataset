@@ -61,7 +61,9 @@ def _neural_arch(training_config: dict) -> dict:
     }
 
 
-def stage_neural(kind: str, ckpt_root: Path, scaler: Path, staging: Path) -> Path:
+def stage_neural(
+    kind: str, ckpt_root: Path, scaler: Path, staging: Path, release_tag: str = "v1.0"
+) -> Path:
     """Stage a neural (.pypots) bundle: checkpoint + training_config + scaler + manifest."""
     src_dir_name, pypots_name = NEURAL[kind]
     src = ckpt_root / src_dir_name
@@ -93,11 +95,69 @@ def stage_neural(kind: str, ckpt_root: Path, scaler: Path, staging: Path) -> Pat
             "paper_table": PAPER_TABLE,
         },
     )
-    _write_readme(bundle, kind)
+    _write_readme(bundle, kind, pypots_name, release_tag)
     return bundle
 
 
-def stage_chronos(merged_dir: Path, staging: Path) -> Path:
+def stage_neural_from_training_bundle(
+    kind: str, src_bundle: Path, staging: Path, release_tag: str = "v1.0"
+) -> Path:
+    """Stage a neural bundle from a ``forecasting_training`` release directory.
+
+    Unlike :func:`stage_neural` (which packages the externally-trained HPO
+    checkpoints and hard-codes provenance), this consumes a bundle already
+    emitted by ``forecasting_training.release.write_release``: ``model.pypots``
+    plus ``training_config.json``, ``standard_scaler_stats.json``, and a manifest
+    carrying rich machine-derived provenance (seed, hyperparameters, source
+    checkpoint). That provenance and the ``model.pypots`` layout are preserved
+    verbatim; we only add the publish-time ``paper_table`` breadcrumb and the HF
+    model card that ``forecasting_training`` does not write.
+    """
+    src_bundle = Path(src_bundle)
+    src_manifest = src_bundle / "openmhc_manifest.json"
+    if not src_manifest.exists():
+        raise FileNotFoundError(f"No openmhc_manifest.json in training bundle: {src_bundle}")
+    manifest = json.loads(src_manifest.read_text())
+    if manifest.get("kind") != kind:
+        raise ValueError(
+            f"Training bundle {src_bundle} has kind {manifest.get('kind')!r}, expected {kind!r}"
+        )
+
+    ckpt_name = manifest["checkpoint"]  # "model.pypots"
+    stats_name = manifest.get("normalization_stats")
+    src_ckpt = src_bundle / ckpt_name
+    src_cfg = src_bundle / "training_config.json"
+    for f in (src_ckpt, src_cfg):
+        if not f.exists():
+            raise FileNotFoundError(f"Missing file in training bundle: {f}")
+
+    bundle = staging / f"openmhc-{kind}-fc"
+    _reset_dir(bundle)
+    shutil.copy2(src_ckpt, bundle / ckpt_name)
+    shutil.copy2(src_cfg, bundle / "training_config.json")
+    if stats_name:
+        src_stats = src_bundle / stats_name
+        if not src_stats.exists():
+            raise FileNotFoundError(f"Manifest references missing stats file: {src_stats}")
+        shutil.copy2(src_stats, bundle / stats_name)
+
+    # Preserve the rich training provenance; only add the publish-time paper table.
+    provenance = dict(manifest.get("provenance") or {})
+    provenance.setdefault("paper_table", PAPER_TABLE)
+
+    write_manifest(
+        bundle,
+        kind=kind,
+        checkpoint=ckpt_name,
+        arch=manifest.get("arch") or {},
+        normalization_stats=stats_name,
+        provenance=provenance,
+    )
+    _write_readme(bundle, kind, ckpt_name, release_tag)
+    return bundle
+
+
+def stage_chronos(merged_dir: Path, staging: Path, release_tag: str = "v1.0") -> Path:
     """Stage the Chronos-2 bundle from the merged full-model directory."""
     if not (merged_dir / "config.json").exists():
         raise FileNotFoundError(
@@ -127,11 +187,11 @@ def stage_chronos(merged_dir: Path, staging: Path) -> Path:
             "paper_table": PAPER_TABLE,
         },
     )
-    _write_readme(bundle, "chronos2")
+    _write_readme(bundle, "chronos2", release_tag=release_tag)
     return bundle
 
 
-def stage_toto(toto_ckpt: Path, staging: Path) -> Path:
+def stage_toto(toto_ckpt: Path, staging: Path, release_tag: str = "v1.0") -> Path:
     """Stage the Toto bundle from the full-finetune Lightning .ckpt."""
     if not toto_ckpt.exists():
         raise FileNotFoundError(f"Toto checkpoint not found: {toto_ckpt}")
@@ -154,7 +214,7 @@ def stage_toto(toto_ckpt: Path, staging: Path) -> Path:
             "paper_table": PAPER_TABLE,
         },
     )
-    _write_readme(bundle, "toto")
+    _write_readme(bundle, "toto", release_tag=release_tag)
     return bundle
 
 
@@ -205,7 +265,7 @@ _MODEL_INFO = {
         "wrapper": "DLinearForecaster",
         "title": "DLinear",
         "extra": "pypots",
-        "format": "PyPOTS checkpoint (`OnlineDLinear.pypots`) + `standard_scaler_stats.json` + `training_config.json`",
+        "format": "PyPOTS checkpoint (`{ckpt}`) + `standard_scaler_stats.json` + `training_config.json`",
         "summary": (
             "DLinear is a lightweight linear forecaster that decomposes the series into trend "
             "and seasonal components and applies a separate linear projection to each."
@@ -221,7 +281,7 @@ _MODEL_INFO = {
         "wrapper": "SegRNNForecaster",
         "title": "SegRNN",
         "extra": "pypots",
-        "format": "PyPOTS checkpoint (`OnlineSegRNN.pypots`) + `standard_scaler_stats.json` + `training_config.json`",
+        "format": "PyPOTS checkpoint (`{ckpt}`) + `standard_scaler_stats.json` + `training_config.json`",
         "summary": (
             "SegRNN is an RNN-based long-horizon forecaster that uses segment-wise iterations "
             "and parallel multi-step decoding."
@@ -238,7 +298,7 @@ _MODEL_INFO = {
         "wrapper": "MixLinearForecaster",
         "title": "MixLinear",
         "extra": "pypots",
-        "format": "PyPOTS checkpoint (`OnlineMixLinear.pypots`) + `standard_scaler_stats.json` + `training_config.json`",
+        "format": "PyPOTS checkpoint (`{ckpt}`) + `standard_scaler_stats.json` + `training_config.json`",
         "summary": (
             "MixLinear is an extremely lightweight forecaster combining segment-based linear "
             "modeling in the time domain with adaptive low-rank filtering in the frequency domain."
@@ -259,10 +319,15 @@ _MODEL_INFO = {
 _WRAPPERS = {k: v["wrapper"] for k, v in _MODEL_INFO.items()}
 
 
-def _write_readme(bundle: Path, kind: str) -> None:
+def _write_readme(
+    bundle: Path, kind: str, ckpt_filename: str = "", release_tag: str = "v1.0"
+) -> None:
     info = _MODEL_INFO[kind]
     repo = f"MyHeartCounts/openmhc-{kind}-fc"
     wrapper = info["wrapper"]
+    # Neural cards parametrize the checkpoint filename ({ckpt}); chronos/toto
+    # carry a fixed format string with no placeholder, so .format() is a no-op.
+    ckpt_format = info["format"].format(ckpt=ckpt_filename)
     links = "\n".join(f"- [{label}]({url})" for label, url in info["links"])
     (bundle / "README.md").write_text(
         f"""---
@@ -283,7 +348,7 @@ wearable-health benchmark (NeurIPS 2026).
 
 {info["produced"]}
 
-- **Checkpoint format:** {info["format"]}
+- **Checkpoint format:** {ckpt_format}
 - **Forecasting task:** 24-hour-ahead, 19 sensor channels, hourly resolution.
 
 ## Model & implementation
@@ -297,12 +362,12 @@ import openmhc
 from openmhc.forecasters import {wrapper}
 
 # pip install "openmhc[{info["extra"]}]"
-fc = {wrapper}.from_release("hf://{repo}@v1.0")
+fc = {wrapper}.from_release("hf://{repo}@{release_tag}")
 results = openmhc.evaluate_forecasting(fc, version="full")
 ```
 
 The same bundle also loads in the evaluation harness via
-`model.release_dir=hf://{repo}@v1.0`. See `openmhc_manifest.json` for
+`model.release_dir=hf://{repo}@{release_tag}`. See `openmhc_manifest.json` for
 provenance (training run, base model, fine-tuning details) and architecture
 metadata.
 
@@ -324,7 +389,24 @@ def main(argv: list[str] | None = None) -> int:
         "--scaler",
         type=Path,
         default=None,
-        help="train-split standard_scaler_stats.json (required for neural bundles)",
+        help="train-split standard_scaler_stats.json (required for neural bundles "
+        "staged from --ckpt-root)",
+    )
+    p.add_argument(
+        "--neural-bundle",
+        action="append",
+        default=None,
+        metavar="KIND=DIR",
+        help="Stage a neural bundle from a forecasting_training release dir "
+        "(repeatable), e.g. dlinear=results/.../dlinear_<ts>. Carries its own "
+        "checkpoint + scaler + rich provenance, so --ckpt-root/--scaler are "
+        "ignored for that kind.",
+    )
+    p.add_argument(
+        "--release-tag",
+        default="v1.0",
+        help="Version tag referenced in generated model cards' usage examples "
+        "(hf://...@<tag>). Match this to publish_to_hf.py --tag. Default: v1.0.",
     )
     p.add_argument("--chronos-merged", type=Path, default=Path(".merge_cache/chronos2_FT_merged"))
     p.add_argument("--toto-ckpt", type=Path, default=None, help="Toto .ckpt (required to stage toto)")
@@ -340,19 +422,49 @@ def main(argv: list[str] | None = None) -> int:
     staging.mkdir(parents=True, exist_ok=True)
     want = set(args.only) if args.only else None
 
+    overrides: dict[str, Path] = {}
+    for item in args.neural_bundle or []:
+        if "=" not in item:
+            p.error(f"--neural-bundle expects KIND=DIR, got {item!r}")
+        k, v = item.split("=", 1)
+        if k not in NEURAL:
+            p.error(f"--neural-bundle KIND must be one of {sorted(NEURAL)}; got {k!r}")
+        overrides[k] = Path(v)
+    if want is not None:
+        stray = sorted(k for k in overrides if k not in want)
+        if stray:
+            p.error(f"--neural-bundle given for {stray} but excluded by --only")
+
     neural_wanted = [k for k in NEURAL if want is None or k in want]
-    if neural_wanted and args.scaler is None:
-        p.error("--scaler is required when staging neural bundles: " + ", ".join(neural_wanted))
+    legacy_neural = [k for k in neural_wanted if k not in overrides]
+    if legacy_neural and args.scaler is None:
+        p.error(
+            "--scaler is required when staging neural bundles from --ckpt-root: "
+            + ", ".join(legacy_neural)
+        )
 
     built: list[Path] = []
     for kind in neural_wanted:
-        built.append(stage_neural(kind, args.ckpt_root, args.scaler.expanduser(), staging))
+        if kind in overrides:
+            built.append(
+                stage_neural_from_training_bundle(kind, overrides[kind], staging, args.release_tag)
+            )
+        else:
+            built.append(
+                stage_neural(
+                    kind, args.ckpt_root, args.scaler.expanduser(), staging, args.release_tag
+                )
+            )
     if want is None or "chronos2" in want:
-        built.append(stage_chronos(args.chronos_merged.expanduser(), staging))
+        built.append(
+            stage_chronos(args.chronos_merged.expanduser(), staging, release_tag=args.release_tag)
+        )
     if want is None or "toto" in want:
         if args.toto_ckpt is None:
             p.error("--toto-ckpt is required when staging the toto bundle")
-        built.append(stage_toto(args.toto_ckpt.expanduser(), staging))
+        built.append(
+            stage_toto(args.toto_ckpt.expanduser(), staging, release_tag=args.release_tag)
+        )
 
     print(f"Staged {len(built)} bundle(s) under {staging}:")
     for b in built:

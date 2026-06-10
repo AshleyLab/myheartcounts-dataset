@@ -65,8 +65,13 @@ def publish_one(
     tag: str | None = None,
     private: bool = False,
     overwrite_tag: bool = False,
+    delete_patterns: list[str] | None = None,
 ) -> str:
     """Create the repo (if absent) and upload the bundle contents.
+
+    ``delete_patterns`` is forwarded to ``upload_folder``: remote files matching
+    a pattern but absent from ``bundle_dir`` are removed in the same commit —
+    use it to prune a renamed stale checkpoint (e.g. ``["*.pypots"]``).
 
     Returns the URL of the upload commit.
     """
@@ -81,6 +86,7 @@ def publish_one(
         repo_id=repo_id,
         repo_type="model",
         commit_message=f"Publish {bundle_dir.name}",
+        delete_patterns=delete_patterns,
     )
     logger.info("Uploaded %s -> %s", bundle_dir.name, commit.commit_url)
 
@@ -123,6 +129,15 @@ def _cli() -> argparse.ArgumentParser:
         help="Tag the upload commit (e.g. v1.0) so users can pin via hf://...@<tag>.",
     )
     p.add_argument("--overwrite-tag", action="store_true")
+    p.add_argument(
+        "--delete-patterns",
+        action="append",
+        default=None,
+        metavar="GLOB",
+        help="Glob(s) of remote files to delete when absent from the local bundle "
+        "(repeatable), e.g. '*.pypots' to prune a renamed stale checkpoint. "
+        "Forwarded to HfApi.upload_folder(delete_patterns=...).",
+    )
     p.add_argument("--private", action="store_true", help="Create repos as private.")
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("-v", "--verbose", action="store_true")
@@ -152,7 +167,12 @@ def main(argv: list[str] | None = None) -> int:
     for bundle in bundles:
         repo_id = f"{ORG}/{bundle.name}"
         if args.dry_run:
-            logger.info("[dry-run] would publish %s -> %s", bundle, repo_id)
+            logger.info(
+                "[dry-run] would publish %s -> %s (delete_patterns=%s)",
+                bundle,
+                repo_id,
+                args.delete_patterns,
+            )
             continue
         publish_one(
             bundle,
@@ -160,6 +180,7 @@ def main(argv: list[str] | None = None) -> int:
             tag=args.tag,
             private=args.private,
             overwrite_tag=args.overwrite_tag,
+            delete_patterns=args.delete_patterns,
         )
 
     logger.info("Done. %d bundle(s) processed.", len(bundles))
