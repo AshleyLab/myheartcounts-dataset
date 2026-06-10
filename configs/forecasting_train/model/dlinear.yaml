@@ -1,0 +1,12 @@
+# @package model
+# DLinear — trend-decomposed linear forecaster (PyPOTS pypots.forecasting.DLinear).
+# Architecture matches the published checkpoint
+# (releases-fc/openmhc-dlinear-fc/training_config.json) so the retrain stays
+# comparable to the original — only the short-history padding changes.
+model_name: dlinear
+n_steps: 336
+n_pred_steps: 24
+n_features: 19
+moving_avg_window_size: 301
+individual: false
+d_model: 64

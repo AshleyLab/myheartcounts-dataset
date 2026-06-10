@@ -1,0 +1,13 @@
+# @package data
+# Same DataConfig dataclass + split semantics as eval. NOTE: training uses the
+# FULL sample index (sample_index_P_24_M_H_7_3.json), matching the published
+# checkpoints' training_config.json. Eval uses the _S_100 per-user subsample to
+# keep inference tractable; both share the same user-level split_file, so the
+# train/test partition is identical either way.
+trajectory_hf_dir: ${oc.env:MHC_DATA_DIR,${oc.env:HOME}/.cache/openmhc/data}/hourly_trajectory
+task_name: hourly_trajectory_forecasting
+split_file: ${oc.env:MHC_DATA_DIR,${oc.env:HOME}/.cache/openmhc/data}/splits/sharable_users_seed42_2026.json
+day_remain_mask: ${oc.env:MHC_DATA_DIR,${oc.env:HOME}/.cache/openmhc/data}/forecasting_sample_index/day_remain_mask.json
+sample_index_file: ${oc.env:MHC_DATA_DIR,${oc.env:HOME}/.cache/openmhc/data}/forecasting_sample_index/sample_index_P_24_M_H_7_3.json
+num_workers: 4
+max_samples: null

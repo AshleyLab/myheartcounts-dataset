@@ -28,28 +28,10 @@ exact).
 
 from __future__ import annotations
 
-import logging
-import os
-import random
+# The implementation is shared across the imputation and forecasting training
+# pipelines; it lives in ``openmhc._seeding``. Re-exported here to preserve the
+# ``from imputation_training import seed_everything`` /
+# ``from imputation_training.seeding import seed_everything`` public surface.
+from openmhc._seeding import seed_everything
 
-import numpy as np
-import torch
-
-logger = logging.getLogger(__name__)
-
-
-def seed_everything(seed: int) -> None:
-    """Seed Python, NumPy and PyTorch RNGs before model construction.
-
-    Args:
-        seed: Non-negative 32-bit integer.
-    """
-    if seed < 0 or seed >= 2**32:
-        raise ValueError(f"seed must fit in uint32; got {seed!r}")
-    os.environ["PYTHONHASHSEED"] = str(seed)
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
-    logger.info("Seeded random/numpy/torch (+ cuda if available) with seed=%d", seed)
+__all__ = ["seed_everything"]

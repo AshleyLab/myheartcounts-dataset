@@ -8,7 +8,7 @@ from pathlib import Path
 
 import yaml
 
-from forecasting_evaluation.forecasting_training.online_dataset import (
+from forecasting_evaluation.data.online_dataset import (
     build_history_cf_rows,
     history_cf_cache_subdir,
     history_cf_manifest_path,
@@ -16,7 +16,7 @@ from forecasting_evaluation.forecasting_training.online_dataset import (
     write_history_cf_cache,
     write_history_cf_cache_from_dataset,
 )
-from forecasting_evaluation.forecasting_training.standard_scaler import (
+from forecasting_evaluation.data.standard_scaler import (
     ChannelStandardScalerStats,
     fit_from_history_cf_rows,
 )
@@ -85,7 +85,7 @@ def prepare_history_cf_cache_bundle(
                 overwrite=False,
             )
         if scaler_stats is None:
-            from forecasting_evaluation.forecasting_training.standard_scaler import load_stats_json
+            from forecasting_evaluation.data.standard_scaler import load_stats_json
 
             scaler_stats = load_stats_json(cache_paths["scaler_stats"])
     else:

@@ -23,10 +23,10 @@ from forecasting_evaluation.evaluation.evaluator import (
     _invoke_forecaster,
     _normalize_forecast_output,
 )
-from forecasting_evaluation.forecasting_training.online_dataset import (
+from forecasting_evaluation.data.online_dataset import (
     ForecastingSampleIndexBuilder,
 )
-from forecasting_evaluation.forecasting_training.standard_scaler import (
+from forecasting_evaluation.data.standard_scaler import (
     ChannelStandardScalerStats,
 )
 from forecasting_evaluation.models.deep_learning_model.pypots_forecasting_base import (

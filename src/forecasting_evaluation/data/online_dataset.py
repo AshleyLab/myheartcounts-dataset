@@ -22,12 +22,12 @@ from pypots.data.dataset.base import BaseDataset
 from torch.utils.data import BatchSampler, Sampler
 
 from data.transforms.nan_transforms import ZeroToNaNTransform
+from forecasting_evaluation.config import FeaturesConfig
+from forecasting_evaluation.data.standard_scaler import (
+    ChannelStandardScalerStats,
+)
 from forecasting_evaluation.feature_extractors.multivariate_extractor import (
     MultivariateFeatureExtractor,
-)
-from forecasting_evaluation.forecasting_training.config import FeaturesConfig, ModelConfig
-from forecasting_evaluation.forecasting_training.standard_scaler import (
-    ChannelStandardScalerStats,
 )
 
 logger = logging.getLogger(__name__)
@@ -36,6 +36,91 @@ SCALER_VARIANT = "train_only_standard_scaler_v1"
 # history is shorter than a model's fixed context length (`n_steps`). That is now
 # a per-model concern. Bumped so any v1 manifests on disk are rebuilt.
 MANIFEST_VERSION = 2
+
+
+@dataclass
+class ModelConfig:
+    """PyPOTS forecasting model configuration.
+
+    Relocated verbatim from the former
+    ``forecasting_evaluation.forecasting_training.config`` module. Only
+    ``n_steps``/``n_pred_steps``/``n_features`` feed the content-addressed cache
+    digest (:func:`history_cf_cache_subdir`) and the dataset window sizing; the
+    remaining fields are retained for back-compat with checkpoints whose
+    ``training_config.json`` carries them. The forecasting *training* package
+    defines its own training-flavored ``ModelConfig`` separately.
+
+    Reference:
+    - PyPOTS DLinear forecasting API
+    - PyPOTS MixLinear forecasting API
+    - PyPOTS TEFN forecasting API
+    - PyPOTS SegRNN forecasting API
+
+    Shared parameters:
+    - ``n_steps``: input history length
+    - ``n_features``: number of channels/features
+    - ``n_pred_steps``: forecast horizon
+    - ``loss``: PyPOTS training loss name, resolved from ``pypots.nn.modules.loss``
+    - ``validation_metric``: PyPOTS validation metric name
+
+    DLinear-specific parameters:
+    - ``moving_avg_window_size``
+    - ``individual``
+    - ``d_model`` (used in non-individual mode)
+
+    MixLinear-specific parameters:
+    - ``period_len``
+    - ``lpf``
+    - ``alpha``
+    - ``rank``
+
+    TEFN-specific parameters:
+    - ``n_fod``
+    - ``apply_nonstationary_norm``
+
+    SegRNN-specific parameters:
+    - ``seg_len``
+    - ``d_model``
+    - ``dropout``
+
+    ``base_model_name`` is only used by the Chronos-2 fine-tuning path.
+    """
+
+    model_name: str = "chronos2"
+    base_model_name: str = "amazon/chronos-2"
+    n_steps: int = 168  # Shared: input history length in hours.
+    n_pred_steps: int = 24  # Shared: forecast horizon in hours.
+    n_features: int = 19  # Shared: number of input/output channels.
+    loss: str = "mae"
+    validation_metric: str = "mae"
+
+    # DLinear-specific parameters.
+    d_model: int = 64
+    moving_avg_window_size: int = 25
+    individual: bool = False
+
+    # MixLinear-specific parameters.
+    period_len: int = 24
+    lpf: int = 2
+    alpha: float = 0.5
+    rank: int = 2
+
+    # TEFN-specific parameters.
+    n_fod: int = 2
+    apply_nonstationary_norm: bool = False
+
+    # SegRNN-specific parameters.
+    seg_len: int = 24
+
+    # Shared deep-learning hyperparameters used by several forecasting architectures.
+    n_layers: int = 2
+    n_heads: int = 4
+    d_ffn: int = 128
+    dropout: float = 0.1
+
+    # Frequency / decomposition style params.
+    top_k: int = 5
+    n_kernels: int = 6
 
 
 @dataclass(frozen=True)
@@ -451,8 +536,16 @@ def resolve_runtime_row_groups(
     history_length: int,
     horizon_length: int,
     daily_start_hour_offset: int,
+    include_short_history: bool = True,
 ) -> list[ForecastingRowGroup]:
-    """Resolve offset-adjusted windows without changing persisted manifest data."""
+    """Resolve offset-adjusted windows without changing persisted manifest data.
+
+    When ``include_short_history`` is True (the default), windows whose history
+    is shorter than ``history_length`` are kept — the dataset NaN-left-pads them
+    to the fixed window, matching how the evaluator feeds short prefixes to
+    ``BasePyPOTSForecastingModel.predict``. Set False to reproduce the legacy
+    drop-short behavior.
+    """
     resolved_row_groups: list[ForecastingRowGroup] = []
 
     for row_group in row_groups:
@@ -466,7 +559,7 @@ def resolve_runtime_row_groups(
             )
             if history_end_hour <= 0:
                 continue
-            if history_end_hour < history_length:
+            if not include_short_history and history_end_hour < history_length:
                 continue
             if pred_end_hour > trajectory_length:
                 continue
@@ -499,6 +592,7 @@ class PyPOTSForecastingDataset(BaseDataset):
         row_groups: list[ForecastingRowGroup],
         model_config: ModelConfig,
         daily_start_hour_offset: int = 0,
+        include_short_history: bool = True,
     ) -> None:
         """Initialize a dataset that slices forecasting windows on demand."""
         # We intentionally don't call BaseDataset.__init__ because our data source is
@@ -506,6 +600,7 @@ class PyPOTSForecastingDataset(BaseDataset):
         self._history_length = int(model_config.n_steps)
         self._horizon_length = int(model_config.n_pred_steps)
         self._daily_start_hour_offset = int(daily_start_hour_offset)
+        self._include_short_history = bool(include_short_history)
         if not 0 <= self._daily_start_hour_offset < 24:
             raise ValueError(
                 "daily_start_hour_offset must be within [0, 24), "
@@ -522,6 +617,7 @@ class PyPOTSForecastingDataset(BaseDataset):
             history_length=self._history_length,
             horizon_length=self._horizon_length,
             daily_start_hour_offset=self._daily_start_hour_offset,
+            include_short_history=self._include_short_history,
         )
         self._sample_lookup = self._build_sample_lookup(self._row_groups)
         self.data = None
@@ -614,10 +710,22 @@ class PyPOTSForecastingDataset(BaseDataset):
         window = row_group.windows[window_idx]
         history_cf = self._get_history_cf_row(row_group.dataset_row_idx)
 
-        history_window = history_cf[
-            :,
-            window.history_end_hour - self._history_length : window.history_end_hour,
-        ]
+        # Match the evaluator's predict(): when the available history is shorter
+        # than the fixed window, NaN-left-pad to ``history_length`` (older
+        # positions missing) instead of slicing with a negative start. With
+        # include_short_history enabled, this is the training-time mirror of
+        # BasePyPOTSForecastingModel.predict's padding.
+        start = window.history_end_hour - self._history_length
+        if start < 0:
+            available = history_cf[:, : window.history_end_hour]
+            history_window = torch.full(
+                (available.shape[0], self._history_length),
+                float("nan"),
+                dtype=available.dtype,
+            )
+            history_window[:, -available.shape[1] :] = available
+        else:
+            history_window = history_cf[:, start : window.history_end_hour]
         target_window = history_cf[:, window.history_end_hour : window.pred_end_hour]
 
         x = history_window.transpose(0, 1).contiguous()
@@ -696,6 +804,7 @@ def build_pypots_forecasting_dataset(
     daily_start_hour_offset: int = 0,
     history_cf_source: str | Path | list[torch.Tensor] | None = None,
     row_groups: list[ForecastingRowGroup] | None = None,
+    include_short_history: bool = True,
 ) -> PyPOTSForecastingDataset:
     """Construct an online forecasting Dataset for one split."""
     if row_groups is None:
@@ -725,4 +834,5 @@ def build_pypots_forecasting_dataset(
         row_groups=row_groups,
         model_config=model_config,
         daily_start_hour_offset=daily_start_hour_offset,
+        include_short_history=include_short_history,
     )

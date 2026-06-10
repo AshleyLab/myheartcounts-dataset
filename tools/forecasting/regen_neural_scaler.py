@@ -49,8 +49,8 @@ def main(argv: list[str] | None = None) -> int:
 
     from forecasting_evaluation.config import DataConfig
     from forecasting_evaluation.data.data_loader import ForecastingDataLoader
-    from forecasting_evaluation.forecasting_training.online_dataset import build_history_cf_rows
-    from forecasting_evaluation.forecasting_training.standard_scaler import (
+    from forecasting_evaluation.data.online_dataset import build_history_cf_rows
+    from forecasting_evaluation.data.standard_scaler import (
         fit_from_history_cf_rows,
     )
 

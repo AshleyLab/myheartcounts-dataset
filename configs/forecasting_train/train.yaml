@@ -1,0 +1,34 @@
+# Root config for ``mhc-forecast-train``.
+#
+# Compose: each group below picks one of the preset YAMLs under its directory.
+# Override on the CLI, e.g.:
+#   mhc-forecast-train model=segrnn \
+#       data.trajectory_hf_dir=/path/to/hourly_trajectory \
+#       +data.split_file=/path/to/sharable_users.json \
+#       data.sample_index_file=/path/to/sample_index.json \
+#       output.release_dir=/path/to/my-release
+#
+# Multirun sweep:
+#   mhc-forecast-train --multirun model=dlinear,mixlinear,segrnn
+
+defaults:
+  - data: default
+  - forecasting: default
+  - features: default
+  - model: dlinear          # default to DLinear for quick smoke tests
+  - training: default
+  - output: default
+  - _self_
+
+seed: 42
+
+hydra:
+  searchpath:
+    - pkg://eval_hydra.configs   # shared SLURM launcher (sherlock_submitit)
+  run:
+    dir: ${output.saving_path}/hydra_${now:%Y%m%d_%H%M%S}_${model.model_name}
+  sweep:
+    dir: ${output.saving_path}/multirun/${now:%Y%m%d_%H%M%S}
+    subdir: ${model.model_name}__${hydra.job.num}
+  job:
+    chdir: false

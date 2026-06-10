@@ -11,10 +11,10 @@ import h5py
 import numpy as np
 
 from forecasting_evaluation.data.data_loader import ForecastingDataLoader
-from forecasting_evaluation.forecasting_training.cache_bundle import (
+from forecasting_evaluation.data.cache_bundle import (
     prepare_history_cf_raw_cache_for_split,
 )
-from forecasting_evaluation.forecasting_training.online_dataset import resolve_cache_base_dir
+from forecasting_evaluation.data.online_dataset import resolve_cache_base_dir
 
 logger = logging.getLogger(__name__)
 

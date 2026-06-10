@@ -12,11 +12,11 @@ import numpy as np
 import torch
 
 from forecasting_evaluation.config import FeaturesConfig
-from forecasting_evaluation.forecasting_training.online_dataset import (
+from forecasting_evaluation.data.online_dataset import (
     history_cf_cache_subdir,
     resolve_cache_base_dir,
 )
-from forecasting_evaluation.forecasting_training.standard_scaler import (
+from forecasting_evaluation.data.standard_scaler import (
     ChannelStandardScalerStats,
     load_stats_json,
 )
