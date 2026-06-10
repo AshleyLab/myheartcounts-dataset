@@ -99,11 +99,36 @@ def run_eval(
     metrics_output_dir = Path(metrics_output_dir)
     metrics_output_dir.mkdir(parents=True, exist_ok=True)
 
+    metrics_cfg = getattr(config, "metrics", None)
+    run_key = config.experiment_name or "openmhc_run"
+    eval_paths = {run_key: str(run_dir)}
+    point_metrics = tuple(metrics_cfg.point_metrics) if metrics_cfg else None
+    combine_channels = bool(metrics_cfg.combine_channels) if metrics_cfg else True
+
     calculator = OfflineMetricsCalculator(
-        evaluation_result_paths={config.experiment_name or "openmhc_run": str(run_dir)},
+        evaluation_result_paths=eval_paths,
         metrics_output_path=str(metrics_output_dir),
+        combine_channels=combine_channels,
+        metric_columns=point_metrics,
     )
     calculator.run()
+
+    # Binary-channel metrics (f1/auroc/auprc) into the SAME metrics tree (same
+    # run_key), so the skill/ranking scripts read one model-root containing both
+    # point and binary metrics. Skipped when binary_metrics is empty.
+    binary_metrics = tuple(metrics_cfg.binary_metrics) if metrics_cfg else ()
+    if binary_metrics:
+        from forecasting_evaluation.metrics.binary_offline_calculate import (
+            BinaryOfflineMetricsCalculator,
+        )
+
+        BinaryOfflineMetricsCalculator(
+            evaluation_result_paths=eval_paths,
+            metrics_output_path=str(metrics_output_dir),
+            threshold=float(metrics_cfg.f1_threshold),
+            combine_channels=combine_channels,
+            metric_names=binary_metrics,
+        ).run()
 
     per_channel = _load_per_channel_metrics(metrics_output_dir)
 

@@ -8,6 +8,9 @@
 #SBATCH --output=logs/forecasting_eval/aggregate_%j.out
 #SBATCH --error=logs/forecasting_eval/aggregate_%j.err
 
+# DEPRECATED — superseded by jobs/simurgh/forecasting_eval/skill_rank.sbatch.
+# Runs the (deprecated) MAE-by-channel-hour aggregator. Kept only to reproduce
+# the old mae_by_model_channel_hour.csv / statistical_result.csv tables.
 set -euo pipefail
 
 source "${SLURM_SUBMIT_DIR:-$(pwd)}/jobs/simurgh/forecasting_eval/_common.sh"
@@ -27,6 +30,6 @@ if [[ "${#args[@]}" -eq 0 ]]; then
     exit 1
 fi
 
-python src/forecasting_evaluation/metrics/summary_metrics_result.py \
+python src/forecasting_evaluation/metrics/deprecated/summary_metrics_result.py \
     "${args[@]}" \
     --output-dir "${summary_dir}"

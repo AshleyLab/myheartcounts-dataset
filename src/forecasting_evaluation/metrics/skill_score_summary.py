@@ -14,8 +14,6 @@ baseline errors using:
 from __future__ import annotations
 
 import argparse
-import importlib.util
-import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -28,172 +26,32 @@ SRC_ROOT = REPO_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-_CHANNEL_CONSTANTS_PATH = SRC_ROOT / "visualizations" / "constants.py"
-_CHANNEL_SPEC = (
-    importlib.util.spec_from_file_location(
-        "_forecasting_skill_score_channel_constants",
-        _CHANNEL_CONSTANTS_PATH,
-    )
-    if _CHANNEL_CONSTANTS_PATH.exists()
-    else None
-)
-if _CHANNEL_SPEC is None or _CHANNEL_SPEC.loader is None:
-    CHANNEL_INFO = {}
-else:
-    _channel_module = importlib.util.module_from_spec(_CHANNEL_SPEC)
-    _CHANNEL_SPEC.loader.exec_module(_channel_module)
-    CHANNEL_INFO = getattr(_channel_module, "CHANNEL_INFO", {})
+from forecasting_evaluation.metrics import metric_spec as _spec  # noqa: E402
 
-LOWER_IS_BETTER_METRICS = {"mae", "mse", "mase", "mase_all", "ql", "sql"}
-HIGHER_IS_BETTER_METRICS = {"f1", "auprc", "auroc"}
+CHANNEL_INFO = _spec.CHANNEL_INFO
+LOWER_IS_BETTER_METRICS = _spec.LOWER_IS_BETTER_METRICS
+HIGHER_IS_BETTER_METRICS = _spec.HIGHER_IS_BETTER_METRICS
 
 
-def _safe_read_parquet(file_path: str | Path, **kwargs: Any) -> pd.DataFrame | None:
-    path = Path(file_path)
-    try:
-        if not path.exists() or path.stat().st_size == 0:
-            return None
-        return pd.read_parquet(path, **kwargs)
-    except Exception:
-        return None
+_safe_read_parquet = _spec.safe_read_parquet
 
 
-def _list_parquet_files(metric_dir: str | Path) -> list[Path]:
-    path = Path(metric_dir)
-    if not path.exists():
-        return []
-    return sorted(path.rglob("*.parquet"))
+_list_parquet_files = _spec.list_parquet_files
 
 
-def _channel_label(channel_idx: int) -> str:
-    metadata = CHANNEL_INFO.get(channel_idx)
-    if metadata is None:
-        return f"Channel {channel_idx}"
-    return str(metadata["name"])
+_channel_label = _spec.channel_label
 
 
-def _parse_channel_indices(raw_value: str | None, default: tuple[int, ...]) -> tuple[int, ...]:
-    if raw_value is None or not raw_value.strip():
-        return default
-
-    indices: list[int] = []
-    for part in raw_value.split(","):
-        token = part.strip()
-        if token:
-            indices.append(int(token))
-
-    if not indices:
-        raise ValueError("At least one channel index must be provided.")
-    return tuple(indices)
+_parse_channel_indices = _spec.parse_channel_indices
 
 
-def _load_models_dict(args: argparse.Namespace) -> dict[str, dict[str, str]]:
-    if args.models_json:
-        parsed = json.loads(args.models_json)
-    elif args.config:
-        config_path = Path(args.config)
-        if not config_path.exists():
-            raise ValueError(f"Config file not found: {config_path}")
-        if config_path.suffix.lower() in {".yaml", ".yml"}:
-            try:
-                import yaml
-            except ImportError as exc:
-                raise ImportError("PyYAML is required for yaml config input") from exc
-            with config_path.open("r", encoding="utf-8") as file:
-                parsed = yaml.safe_load(file)
-        else:
-            with config_path.open("r", encoding="utf-8") as file:
-                parsed = json.load(file)
-    else:
-        raise ValueError("Please provide --models-json or --config")
-
-    if isinstance(parsed, dict) and "models" in parsed:
-        parsed = parsed["models"]
-
-    models: dict[str, dict[str, str]] = {}
-    if isinstance(parsed, dict):
-        for key, value in parsed.items():
-            model_name = str(key).strip()
-            if isinstance(value, dict):
-                model_path = str(value.get("path", "")).strip()
-                display_name = str(value.get("display_name", model_name)).strip()
-            else:
-                model_path = str(value).strip()
-                display_name = model_name
-            if not model_name or not model_path:
-                raise ValueError("Model configuration must use non-empty model names and paths")
-            models[model_name] = {
-                "path": model_path,
-                "display_name": display_name or model_name,
-            }
-    elif isinstance(parsed, list):
-        for item in parsed:
-            if not isinstance(item, dict):
-                raise ValueError("Model configuration list entries must be dictionaries")
-            model_name = str(item.get("name", "")).strip()
-            model_path = str(item.get("path", "")).strip()
-            display_name = str(item.get("display_name", model_name)).strip()
-            if not model_name or not model_path:
-                raise ValueError("Each model entry must contain non-empty name and path")
-            models[model_name] = {
-                "path": model_path,
-                "display_name": display_name or model_name,
-            }
-    else:
-        raise ValueError("Model configuration must be a dict or list")
-
-    if not models:
-        raise ValueError("No model mappings found in configuration")
-    return models
+_load_models_dict = _spec.load_models_dict
 
 
-def _safe_to_metric_array(value: Any) -> np.ndarray | None:
-    if value is None:
-        return None
-    try:
-        arr = np.asarray(value, dtype=float)
-        if arr.ndim in {1, 2}:
-            return arr
-    except Exception:
-        pass
-
-    try:
-        obj = np.asarray(value, dtype=object)
-    except Exception:
-        return None
-    if obj.ndim != 1:
-        return None
-
-    rows: list[np.ndarray] = []
-    for item in obj.tolist():
-        try:
-            row = np.asarray(item, dtype=float).reshape(-1)
-        except Exception:
-            return None
-        if row.size == 0:
-            return None
-        rows.append(row)
-    if not rows:
-        return None
-    min_len = min(row.shape[0] for row in rows)
-    if min_len <= 0:
-        return None
-    return np.vstack([row[:min_len] for row in rows])
+_safe_to_metric_array = _spec.safe_to_metric_array
 
 
-def _metric_to_error(metric_name: str, metric_value: float) -> float:
-    metric_key = metric_name.strip().lower()
-    if not np.isfinite(metric_value):
-        return float("nan")
-    if metric_key in LOWER_IS_BETTER_METRICS:
-        return float(metric_value) if metric_value >= 0.0 else float("nan")
-    if metric_key in HIGHER_IS_BETTER_METRICS:
-        if metric_value < 0.0 or metric_value > 1.0:
-            return float("nan")
-        return float(1.0 - metric_value)
-    raise ValueError(
-        f"Unknown metric '{metric_name}'. Add it to lower- or higher-is-better sets."
-    )
+_metric_to_error = _spec.metric_to_error
 
 
 def compute_skill_from_errors(
@@ -227,20 +85,7 @@ def compute_skill_from_errors(
     return float(1.0 - geometric_mean_ratio), geometric_mean_ratio, int(valid_ratios.shape[0])
 
 
-def _metric_channel_value(metric: np.ndarray, channel_idx: int) -> float:
-    if metric.ndim == 1:
-        if channel_idx >= metric.shape[0]:
-            return float("nan")
-        value = float(metric[channel_idx])
-        return value if np.isfinite(value) else float("nan")
-
-    if channel_idx >= metric.shape[0]:
-        return float("nan")
-    values = metric[channel_idx]
-    finite_values = values[np.isfinite(values)]
-    if finite_values.size == 0:
-        return float("nan")
-    return float(np.mean(finite_values))
+_metric_channel_value = _spec.metric_channel_value
 
 
 def _row_sample_key(row: pd.Series, occurrence: int) -> str:
@@ -293,7 +138,9 @@ def _load_metric_values(
                 error = _metric_to_error(metric_name=metric_name, metric_value=value)
                 if not np.isfinite(error):
                     continue
-                per_unit_values.setdefault((unit_id, int(channel_idx), metric_name), []).append(error)
+                per_unit_values.setdefault((unit_id, int(channel_idx), metric_name), []).append(
+                    error
+                )
 
     for (unit_id, channel_idx, metric), values in per_unit_values.items():
         finite_values = np.asarray(values, dtype=float)
@@ -442,16 +289,22 @@ def _compute_long_skill_scores(
                     "geometric_mean_ratio": gm_ratio,
                     "n_users": _count_users_from_unit_index(paired.index),
                     "n_pairs": int(n_pairs),
-                    "model_error_mean": float(paired["model_error"].mean()) if not paired.empty else float("nan"),
-                    "baseline_error_mean": float(paired["baseline_error"].mean()) if not paired.empty else float("nan"),
+                    "model_error_mean": float(paired["model_error"].mean())
+                    if not paired.empty
+                    else float("nan"),
+                    "baseline_error_mean": float(paired["baseline_error"].mean())
+                    if not paired.empty
+                    else float("nan"),
                 }
             )
 
     if not rows:
         return pd.DataFrame(columns=columns)
-    return pd.DataFrame(rows, columns=columns).sort_values(
-        ["group", "channel_idx", "metric", "model"]
-    ).reset_index(drop=True)
+    return (
+        pd.DataFrame(rows, columns=columns)
+        .sort_values(["group", "channel_idx", "metric", "model"])
+        .reset_index(drop=True)
+    )
 
 
 def _count_users_from_unit_index(index: pd.Index) -> int:
@@ -470,7 +323,9 @@ def _aggregate_rows_score(rows_df: pd.DataFrame) -> tuple[float, int]:
     return float(1.0 - np.exp(np.mean(np.log(ratios)))), int(ratios.size)
 
 
-def _aggregate_group_score(long_df: pd.DataFrame, model_name: str, group_name: str) -> tuple[float, int]:
+def _aggregate_group_score(
+    long_df: pd.DataFrame, model_name: str, group_name: str
+) -> tuple[float, int]:
     group_rows = long_df.loc[
         (long_df["model"] == model_name)
         & (long_df["group"] == group_name)
@@ -521,7 +376,9 @@ def _build_model_summary(
         }
         continuous_channels = sorted(
             int(idx)
-            for idx in long_df.loc[long_df["group"] == "continuous", "channel_idx"].dropna().unique()
+            for idx in long_df.loc[long_df["group"] == "continuous", "channel_idx"]
+            .dropna()
+            .unique()
         )
         for channel_idx in continuous_channels:
             score, n_units = _aggregate_channel_score(long_df, model_name, channel_idx)

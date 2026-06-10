@@ -141,7 +141,7 @@ and its scaler-stats step are no longer part of the eval path).
 
 ### 3.4 Step 2: Build/reuse history_cf cache (test split only)
 
-Then [prepare_history_cf_raw_cache_for_split()](forecasting_training/cache_bundle.py) prepares the **raw** history cache and row-group manifest for the **test split only**, via one model-agnostic path. There is no per-model cache selection and no standardized-cache variant: every model reads the same raw full-trajectory history and the same data-quality-only window manifest (manifest schema `v2`). Models that need a fixed context window slice it themselves; models trained on standardized inputs standardize internally at predict time.
+Then [prepare_history_cf_raw_cache_for_split()](data/cache_bundle.py) prepares the **raw** history cache and row-group manifest for the **test split only**, via one model-agnostic path. There is no per-model cache selection and no standardized-cache variant: every model reads the same raw full-trajectory history and the same data-quality-only window manifest (manifest schema `v2`). Models that need a fixed context window slice it themselves; models trained on standardized inputs standardize internally at predict time.
 
 The cache still lives under:
 
@@ -169,7 +169,7 @@ Inside `_run_sequential()`:
 
 ### 3.6 Step 4: Compute real window boundaries per window and run prediction
 
-For each `current_day` in a row group, evaluator calls [_resolve_window_hours()](forecasting_training/online_dataset.py#L361):
+For each `current_day` in a row group, evaluator calls [_resolve_window_hours()](data/online_dataset.py#L361):
 
 ```python
 history_end_hour = current_day * 24 + daily_start_hour_offset
@@ -256,7 +256,7 @@ For each run, [OfflineMetricsPipeline](metrics/offline/pipeline.py#L57) does:
 
 1. Read `config.yaml` from prediction directory.
 2. Re-run [ForecastingDataLoader.load_splits()](data/data_loader.py#L59) with that config.
-3. Reuse the same evaluator path [prepare_history_cf_cache_bundle()](forecasting_training/cache_bundle.py#L52) to load raw test history.
+3. Reuse the same evaluator path [prepare_history_cf_cache_bundle()](data/cache_bundle.py#L52) to load raw test history.
 4. Scan user parquet files under prediction directory.
 5. Build offline context only for test users that also have prediction parquet.
 
@@ -333,10 +333,10 @@ Current skip policy: if `results/metrics/<run_key>/mae/<user_id>.parquet` alread
 
 ### 8.1 Hourly summary
 
-[summary_metrics_result.py](metrics/summary_metrics_result.py#L457) targets one specific metric directory, for example `results/metrics/<run_key>/mae`:
+[summary_metrics_result.py](metrics/deprecated/summary_metrics_result.py#L457) targets one specific metric directory, for example `results/metrics/<run_key>/mae`:
 
 ```bash
-python src/forecasting_evaluation/metrics/summary_metrics_result.py \
+python src/forecasting_evaluation/metrics/deprecated/summary_metrics_result.py \
   --model seasonal_naive=results/metrics/seasonal_naive/mae \
   --output-dir results/metrics_summary
 ```

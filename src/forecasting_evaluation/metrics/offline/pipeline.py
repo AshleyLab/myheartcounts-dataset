@@ -63,6 +63,7 @@ class OfflineMetricsPipeline:
         metrics_output_path: Path,
         max_user: int | None = None,
         combine_channels: bool = True,
+        metric_columns: tuple[str, ...] | None = None,
     ):
         """Initialize the offline metrics pipeline for one run."""
         self.run_key = str(run_key)
@@ -70,6 +71,7 @@ class OfflineMetricsPipeline:
         self.metrics_output_path = Path(metrics_output_path)
         self.max_user = int(max_user) if max_user is not None else None
         self.combine_channels = bool(combine_channels)
+        self.metric_columns = tuple(metric_columns) if metric_columns else None
 
     def run(self) -> dict[str, Any]:
         """Execute the full structured metrics pipeline for one run."""
@@ -386,10 +388,14 @@ class OfflineMetricsPipeline:
                 del rows
 
             if user_records:
+                save_kwargs = (
+                    {} if self.metric_columns is None else {"metric_columns": self.metric_columns}
+                )
                 user_saved_files_by_metric = save_metrics_result_by_metric(
                     output_root=metrics_dir,
                     model_key=model_key,
                     records_by_user={user_id: user_records},
+                    **save_kwargs,
                 )
                 for metric_name, saved_files in user_saved_files_by_metric.items():
                     saved_files_by_metric.setdefault(metric_name, {}).update(saved_files)

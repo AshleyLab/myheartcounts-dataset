@@ -17,7 +17,7 @@ Main entrypoints:
 - `mhc-forecast-eval` (Hydra CLI for reproducible public benchmark runs)
 - `scripts/run_forecasting_eval.py` (legacy prediction-generation wrapper)
 - `src/forecasting_evaluation/metrics/offline_calculate.py` (offline metric calculation)
-- `src/forecasting_evaluation/metrics/paper_result_generator_all_channels.py` (appendix-style raw hour-group tables)
+- `src/forecasting_evaluation/metrics/deprecated/paper_result_generator_all_channels.py` (appendix-style raw hour-group tables)
 - `src/forecasting_evaluation/metrics/skill_score_summary.py` and `fairness_skill_score_summary.py` (paper scoring summaries)
 
 ---
@@ -556,7 +556,7 @@ Expected full-data result for Seasonal Naive:
 Generate the appendix-style grouped raw table from no-combine metrics:
 
 ```bash
-python -m forecasting_evaluation.metrics.paper_result_generator_all_channels \
+python -m forecasting_evaluation.metrics.deprecated.paper_result_generator_all_channels \
   --models-json '{"Seasonal Naive":"/tmp/mhc_forecast_full_seasonal_naive_final/metrics_nocombine/Seasonal_Naive"}' \
   --output-dir /tmp/mhc_forecast_full_seasonal_naive_final/paper_raw_table_check \
   --output-file /tmp/mhc_forecast_full_seasonal_naive_final/paper_raw_table_check/seasonal_naive_raw_grouped_nocombine.csv
@@ -581,12 +581,12 @@ and `18`, computing no-combine metrics for each, and aggregating them together.
 
 ## 5. Offline Metrics Summary
 
-Entry script: `src/forecasting_evaluation/metrics/summary_metrics_result.py`
+Entry script: `src/forecasting_evaluation/metrics/deprecated/summary_metrics_result.py`
 
 ### 5.1 CLI
 
 ```bash
-python src/forecasting_evaluation/metrics/summary_metrics_result.py \
+python src/forecasting_evaluation/metrics/deprecated/summary_metrics_result.py \
   --model SeasonalNaive=results/metrics/SeasonalNaive/mae \
   --model Chronos2=results/metrics/Chronos2/mae \
   --output-dir results/metrics_summary \
@@ -703,7 +703,7 @@ python src/forecasting_evaluation/metrics/offline_calculate.py \
 Run offline metrics summary:
 
 ```bash
-python src/forecasting_evaluation/metrics/summary_metrics_result.py \
+python src/forecasting_evaluation/metrics/deprecated/summary_metrics_result.py \
   --model ExpA=results/metrics/seasonal_naive/mae \
   --output-dir results/metrics_summary
 ```

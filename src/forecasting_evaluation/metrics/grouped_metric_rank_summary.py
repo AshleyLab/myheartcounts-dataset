@@ -15,7 +15,6 @@ each group/user before model means and ranks are computed.
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import json
 import sys
 from pathlib import Path
@@ -29,85 +28,31 @@ SRC_ROOT = REPO_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-_CHANNEL_CONSTANTS_PATH = SRC_ROOT / "visualizations" / "constants.py"
-_CHANNEL_SPEC = importlib.util.spec_from_file_location(
-    "_forecasting_grouped_metric_channel_constants",
-    _CHANNEL_CONSTANTS_PATH,
-)
-if _CHANNEL_SPEC is None or _CHANNEL_SPEC.loader is None:
-    CHANNEL_INFO = {}
-else:
-    _channel_module = importlib.util.module_from_spec(_CHANNEL_SPEC)
-    _CHANNEL_SPEC.loader.exec_module(_channel_module)
-    CHANNEL_INFO = getattr(_channel_module, "CHANNEL_INFO", {})
+from forecasting_evaluation.metrics import metric_spec as _spec  # noqa: E402
 
-LOWER_IS_BETTER_METRICS = {"mae", "mse", "mase", "mase_all", "ql", "sql"}
-HIGHER_IS_BETTER_METRICS = {"f1", "auprc", "auroc"}
-DEFAULT_CONTINUOUS_CHANNELS = tuple(range(0, 7))
-DEFAULT_BINARY_GROUPS: tuple[tuple[str, tuple[int, ...]], ...] = (
-    ("sleep", (7, 8)),
-    ("workout", tuple(range(9, 19))),
-)
+CHANNEL_INFO = _spec.CHANNEL_INFO
+LOWER_IS_BETTER_METRICS = _spec.LOWER_IS_BETTER_METRICS
+HIGHER_IS_BETTER_METRICS = _spec.HIGHER_IS_BETTER_METRICS
+DEFAULT_CONTINUOUS_CHANNELS = _spec.CONTINUOUS_CHANNELS
+DEFAULT_BINARY_GROUPS = _spec.BINARY_GROUPS
 
 
-def _safe_read_parquet(file_path: str | Path, **kwargs: Any) -> pd.DataFrame | None:
-    path = Path(file_path)
-    try:
-        if not path.exists() or path.stat().st_size == 0:
-            return None
-        return pd.read_parquet(path, **kwargs)
-    except Exception:
-        return None
+_safe_read_parquet = _spec.safe_read_parquet
 
 
-def _list_parquet_files(path: str | Path) -> list[Path]:
-    root = Path(path)
-    if not root.exists():
-        return []
-    return sorted(root.rglob("*.parquet"))
+_list_parquet_files = _spec.list_parquet_files
 
 
-def _channel_label(channel_idx: int) -> str:
-    metadata = CHANNEL_INFO.get(int(channel_idx))
-    if metadata is None:
-        return f"Channel {channel_idx}"
-    return str(metadata["name"])
+_channel_label = _spec.channel_label
 
 
-def _metric_display_name(metric_name: str) -> str:
-    normalized = metric_name.strip().lower()
-    mapping = {
-        "mae": "MAE",
-        "mse": "MSE",
-        "mase": "MASE",
-        "mase_all": "MASE_all",
-        "ql": "QL",
-        "sql": "sQL",
-        "f1": "F1",
-        "auprc": "AUPRC",
-        "auroc": "AUROC",
-    }
-    return mapping.get(normalized, metric_name)
+_metric_display_name = _spec.metric_display_name
 
 
-def _metric_lower_is_better(metric_name: str) -> bool:
-    metric_key = metric_name.strip().lower()
-    if metric_key in LOWER_IS_BETTER_METRICS:
-        return True
-    if metric_key in HIGHER_IS_BETTER_METRICS:
-        return False
-    raise ValueError(
-        f"Unknown metric '{metric_name}'. Add it to lower- or higher-is-better sets."
-    )
+_metric_lower_is_better = _spec.metric_lower_is_better
 
 
-def _parse_channel_indices(raw_value: str | None, default: tuple[int, ...]) -> tuple[int, ...]:
-    if raw_value is None or not raw_value.strip():
-        return default
-    indices = [int(token.strip()) for token in raw_value.split(",") if token.strip()]
-    if not indices:
-        raise ValueError("At least one channel index must be provided.")
-    return tuple(indices)
+_parse_channel_indices = _spec.parse_channel_indices
 
 
 def _parse_group_arg(group_arg: str) -> tuple[str, tuple[int, ...]]:
@@ -278,9 +223,9 @@ def _load_channel_user_metrics(
                     continue
                 metric_value, n_values = collapsed
                 per_user_values.setdefault((user_id, int(channel_idx)), []).append(metric_value)
-                per_user_counts[(user_id, int(channel_idx))] = (
-                    per_user_counts.get((user_id, int(channel_idx)), 0) + int(n_values)
-                )
+                per_user_counts[(user_id, int(channel_idx))] = per_user_counts.get(
+                    (user_id, int(channel_idx)), 0
+                ) + int(n_values)
 
     for (user_id, channel_idx), values in per_user_values.items():
         finite_values = np.asarray(values, dtype=float)
@@ -353,15 +298,12 @@ def _build_binary_user_rows(
                 ].copy()
                 if group_slice.empty:
                     continue
-                grouped = (
-                    group_slice.groupby(
-                        ["model", "user_id", "metric", "metric_display"],
-                        as_index=False,
-                    )
-                    .agg(
-                        metric_value=("metric_value", "mean"),
-                        n_values=("n_values", "sum"),
-                    )
+                grouped = group_slice.groupby(
+                    ["model", "user_id", "metric", "metric_display"],
+                    as_index=False,
+                ).agg(
+                    metric_value=("metric_value", "mean"),
+                    n_values=("n_values", "sum"),
                 )
                 grouped["scope_type"] = "binary_group"
                 grouped["scope"] = group_name
@@ -415,9 +357,8 @@ def _compute_mean_ranks(user_metric_df: pd.DataFrame) -> pd.DataFrame:
     if not rank_rows:
         return pd.DataFrame(columns=["scope", "metric", "model", "rank", "rank_n_users"])
     rank_all = pd.concat(rank_rows, ignore_index=True)
-    return (
-        rank_all.groupby(["scope", "metric", "model"], as_index=False)
-        .agg(rank=("rank", "mean"), rank_n_users=("user_id", "nunique"))
+    return rank_all.groupby(["scope", "metric", "model"], as_index=False).agg(
+        rank=("rank", "mean"), rank_n_users=("user_id", "nunique")
     )
 
 
@@ -443,16 +384,13 @@ def _build_summary_tables(
         return pd.DataFrame(columns=long_columns), pd.DataFrame(columns=["scope_type", "scope"])
 
     finite_df = user_metric_df.loc[np.isfinite(user_metric_df["metric_value"])].copy()
-    metric_means = (
-        finite_df.groupby(
-            ["scope_type", "scope", "scope_label", "metric", "metric_display", "model"],
-            as_index=False,
-        )
-        .agg(
-            metric_mean=("metric_value", "mean"),
-            n_users=("user_id", "nunique"),
-            n_values=("n_values", "sum"),
-        )
+    metric_means = finite_df.groupby(
+        ["scope_type", "scope", "scope_label", "metric", "metric_display", "model"],
+        as_index=False,
+    ).agg(
+        metric_mean=("metric_value", "mean"),
+        n_users=("user_id", "nunique"),
+        n_values=("n_values", "sum"),
     )
     rank_df = _compute_mean_ranks(user_metric_df=user_metric_df)
     long_df = metric_means.merge(rank_df, on=["scope", "metric", "model"], how="left")

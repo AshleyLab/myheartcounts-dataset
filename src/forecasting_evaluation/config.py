@@ -193,6 +193,27 @@ class OutputConfig:
 
 
 @dataclass
+class MetricsConfig:
+    """Which offline metrics to persist, and how to group channels.
+
+    All metrics are derived cheaply from the stored predictions in one pass;
+    these lists only control what gets persisted to the metrics tree. The skill
+    score and ranking need ``mae`` (continuous) + ``auprc`` (binary); the full
+    sets are persisted by default so the scoring method can be decided later.
+    Set ``binary_metrics=[]`` to skip the binary-metric pass entirely.
+    """
+
+    point_metrics: list[str] = field(
+        default_factory=lambda: ["mae", "mse", "mase", "mase_all", "ql", "sql"]
+    )
+    binary_metrics: list[str] = field(default_factory=lambda: ["auprc", "auroc", "f1"])
+    # Merge paired phone/watch channels (e.g. step count, distance) before scoring.
+    combine_channels: bool = True
+    # Threshold to binarize continuous scores for F1.
+    f1_threshold: float = 0.5
+
+
+@dataclass
 class EvaluatorConfig:
     """Evaluator execution configuration (sequential-only)."""
 
@@ -229,6 +250,7 @@ class ForecastingEvalConfig:
     features: FeaturesConfig = field(default_factory=FeaturesConfig)
     evaluator: EvaluatorConfig = field(default_factory=EvaluatorConfig)
     output: OutputConfig = field(default_factory=OutputConfig)
+    metrics: MetricsConfig = field(default_factory=MetricsConfig)
 
 
 def print_config(config: ForecastingEvalConfig) -> None:

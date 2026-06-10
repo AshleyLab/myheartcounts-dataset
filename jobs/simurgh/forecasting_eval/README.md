@@ -16,7 +16,10 @@ GPU models (chronos2/toto/mixlinear/dlinear/segrnn) are out of scope here.
 - `run_autoets.sbatch` — `autoETS` (8 cpus, 64G, 24h).
 - `run_autoarima.sbatch` — `autoARIMA` (16 cpus, 64G, 48h; the long pole,
   resumable).
-- `aggregate_results.sbatch` — cross-model summary over completed metrics.
+- `skill_rank.sbatch` — **canonical** Layer-2 summary: skill score (mae + auprc
+  vs `seasonal_naive`) + grouped mean-rank for a RUN_LABEL, in one job.
+- `aggregate_results.sbatch` — *deprecated* (MAE-by-channel-hour table only);
+  superseded by `skill_rank.sbatch`.
 - `submit_all.sh` — submits the 3 CPU jobs + chains aggregation (`afterok`).
 
 ## Prerequisites (one-time)

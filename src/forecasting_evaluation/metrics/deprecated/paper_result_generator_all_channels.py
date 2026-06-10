@@ -29,10 +29,10 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from forecasting_evaluation.metrics.paper_result_generator_one_channel import (
+from forecasting_evaluation.metrics.deprecated.paper_result_generator_one_channel import (
     aggregate_metric_3hour as _aggregate_metric_3hour_one_channel,
 )
-from forecasting_evaluation.metrics.paper_result_generator_one_channel import (
+from forecasting_evaluation.metrics.deprecated.paper_result_generator_one_channel import (
     rank_metric_by_user_3hour as _rank_metric_by_user_3hour_one_channel,
 )
 

@@ -89,9 +89,10 @@ def _save_binary_metrics_by_metric(
     output_root: Path,
     model_key: str,
     records_by_user: dict[str, list[dict[str, Any]]],
+    metric_names: tuple[str, ...] = _METRIC_NAMES,
 ) -> dict[str, dict[str, str]]:
     saved: dict[str, dict[str, str]] = {}
-    for metric_name in _METRIC_NAMES:
+    for metric_name in metric_names:
         metric_dir = output_root / metric_name
         metric_saved: dict[str, str] = {}
         for user_id, records in records_by_user.items():
@@ -216,6 +217,8 @@ class BinaryOfflineMetricsPipeline:
         metrics_output_path: Path,
         threshold: float,
         max_user: int | None = None,
+        combine_channels: bool = True,
+        metric_names: tuple[str, ...] = _METRIC_NAMES,
     ):
         """Initialize binary metric generation for one forecasting run."""
         self.run_key = str(run_key)
@@ -223,6 +226,8 @@ class BinaryOfflineMetricsPipeline:
         self.metrics_output_path = Path(metrics_output_path)
         self.threshold = float(threshold)
         self.max_user = int(max_user) if max_user is not None else None
+        self.combine_channels = bool(combine_channels)
+        self.metric_names = tuple(metric_names)
 
     def run(self) -> dict[str, Any]:
         """Compute and save binary metrics for one forecasting run."""
@@ -241,7 +246,9 @@ class BinaryOfflineMetricsPipeline:
         for user_context in user_contexts.values():
             history = np.asarray(user_context["history"], dtype=float)
             variable_names = list(user_context["variable_names"])
-            merge_plan = resolve_channel_merges(variable_names)
+            merge_plan = resolve_channel_merges(
+                variable_names, combine_channels=self.combine_channels
+            )
             user_context["history"] = merge_channel_first_array(history, merge_plan)
             user_context["merge_plan"] = merge_plan
 
@@ -328,6 +335,7 @@ class BinaryOfflineMetricsPipeline:
             output_root=output_run_dir,
             model_key=sanitize_name(model_name),
             records_by_user=records_by_user,
+            metric_names=self.metric_names,
         )
         return {
             "run_key": self.run_key,
@@ -352,6 +360,8 @@ class BinaryOfflineMetricsCalculator:
         metrics_output_path: str,
         threshold: float,
         max_user: int | None = None,
+        combine_channels: bool = True,
+        metric_names: tuple[str, ...] = _METRIC_NAMES,
     ):
         """Initialize binary metric generation across forecasting runs."""
         self.evaluation_result_paths = {
@@ -361,6 +371,8 @@ class BinaryOfflineMetricsCalculator:
         self.metrics_output_path.mkdir(parents=True, exist_ok=True)
         self.threshold = float(threshold)
         self.max_user = int(max_user) if max_user is not None else None
+        self.combine_channels = bool(combine_channels)
+        self.metric_names = tuple(metric_names)
 
     def run(self) -> dict[str, Any]:
         """Run binary metric generation for all configured runs."""
@@ -377,6 +389,8 @@ class BinaryOfflineMetricsCalculator:
                 metrics_output_path=self.metrics_output_path,
                 threshold=self.threshold,
                 max_user=self.max_user,
+                combine_channels=self.combine_channels,
+                metric_names=self.metric_names,
             )
             run_summaries.append(pipeline.run())
 

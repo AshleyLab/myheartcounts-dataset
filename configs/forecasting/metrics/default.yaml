@@ -1,0 +1,8 @@
+# @package metrics
+# Which offline metrics to persist (computed cheaply from stored predictions).
+# Skill score + ranking need mae (continuous) + auprc (binary); full sets are
+# persisted by default. Set binary_metrics to [] to skip the binary-metric pass.
+point_metrics: [mae, mse, mase, mase_all, ql, sql]
+binary_metrics: [auprc, auroc, f1]
+combine_channels: true   # merge paired phone/watch channels (steps, distance)
+f1_threshold: 0.5

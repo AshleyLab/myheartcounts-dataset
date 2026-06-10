@@ -57,4 +57,5 @@ def copy_run_config(source_run_dir: Path, target_run_dir: Path) -> None:
     dst = target_run_dir / "config.yaml"
     if not src.exists() or dst.exists():
         return
+    target_run_dir.mkdir(parents=True, exist_ok=True)
     dst.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")

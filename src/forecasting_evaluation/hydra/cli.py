@@ -20,6 +20,7 @@ from forecasting_evaluation.config import (
     ForecastingConfig,
     ForecastingEvalConfig,
     ForecastingModelConfig,
+    MetricsConfig,
     OutputConfig,
 )
 from forecasting_evaluation.hydra.registry import MODEL_REGISTRY
@@ -41,6 +42,7 @@ def register_configs() -> None:
             "features": FeaturesConfig,
             "evaluator": EvaluatorConfig,
             "output": OutputConfig,
+            "metrics": MetricsConfig,
         },
     )
 
