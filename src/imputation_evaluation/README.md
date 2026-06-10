@@ -71,8 +71,8 @@ The optional keyword-only arguments are introspected from your signature ([adapt
 
 | Scenario | Description | Default config |
 |---|---|---|
-| `random_noise` | Non-overlapping random patches on individual channels. Simulates brief sensor noise or BT drops. | `patch_size=10`, `mask_ratio=0.8` |
-| `temporal_slice` | Contiguous time blocks across all channels. Simulates device downtime (showering, charging). | `mask_ratio=0.5`, `min_block=30`, `max_block=60` |
+| `random_noise` | Non-overlapping random patches on individual channels. Simulates brief sensor noise or BT drops. | `patch_size=30`, `mask_ratio=0.5` |
+| `temporal_slice` | Contiguous time blocks across all channels. Simulates device downtime (showering, charging). | `mask_ratio=0.25`, `min_block=30`, `max_block=60` |
 | `signal_slice` | Drop entire channels for the day, either random channels or a whole device group (iPhone / Watch). | `mask_ratio=0.5`, groups `iphone=[0,1,2]`, `watch=[3,4,5,6]` |
 
 **Tier 2 — Semantic (physiologically meaningful periods)**
