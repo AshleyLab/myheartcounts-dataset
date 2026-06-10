@@ -114,7 +114,7 @@ dirs. To re-run just Phase 1 + 2 (e.g., to try a different baseline):
 ```bash
 source jobs/sherlock/imputation_eval/_common.sh
 # edit sweep_methods.yaml: change `baseline_method`, `n_boot`, etc.
-python scripts/paper_results/run_paper_pipeline.py \
+python scripts/paper_results/imputation/run_paper_pipeline.py \
   --sweep-config jobs/sherlock/imputation_eval/sweep_methods.yaml \
   --skip-eval
 ```
@@ -122,7 +122,7 @@ python scripts/paper_results/run_paper_pipeline.py \
 To re-aggregate from an existing `bootstrap_draws.parquet` (Phase 2 only):
 
 ```bash
-python scripts/paper_results/run_paper_pipeline.py \
+python scripts/paper_results/imputation/run_paper_pipeline.py \
   --sweep-config jobs/sherlock/imputation_eval/sweep_methods.yaml \
   --skip-eval --skip-phase1
 ```

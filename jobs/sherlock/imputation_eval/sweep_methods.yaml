@@ -8,7 +8,7 @@
 # file works for any Sherlock user without editing.
 #
 # Consumed by:
-#   scripts/paper_results/run_paper_pipeline.py \
+#   scripts/paper_results/imputation/run_paper_pipeline.py \
 #       --sweep-config jobs/sherlock/imputation_eval/sweep_methods.yaml \
 #       --skip-eval
 #

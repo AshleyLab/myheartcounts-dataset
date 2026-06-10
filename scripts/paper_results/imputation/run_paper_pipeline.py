@@ -24,12 +24,12 @@ non-zero so the user can resume manually.
 
 Usage::
 
-    python scripts/paper_results/run_paper_pipeline.py \
+    python scripts/paper_results/imputation/run_paper_pipeline.py \
         --sweep-config configs/paper/sweep_methods.yaml
 
 Stages can be skipped (e.g. to re-run aggregation only)::
 
-    python scripts/paper_results/run_paper_pipeline.py \
+    python scripts/paper_results/imputation/run_paper_pipeline.py \
         --sweep-config configs/paper/sweep_methods.yaml \
         --skip-eval --skip-phase1
 """
@@ -53,8 +53,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Resolve repo root from this script's location.
-REPO_ROOT = Path(__file__).resolve().parents[2]
+# Resolve repo root from this script's location
+# (scripts/paper_results/imputation/run_paper_pipeline.py -> parents[3]).
+REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 def _expand_env_vars(obj: Any) -> Any:
@@ -175,7 +176,7 @@ def _write_manifest(
 
 
 def _phase1_bootstrap(cfg: dict, dry_run: bool, *, strict: bool = False) -> None:
-    script = REPO_ROOT / "scripts" / "paper_results" / "bootstrap_imputation_draws.py"
+    script = REPO_ROOT / "scripts" / "paper_results" / "imputation" / "bootstrap_imputation_draws.py"
     cmd = [
         sys.executable, str(script),
         "--method-dirs", cfg["manifest_path"],
@@ -230,7 +231,7 @@ def _method_filter_args(cfg: dict) -> list[str]:
 
 
 def _phase2_aggregate(cfg: dict, dry_run: bool, *, strict: bool = False) -> None:
-    script = REPO_ROOT / "scripts" / "paper_results" / "aggregate_imputation_paper_metrics.py"
+    script = REPO_ROOT / "scripts" / "paper_results" / "imputation" / "aggregate_imputation_paper_metrics.py"
     cmd = [
         sys.executable, str(script),
         "--draws", cfg["draws_path"],

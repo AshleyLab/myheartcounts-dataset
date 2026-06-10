@@ -5,7 +5,7 @@
 # strings). Methods whose configs require checkpoints (``release_dir``) MUST
 # supply that path here, otherwise the run will fail.
 #
-# Consumed by scripts/paper_results/run_paper_pipeline.py.
+# Consumed by scripts/paper_results/imputation/run_paper_pipeline.py.
 
 output_root: results/paper        # all paper artifacts land here
 runs_root: results/paper/runs     # one per-method run dir under this
