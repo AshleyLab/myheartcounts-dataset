@@ -17,7 +17,8 @@ with subgroup values ``g`` (the ``unknown`` bucket is a real subgroup, kept),
 ratio clips ``[ℓ, u]``::
 
     D_{r,m}^{(G)} = max_g E_{r,m}^{(g)} − min_g E_{r,m}^{(g)}     (same for b)
-    drop task r from G if D_{r,b}^{(G)} ≤ 0 or any D is NaN
+    both gaps are taken over the common method∩baseline subgroup set per task
+    drop task r from G if <2 common subgroups, D_{r,b}^{(G)} ≤ 0, or any D is NaN
     ρ_r          = clip( D_{r,m}^{(G)} / D_{r,b}^{(G)}, ℓ, u )
     S^{(G)}_m    = 1 − exp( mean_r ln ρ_r )
     S_fair_m     = (1/|A|) · Σ_{G∈A} S^{(G)}_m     (macro-average across attrs)
@@ -89,39 +90,75 @@ def _per_attribute_skill_keyed(
     """Per-(model, *extra_keys) fairness skill score for one attribute.
 
     ``df_attr`` is the long per-subgroup error frame for one ``subgroup_attr``
-    value (with at least two ``subgroup_value`` levels). Must contain ``model``,
-    the task columns, ``subgroup_value``, ``E``, plus every column in
-    ``extra_keys`` (``"draw"`` for the bootstrap path; ``[]`` for the point
-    estimate). Returns one row per ``(model, *extra_keys)`` with columns
+    value. Must contain ``model``, the task columns, ``subgroup_value``, ``E``,
+    plus every column in ``extra_keys`` (``"draw"`` for the bootstrap path;
+    ``[]`` for the point estimate).
+
+    For each task ``r`` and key tuple ``k = (*extra_keys)``, we restrict to the
+    **common subgroup set** that both the model and the baseline have data for
+    in that task/key, and then::
+
+        D_j = max_g E_j^{(g)} - min_g E_j^{(g)}     (over common subgroups)
+        D_b = same, for the baseline b
+        ratio = clip(D_j / D_b, clip_lower, clip_upper)
+
+    Drop tasks where fewer than two common subgroups exist, where the baseline
+    is already perfectly fair (D_b <= 0), or where any D is NaN. Then
+    ``S_attr = 1 - exp(mean_r log(ratio))``.
+
+    The >=2-common-subgroup guard prevents a known failure mode where a model
+    that happens to have data for only one subgroup of a task/draw would yield
+    ``D_j = max - min = 0`` by construction, get clipped to ``clip_lower`` after
+    dividing by ``D_b > 0``, and earn a near-perfect ``S_attr ~= 1 - clip_lower``
+    for free. This can happen in the bootstrap path (per-draw row drop-outs from
+    non-finite metrics, missing manifest coverage) even when the upstream
+    subgroup universe is logically the same across models.
+
+    Returns one row per ``(model, *extra_keys)`` with columns
     ``[model, *extra_keys, S_attr, n_tasks]``.
     """
     task_cols = _task_cols()
-    group_keys = [*extra_keys, "model", *task_cols]
-    grouped = df_attr.groupby(group_keys, observed=True)["E"]
-    D = (grouped.max() - grouped.min()).rename("D").reset_index()
+    task_keys = [*extra_keys, *task_cols]
+    model_task_keys = [*task_keys, "model"]
 
-    # Split baseline rows from model rows on the task keys (and extra_keys, e.g.
-    # draw); merge so each model row carries its paired D_b. The baseline stays
-    # on both sides so its self-ratio (D_b/D_b = 1 -> S = 0) lands in the output.
-    merge_keys = [*extra_keys, *task_cols]
-    bl = D[D["model"] == baseline_method].drop(columns=["model"]).rename(columns={"D": "D_b"})
-    jm = D.rename(columns={"D": "D_j"})
-    merged = jm.merge(bl, on=merge_keys, how="inner")
-
-    # Drop tasks where the baseline is already perfectly fair (D_b <= 0) or
-    # where either disparity is NaN. max-min is non-negative by construction.
-    keep = (
-        (merged["D_b"] > 0) & merged["D_b"].notna() & merged["D_j"].notna() & (merged["D_j"] >= 0)
-    )
-    merged = merged.loc[keep].copy()
-    if merged.empty:
+    # Pair each model row with the baseline's E for the same (task,
+    # subgroup_value). The inner merge restricts every (model, task) row set to
+    # subgroups the baseline also has data for, so D_j and D_b are computed over
+    # the SAME subgroup set per task, and excludes orphan rows that would
+    # collapse D_j to 0 when a model has only one subgroup row for a task/draw.
+    bl_rows = df_attr.loc[
+        df_attr["model"] == baseline_method,
+        [*task_keys, "subgroup_value", "E"],
+    ].rename(columns={"E": "E_b"})
+    aligned = df_attr.merge(bl_rows, on=[*task_keys, "subgroup_value"], how="inner")
+    if aligned.empty:
         return pd.DataFrame(columns=["model", *extra_keys, "S_attr", "n_tasks"])
 
-    ratio = (merged["D_j"] / merged["D_b"]).clip(lower=clip_lower, upper=clip_upper)
-    merged["log_ratio"] = np.log(ratio.to_numpy())
+    grouped = aligned.groupby(model_task_keys, observed=True)
+    D = pd.DataFrame(
+        {
+            "D_j": grouped["E"].max() - grouped["E"].min(),
+            "D_b": grouped["E_b"].max() - grouped["E_b"].min(),
+            "n_sub": grouped["subgroup_value"].nunique(),
+        }
+    ).reset_index()
+
+    # Drop tasks with <2 common (model ∩ baseline) subgroups (max-min is
+    # degenerate and would be rewarded as "perfect fairness" after clipping),
+    # where the baseline is already perfectly fair (D_b <= 0), or where any D is
+    # NaN. max-min is non-negative by construction.
+    keep = (
+        (D["n_sub"] >= 2) & (D["D_b"] > 0) & D["D_b"].notna() & D["D_j"].notna() & (D["D_j"] >= 0)
+    )
+    D = D.loc[keep].copy()
+    if D.empty:
+        return pd.DataFrame(columns=["model", *extra_keys, "S_attr", "n_tasks"])
+
+    ratio = (D["D_j"] / D["D_b"]).clip(lower=clip_lower, upper=clip_upper)
+    D["log_ratio"] = np.log(ratio.to_numpy())
 
     agg = (
-        merged.groupby(["model", *extra_keys], observed=True)
+        D.groupby(["model", *extra_keys], observed=True)
         .agg(log_ratio_mean=("log_ratio", "mean"), n_tasks=("log_ratio", "size"))
         .reset_index()
     )

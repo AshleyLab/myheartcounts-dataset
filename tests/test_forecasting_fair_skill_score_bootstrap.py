@@ -193,3 +193,90 @@ def test_single_subgroup_attr_dropped(tmp_path):
     assert "sex" not in scopes
     assert "age_group" in scopes
     assert FAIRNESS_OVERALL_SCOPE in scopes
+
+
+def _long_row(model, attr, value, e, *, group="continuous", metric="mae", ch_idx=0, ch_name="ch_0"):
+    """One row of the long per-subgroup error frame consumed by the metric."""
+    return {
+        "model": model,
+        "group": group,
+        "metric": metric,
+        "channel_idx": ch_idx,
+        "channel_name": ch_name,
+        "subgroup_attr": attr,
+        "subgroup_value": value,
+        "E": float(e),
+    }
+
+
+def test_single_subgroup_row_for_model_does_not_score_perfect_fair_skill():
+    """A model with only one subgroup row for a task must not score perfect fairness.
+
+    Old behaviour: D_j = max - min = 0 over a single row -> ratio = 0 / D_b,
+    clipped to ``clip_lower`` -> ``S_attr ~= 1 - clip_lower`` (~0.99). With the
+    fix the task is dropped from the geometric mean because the model ∩ baseline
+    subgroup set has fewer than two members.
+    """
+    rows = []
+    # (ch_idx, ch_name, hi_baseline, hi_model): two tasks, each with a real gap.
+    tasks = [(0, "ch_0", 2.0, 1.8), (1, "ch_1", 1.5, 1.4)]
+    for ch_idx, ch_name, hi_b, hi_m in tasks:
+        # age_group: both baseline and model_x cover two groups (valid scope).
+        for model, lo, hi in [("baseline", 1.0, hi_b), ("model_x", 0.9, hi_m)]:
+            rows.append(_long_row(model, "age_group", "18-29", lo, ch_idx=ch_idx, ch_name=ch_name))
+            rows.append(_long_row(model, "age_group", "30-39", hi, ch_idx=ch_idx, ch_name=ch_name))
+        # sex: baseline covers male+female; model_x covers ONLY male.
+        rows.append(_long_row("baseline", "sex", "male", 1.0, ch_idx=ch_idx, ch_name=ch_name))
+        rows.append(_long_row("baseline", "sex", "female", hi_b, ch_idx=ch_idx, ch_name=ch_name))
+        rows.append(_long_row("model_x", "sex", "male", 0.9, ch_idx=ch_idx, ch_name=ch_name))
+
+    out = compute_fair_skill_scores(pd.DataFrame(rows), baseline_method="baseline")
+
+    # model_x's sex tasks all collapse to a single common subgroup -> dropped.
+    sex_model = out[(out["scope"] == "sex") & (out["model"] == "model_x")]
+    if not sex_model.empty:
+        score = float(sex_model["fair_skill_score"].iloc[0])
+        assert score < 0.5, (
+            f"model_x with a single sex subgroup got bogus near-perfect "
+            f"fair_skill_score={score} (expected the task to be dropped)"
+        )
+
+    # Sanity: model_x is meaningfully present elsewhere (its age_group scope is
+    # valid), so its absence from overall is specifically the empty sex scope.
+    age_models = set(out.loc[out["scope"] == "age_group", "model"].tolist())
+    assert "model_x" in age_models
+
+    overall_models = set(out.loc[out["scope"] == FAIRNESS_OVERALL_SCOPE, "model"].tolist())
+    assert "model_x" not in overall_models, (
+        "model_x should be excluded from overall because its sex scope is empty"
+    )
+
+
+def test_model_baseline_subgroup_sets_aligned():
+    """D_j and D_b are computed over the common model∩baseline subgroup set per task.
+
+    The baseline covers three age buckets {A, B, C} but the model only {A, B}.
+    The fair-skill ratio must use D_b = E_A - E_B (the common pair), not the
+    full E_A - E_C, so the model is neither rewarded nor penalised by a subgroup
+    it never reported on.
+    """
+    rows = []
+    # C is an outlier: D_b over {A,B,C} = 4.0, but D_b over the common {A,B} = 0.2.
+    for model, e_a, e_b, e_c in [
+        ("baseline", 1.0, 1.2, 5.0),
+        ("model_x", 0.6, 0.8, None),  # model_x only has A, B
+    ]:
+        for value, e in [("18-29", e_a), ("30-39", e_b), ("40-49", e_c)]:
+            if e is None:
+                continue
+            rows.append(_long_row(model, "age_group", value, e))
+
+    out = compute_fair_skill_scores(pd.DataFrame(rows), baseline_method="baseline")
+    age = out[out["scope"] == "age_group"].set_index("model")
+
+    # Aligned (18-29, 30-39): D_j = 0.2, D_b = 0.2 -> ratio 1 -> S_attr = 0,
+    # NOT the 4.0 baseline gap from the full {A, B, C} set.
+    assert abs(float(age.loc["model_x", "fair_skill_score"]) - 0.0) < 1e-9, (
+        "alignment failed: model_x's D_b should be 0.2 (common subgroups), "
+        "not 4.0 (baseline-only full set)"
+    )
