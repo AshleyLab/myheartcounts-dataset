@@ -129,11 +129,6 @@
     "Other": 7,
     "I prefer not to indicate an ethnicity": 8
   },
-  "field_Gender": {
-    "Male": 0,
-    "Female": 1,
-    "Other": 2
-  },
   "field_healthcare_worker": {
     "1": 1,
     "2": 2,
