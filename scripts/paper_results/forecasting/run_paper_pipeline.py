@@ -182,11 +182,48 @@ def _phase_skill_rank(cfg: dict, selected: dict[str, str], dry_run: bool) -> Non
 
 
 def _phase_bootstrap(cfg: dict, selected: dict[str, str], dry_run: bool) -> None:
-    """Phase 3 (scope B) — paired bootstrap CIs + fairness. Not yet implemented."""
-    raise SystemExit(
-        "bootstrap.enabled=true, but Phase 3 (bootstrap CIs + fairness) is not implemented yet "
-        "(scope B). See the forecasting paper-pipeline plan; set bootstrap.enabled=false to run A."
+    """Phase 3 — paired user-level bootstrap CIs for skill score + mean rank.
+
+    Fairness CIs remain out of scope here (the ``bootstrap.fairness``/``age_bins``
+    keys are reserved for a follow-up). Writes two CSVs alongside the Phase-2
+    point summaries.
+    """
+    sys.path.insert(0, str(REPO_ROOT / "src"))
+    from forecasting_evaluation.metrics import metric_spec as _spec
+    from forecasting_evaluation.metrics.bootstrap_skill_rank import bootstrap_skill_rank
+
+    bs = cfg.get("bootstrap") or {}
+    out = Path(cfg["output_root"])
+    out.mkdir(parents=True, exist_ok=True)
+    models = {name: {"path": path, "display_name": name} for name, path in selected.items()}
+
+    n_boot = int(bs.get("n_boot", 1000))
+    seed = int(bs.get("seed", 42))
+    ci_level = float(bs.get("ci_level", 0.95))
+    logger.info(
+        "Phase 3 bootstrap: B=%d seed=%d ci=%.2f over %d models (baseline=%s)",
+        n_boot, seed, ci_level, len(models), cfg["baseline"],
     )
+    if dry_run:
+        return
+
+    tables = bootstrap_skill_rank(
+        models=models,
+        baseline_model=cfg["baseline"],
+        continuous_metrics=cfg.get("continuous_metrics", ["mae"]),
+        binary_metrics=cfg.get("binary_metrics", ["auprc"]),
+        continuous_channel_indices=_spec.CONTINUOUS_CHANNELS,
+        binary_channel_indices=_spec.BINARY_CHANNELS,
+        binary_groups=[(name, tuple(idx)) for name, idx in _spec.BINARY_GROUPS],
+        n_boot=n_boot,
+        seed=seed,
+        ci_level=ci_level,
+    )
+    skill_path = out / "forecasting_skill_score_bootstrap.csv"
+    rank_path = out / "forecasting_grouped_metric_rank_bootstrap.csv"
+    tables["skill_scores"].to_csv(skill_path, index=False)
+    tables["avg_rankings"].to_csv(rank_path, index=False)
+    logger.info("Wrote bootstrap CIs: %s , %s", skill_path, rank_path)
 
 
 def main() -> int:
