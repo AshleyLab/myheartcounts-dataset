@@ -1,6 +1,7 @@
 """Seasonal naive baseline forecasting model."""
 
 import random
+import warnings
 
 import numpy as np
 
@@ -14,6 +15,7 @@ class SeasonalNaiveModel(BasePredictionModel):
         self,
         seed: int = 42,
         seasonal: int = 24,
+        max_lookback_seasons: int = 7,
         quantile_levels: tuple[float, ...] | list[float] | np.ndarray = (
             0.1,
             0.2,
@@ -31,11 +33,14 @@ class SeasonalNaiveModel(BasePredictionModel):
         Args:
             seed: Random seed for reproducibility.
             seasonal: Seasonal cycle length in hours.
+            max_lookback_seasons: Maximum number of seasonal cycles to search back
+                when the most recent season is missing (NaN) at a given hour-of-day.
             quantile_levels: Quantile levels returned alongside point forecasts.
         """
         # Set random seeds for reproducibility
         self.seed = seed
         self.seasonal = seasonal
+        self.max_lookback_seasons = max_lookback_seasons
         self.quantile_levels = self._validate_quantile_levels(quantile_levels)
         np.random.seed(seed)
         random.seed(seed)
@@ -70,33 +75,35 @@ class SeasonalNaiveModel(BasePredictionModel):
         # Initialize prediction array
         predictions = np.zeros((n_features, prediction_length))
 
-        # Get the most recent complete seasonal period, skip if all zeros
-        # Shape: (n_features, effective_seasonal)
-        last_season = None
-        offset = 0
-        while offset * effective_seasonal < history_length:
-            start_idx = max(0, history_length - effective_seasonal * (offset + 1))
-            end_idx = history_length - effective_seasonal * offset
-            candidate_season = history[:, start_idx:end_idx]
+        # Per-channel terminal fallback: the user's own historical mean for that
+        # channel. Finite wherever any history exists (always true at scored cells,
+        # where the target is present). A channel with no history at all degrades to
+        # 0.0 (the global mean in z-scored space) so a finite value is guaranteed.
+        with warnings.catch_warnings():
+            # All-NaN channels legitimately produce a RuntimeWarning here.
+            warnings.simplefilter("ignore", category=RuntimeWarning)
+            channel_mean = np.nanmean(history, axis=1)
+        channel_mean = np.where(np.isfinite(channel_mean), channel_mean, 0.0)
 
-            # Check if all zeros
-            if np.any(candidate_season != 0):
-                last_season = candidate_season
-                break
-            offset += 1
-
-        # If all historical data is zero, use the most recent period (even if all zeros)
-        if last_season is None:
-            last_season = history[:, -effective_seasonal:]
-
-        # Adjust effective_seasonal to match the actual season length obtained
-        effective_seasonal = last_season.shape[1]
-
+        # NaN-aware seasonal cascade. For each forecast position k, take the value at
+        # the same hour-of-day one season back (t-24); if NaN, walk further back
+        # (t-48, t-72, ...) up to ``max_lookback_seasons`` and use the first finite
+        # value. If every seasonal lag is missing, fall back to the channel mean.
+        n_seasons = min(self.max_lookback_seasons, history_length // effective_seasonal)
         for k in range(prediction_length):
-            # Use modulo operation for cyclic reference
-            # e.g., k=0, 24, 48... will all map to the same position in last_season
-            idx = k % effective_seasonal
-            predictions[:, k] = last_season[:, idx]
+            phase = k % effective_seasonal
+            filled = np.zeros(n_features, dtype=bool)
+            for j in range(1, n_seasons + 1):
+                src = history_length - j * effective_seasonal + phase
+                if src < 0:
+                    break
+                candidate = history[:, src]
+                take = ~filled & np.isfinite(candidate)
+                predictions[take, k] = candidate[take]
+                filled |= take
+                if filled.all():
+                    break
+            predictions[~filled, k] = channel_mean[~filled]
 
         # Point predictions
         # Shape: (n_features, prediction_length)
@@ -147,7 +154,11 @@ class SeasonalNaiveModel(BasePredictionModel):
             n_complete_seasons,
             effective_seasonal,
         )
-        valid_season_mask = np.any(seasons != 0, axis=(0, 2))
+        # Drop only seasons with no finite observations at all; per-position
+        # finiteness is enforced in the loop below. Mirrors the point cascade:
+        # NaN — not zero — marks missingness, so legitimately-zero hours remain in
+        # the empirical pool instead of being discarded as "empty".
+        valid_season_mask = np.any(np.isfinite(seasons), axis=(0, 2))
         valid_seasons = seasons[:, valid_season_mask, :]
 
         if valid_seasons.shape[1] == 0:
