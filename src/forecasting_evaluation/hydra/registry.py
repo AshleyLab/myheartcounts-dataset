@@ -75,7 +75,6 @@ def _apply_release_manifest(
 
 _KNOWN_TYPES = (
     "seasonal_naive",
-    "seasonal_naive_average_history",
     "autoARIMA",
     "autoETS",
     "chronos2",

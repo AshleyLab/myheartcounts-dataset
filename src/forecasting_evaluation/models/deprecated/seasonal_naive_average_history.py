@@ -1,6 +1,28 @@
-"""Seasonal naive baseline using averaged historical seasonal cycles."""
+"""Seasonal naive baseline using averaged historical seasonal cycles.
+
+.. deprecated::
+    **Removed from the Track-3 leaderboard.** This baseline is no longer wired
+    into the active model registry / config schema; it is archived here for
+    reference only.
+
+    Why it was dropped: the original implementation averaged the historical
+    seasons with plain ``np.mean`` and selected "valid" seasons with a ``!= 0``
+    test (which treats ``NaN`` as data, since ``NaN != 0`` is ``True``). With
+    gappy wearable data, a single missing value anywhere in a channel's history
+    propagated through ``np.mean`` and turned the whole forecast position into
+    ``NaN``. ~75-99% of its predictions became ``NaN``, those rows were silently
+    dropped at the skill/rank aggregation step, and the model was scored on a
+    small, self-selected subset of pristine-history users — producing a
+    spuriously high skill score on a non-representative cohort.
+
+    The averaging is fixed below (``np.nanmean`` + a finite-aware season check)
+    so the archived model computes what its name implies — a per-(channel,
+    hour-of-day) average over the historical days that actually have data — but
+    it remains deprecated and is not part of the evaluation surface.
+"""
 
 import random
+import warnings
 
 import numpy as np
 
@@ -69,13 +91,21 @@ class SeasonalNaiveAverageModel(BasePredictionModel):
 
             candidate_season = history[:, start_idx:end_idx]
 
-            if np.any(candidate_season != 0):
+            # Keep a season only if it carries actual (finite, non-zero) data.
+            # ``NaN != 0`` is ``True``, so the original ``!= 0`` test wrongly
+            # admitted all-NaN seasons; gating on ``isfinite`` avoids that.
+            if np.any(np.isfinite(candidate_season) & (candidate_season != 0)):
                 valid_seasons.append(candidate_season)
 
             offset += 1
 
         if valid_seasons:
-            averaged_season = np.mean(np.stack(valid_seasons, axis=0), axis=0)
+            # ``nanmean`` averages each (channel, hour) over the historical days
+            # that have a value there, instead of letting one missing day poison
+            # the whole position (the bug that prompted deprecation).
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", category=RuntimeWarning)
+                averaged_season = np.nanmean(np.stack(valid_seasons, axis=0), axis=0)
         else:
             averaged_season = history[:, -effective_seasonal:]
 
@@ -84,5 +114,5 @@ class SeasonalNaiveAverageModel(BasePredictionModel):
             predictions[:, k] = averaged_season[:, idx]
 
         point_result = predictions
-        
+
         return point_result, quantiles_result

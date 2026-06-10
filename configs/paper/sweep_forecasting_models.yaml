@@ -7,7 +7,6 @@
 models:
   baselines:
     - seasonal_naive
-    - seasonal_naive_average_history
     - autoARIMA
     - autoETS
   foundational:

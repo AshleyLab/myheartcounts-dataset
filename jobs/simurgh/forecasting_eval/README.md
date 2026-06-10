@@ -3,8 +3,8 @@
 SLURM wrappers for the public Hydra forecasting CLI (`mhc-forecast-eval`) plus the
 one-command **paper pipeline** that produces the full Track-3 leaderboard.
 
-Models: CPU baselines (`seasonal_naive`, `seasonal_naive_average_history`,
-`autoARIMA`, `autoETS`) and GPU models (`chronos2`, `toto`, `dlinear`, `mixlinear`,
+Models: CPU baselines (`seasonal_naive`, `autoARIMA`, `autoETS`) and GPU models
+(`chronos2`, `toto`, `dlinear`, `mixlinear`,
 `segrnn`). Each `mhc-forecast-eval` run emits point **and** binary metrics
 (`auprc/auroc/f1`) co-located under `<model>_metrics/<RUN_LABEL>/`, which the
 Layer-2 summaries (skill score + mean rank) read directly.
@@ -12,7 +12,7 @@ Layer-2 summaries (skill score + mean rank) read directly.
 ## Files
 
 **Per-model eval jobs** — each writes `<model>_metrics/<RUN_LABEL>/{point + binary}`:
-- `run_naive.sbatch` — `seasonal_naive` + `seasonal_naive_average_history` (CPU).
+- `run_naive.sbatch` — `seasonal_naive` (CPU).
 - `run_autoets.sbatch` / `run_autoarima.sbatch` — `autoETS` / `autoARIMA` (CPU; autoARIMA resumable).
 - `run_chronos2.sbatch` / `run_toto.sbatch` — foundation models, zero-shot + fine-tuned variants (GPU).
 - `run_dlinear.sbatch` / `run_mixlinear.sbatch` / `run_segrnn.sbatch` — retrained PyPOTS

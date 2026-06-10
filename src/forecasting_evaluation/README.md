@@ -37,13 +37,13 @@ Multirun:
 
 ```bash
 mhc-forecast-eval --multirun \
-  model=seasonal_naive,seasonal_naive_average_history,autoARIMA,autoETS
+  model=seasonal_naive,autoARIMA,autoETS
 ```
 
 The public Hydra config tree lives at `configs/forecasting/`:
 
-- `model/`: `seasonal_naive`, `seasonal_naive_average_history`, `autoARIMA`,
-  `autoETS`, `chronos2`, `toto`, `mixlinear`, `dlinear`, `segrnn`
+- `model/`: `seasonal_naive`, `autoARIMA`, `autoETS`, `chronos2`, `toto`,
+  `mixlinear`, `dlinear`, `segrnn`
 - `data/`: trajectory dataset paths, split file, day mask, sample index
 - `forecasting/`: horizon and daily start-hour offset
 - `features/`: current 19-channel feature selection
@@ -212,14 +212,12 @@ Model configuration is single-model:
 
 ```yaml
 model:
-  type: seasonal_naive | seasonal_naive_average_history | autoARIMA | autoETS | chronos2 | toto | mixlinear | dlinear | segrnn
+  type: seasonal_naive | autoARIMA | autoETS | chronos2 | toto | mixlinear | dlinear | segrnn
   name: str | null
   release_dir: str | null
   seasonal_naive:
     season_length: int
     quantile_levels: list[float]
-  seasonal_naive_average_history:
-    season_length: int
   autoARIMA:
     start_p: int
     start_q: int
@@ -640,7 +638,6 @@ Implementation notes:
 Supported `model.type` values:
 
 - `seasonal_naive`
-- `seasonal_naive_average_history`
 - `autoARIMA`
 - `autoETS`
 - `chronos2`

@@ -23,7 +23,6 @@ class DataConfig:
 
 ModelType = Literal[
     "seasonal_naive",
-    "seasonal_naive_average_history",
     "autoARIMA",
     "autoETS",
     "chronos2",
@@ -41,13 +40,6 @@ class SeasonalNaiveModelConfig:
     quantile_levels: list[float] = field(
         default_factory=lambda: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
     )
-
-
-@dataclass
-class SeasonalNaiveAverageHistoryModelConfig:
-    """seasonal_naive_average_history model hyperparameters."""
-
-    season_length: int = 24
 
 
 @dataclass
@@ -172,9 +164,6 @@ class ForecastingModelConfig:
     release_dir: str | None = None
 
     seasonal_naive: SeasonalNaiveModelConfig = field(default_factory=SeasonalNaiveModelConfig)
-    seasonal_naive_average_history: SeasonalNaiveAverageHistoryModelConfig = field(
-        default_factory=SeasonalNaiveAverageHistoryModelConfig
-    )
     autoARIMA: AutoARIMAModelConfig = field(default_factory=AutoARIMAModelConfig)
     autoETS: AutoETSModelConfig = field(default_factory=AutoETSModelConfig)
     chronos2: Chronos2ModelConfig = field(default_factory=Chronos2ModelConfig)

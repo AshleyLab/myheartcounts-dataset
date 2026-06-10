@@ -16,7 +16,7 @@ echo "Start: $(date)"
 echo "Host: $(hostname)"
 echo "Runs root: ${RUNS_ROOT}"
 
-for model in seasonal_naive seasonal_naive_average_history autoARIMA autoETS; do
+for model in seasonal_naive autoARIMA autoETS; do
     echo ""
     echo "=== Running ${model} ==="
     run_forecast_model "${model}" "$@"

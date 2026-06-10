@@ -14,7 +14,7 @@ set -euo pipefail
 source "${SLURM_SUBMIT_DIR:-$(pwd)}/jobs/simurgh/forecasting_eval/_common.sh"
 
 echo "Start: $(date)  Host: $(hostname)"
-for model in seasonal_naive seasonal_naive_average_history; do
+for model in seasonal_naive; do
     echo ""
     echo "=== Running ${model} ==="
     run_forecast_model "${model}" "$@"

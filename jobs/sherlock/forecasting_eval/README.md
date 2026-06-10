@@ -6,8 +6,8 @@ This directory contains SLURM wrappers for the public Hydra forecasting CLI,
 ## Files
 
 - `_common.sh`: shared environment setup, repo/data paths, and output roots.
-- `run_baselines.sbatch`: CPU job for `seasonal_naive`,
-  `seasonal_naive_average_history`, `autoARIMA`, and `autoETS`.
+- `run_baselines.sbatch`: CPU job for `seasonal_naive`, `autoARIMA`, and
+  `autoETS`.
 - `run_chronos2.sbatch`, `run_toto.sbatch`, `run_mixlinear.sbatch`,
   `run_dlinear.sbatch`, `run_segrnn.sbatch`: one GPU job per model family.
 - `aggregate_results.sbatch`: summary aggregation over completed metric outputs.

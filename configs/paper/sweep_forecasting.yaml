@@ -40,7 +40,6 @@ bootstrap:
 
 models:
   - {name: seasonal_naive, type: seasonal_naive}
-  - {name: seasonal_naive_average_history, type: seasonal_naive_average_history}
   - {name: autoARIMA, type: autoARIMA}
   - {name: autoETS, type: autoETS}
   - {name: chronos2_zeroshot, type: chronos2}

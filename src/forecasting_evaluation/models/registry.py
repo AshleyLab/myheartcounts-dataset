@@ -83,14 +83,6 @@ def _create_model(
         )
         model.model_name = model_name
 
-    elif config.type == "seasonal_naive_average_history":
-        seasonal_hist_cfg = config.seasonal_naive_average_history
-        from forecasting_evaluation.models.naive.seasonal_naive_average_history import (
-            SeasonalNaiveAverageModel,
-        )
-        model = SeasonalNaiveAverageModel(seed=seed, seasonal=seasonal_hist_cfg.season_length)
-        model.model_name = model_name
-
     elif config.type == "autoARIMA":
         arima_cfg = config.autoARIMA
         from forecasting_evaluation.models.statistic.autoARIMA import AutoARIMAModel
