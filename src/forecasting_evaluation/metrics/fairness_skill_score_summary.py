@@ -20,7 +20,6 @@ errors.
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import json
 import sys
 from pathlib import Path
@@ -48,16 +47,10 @@ from forecasting_evaluation.metrics.skill_score_summary import (  # noqa: E402
 DEFAULT_AGE_BINS = (18, 30, 40, 50, 60)
 DEFAULT_DEMOGRAPHIC_ATTRS = ("age_group", "sex")
 
-
-def _load_compute_static_age():
-    """Load ``compute_static_age`` from the repository script."""
-    script_path = REPO_ROOT / "scripts" / "build_static_age.py"
-    spec = importlib.util.spec_from_file_location("_forecasting_static_age", script_path)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"Unable to load {script_path}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module.compute_static_age
+# Enrollment exposes only a birth *year*, so age is anchored to a single
+# reference date shared with Track 1 (downstream_evaluation.config.LABEL_REFERENCE_DATE),
+# i.e. age = AGE_REFERENCE_DATE.year − birth_year for every user.
+AGE_REFERENCE_DATE = "2020-06-01"
 
 
 def _last_value(entries: dict[str, Any], user_id: str) -> Any | None:
@@ -107,8 +100,14 @@ def load_user_demographics(
     labels_path: str | Path,
     enrollment_path: str | Path,
     age_bins: tuple[int, ...] = DEFAULT_AGE_BINS,
+    reference_date: str = AGE_REFERENCE_DATE,
 ) -> dict[str, dict[str, str]]:
-    """Load age-group and sex labels for the requested users."""
+    """Load age-group and sex labels for the requested users.
+
+    Age is ``reference_date.year − birth_year`` (enrollment exposes only a birth
+    *year*), anchoring every user to the same reference as Track 1. Sex is the
+    latest ``BiologicalSex`` label value.
+    """
     labels_file = Path(labels_path)
     enrollment_file = Path(enrollment_path)
     with labels_file.open("r", encoding="utf-8") as file:
@@ -116,18 +115,17 @@ def load_user_demographics(
     with enrollment_file.open("r", encoding="utf-8") as file:
         enrollment = json.load(file)
 
-    compute_static_age = _load_compute_static_age()
-    age_entries = compute_static_age(labels_data, enrollment)
+    reference_year = pd.Timestamp(reference_date).year
     sex_entries = labels_data.get("BiologicalSex", {})
 
     demographics: dict[str, dict[str, str]] = {}
     for user_id in sorted(user_ids):
-        age_value = _last_value(age_entries, user_id)
+        record = enrollment.get(user_id)
+        birth_year = record.get("birth_year") if isinstance(record, dict) else None
+        age = reference_year - int(birth_year) if birth_year else None
         sex_value = _last_value(sex_entries, user_id)
         demographics[user_id] = {
-            "age_group": bin_age(
-                float(age_value) if age_value is not None else None, age_bins=age_bins
-            ),
+            "age_group": bin_age(age, age_bins=age_bins),
             "sex": normalize_sex(sex_value),
         }
     return demographics

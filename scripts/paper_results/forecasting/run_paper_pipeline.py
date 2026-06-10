@@ -233,6 +233,22 @@ def _phase_bootstrap(cfg: dict, selected: dict[str, str], dry_run: bool) -> None
         bootstrap_fair_skill_score,
     )
 
+    # Demographics default to <dataset_root>/labels/ (resolved by the labels API
+    # via MHC_DATA_DIR); the sweep config may override either path explicitly.
+    from labels.api import ENROLLMENT_PATH as _ENROLL_DEFAULT
+    from labels.api import LABELS_PATH as _LABELS_DEFAULT
+
+    labels_path = bs.get("labels_path") or (str(_LABELS_DEFAULT) if _LABELS_DEFAULT else None)
+    enrollment_path = bs.get("enrollment_path") or (
+        str(_ENROLL_DEFAULT) if _ENROLL_DEFAULT else None
+    )
+    if labels_path is None or enrollment_path is None:
+        raise SystemExit(
+            "Fairness bootstrap needs demographics: set bootstrap.labels_path / "
+            "bootstrap.enrollment_path in the sweep, or MHC_DATA_DIR so "
+            "<dataset_root>/labels/{last_labels,enrollment_info}.json resolves."
+        )
+
     logger.info("Phase 3 fairness: disparity-ratio fair skill score (point + bootstrap)")
     ftables = bootstrap_fair_skill_score(
         models=models,
@@ -241,8 +257,8 @@ def _phase_bootstrap(cfg: dict, selected: dict[str, str], dry_run: bool) -> None
         binary_metrics=cfg.get("binary_metrics", ["auprc"]),
         continuous_channel_indices=_spec.CONTINUOUS_CHANNELS,
         binary_channel_indices=_spec.BINARY_CHANNELS,
-        labels_path=bs.get("labels_path", "data/labels/last_labels.json"),
-        enrollment_path=bs.get("enrollment_path", "data/labels/enrollment_info.json"),
+        labels_path=labels_path,
+        enrollment_path=enrollment_path,
         age_bins=tuple(bs.get("age_bins", [18, 30, 40, 50, 60])),
         n_boot=n_boot,
         seed=seed,
@@ -252,7 +268,9 @@ def _phase_bootstrap(cfg: dict, selected: dict[str, str], dry_run: bool) -> None
     fair_boot_path = out / "forecasting_fairness_skill_score_bootstrap.csv"
     ftables["fairness_skill_scores_point"].to_csv(fair_point_path, index=False)
     ftables["fairness_skill_scores"].to_csv(fair_boot_path, index=False)
-    logger.info("Wrote fairness skill score (point + bootstrap): %s , %s", fair_point_path, fair_boot_path)
+    logger.info(
+        "Wrote fairness skill score (point + bootstrap): %s , %s", fair_point_path, fair_boot_path
+    )
 
 
 def main() -> int:
