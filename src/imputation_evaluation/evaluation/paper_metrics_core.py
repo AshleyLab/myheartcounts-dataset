@@ -236,56 +236,82 @@ def _per_attribute_skill_keyed(
     every column listed in ``extra_keys`` (e.g. ``"draw"`` for the
     bootstrap path; ``[]`` for the deterministic point estimate).
 
-    For each task r = (scenario, channel) and key tuple k = (*extra_keys):
+    For each task r = (scenario, channel) and key tuple k = (*extra_keys),
+    we restrict to the **common subgroup set** that both the method and the
+    baseline have data for in that task/key, and then:
         D^{(k)}_{r, j}  =  max_g E^{(k)}_{r, j, g}  -  min_g E^{(k)}_{r, j, g}
         D^{(k)}_{r, b}  =  same, for the baseline method b.
         ratio          =  clip(D_j / D_b,  clip_lower, clip_upper)
-    Drop tasks where D_b ≤ 0 or any D is NaN. Then
+    Drop tasks where fewer than two common subgroups exist, where the
+    baseline is already perfectly fair (D_b ≤ 0), or where any D is NaN.
+    Then
         S^{(k)}_{method}  =  1 - exp(mean_r log(ratio))
+
+    The ≥2-common-subgroup guard prevents a known failure mode where a
+    method that happens to have data for only one subgroup of a task/draw
+    would yield D_j = max - min = 0 by construction, get clipped to
+    ``clip_lower`` after dividing by D_b > 0, and earn a near-perfect
+    ``S_attr ≈ 1 - clip_lower`` for free. This can happen in the bootstrap
+    path (per-draw row drop-outs from non-finite metrics, single-class AUC
+    draws, missing manifest coverage) even when the upstream subgroup
+    universe is logically the same across methods.
 
     Returns one row per (method, *extra_keys) with columns
     ``[method, *extra_keys, S_attr, n_tasks]``.
     """
-    group_keys = [*extra_keys, "method", "scenario", "channel", "channel_type"]
-    grouped = df_attr.groupby(group_keys, observed=True)["E"]
-    D_max = grouped.max()
-    D_min = grouped.min()
-    D = (D_max - D_min).rename("D").reset_index()
+    task_keys = [*extra_keys, "scenario", "channel", "channel_type"]
+    method_task_keys = [*task_keys, "method"]
 
-    # Split baseline rows from model rows on the same task keys (and
-    # extra_keys, e.g. draw); merge so each model row carries its paired D_b.
-    # Keep the baseline on both sides so its self-ratio (D_b/D_b = 1, clipped
-    # → S = 0) lands in the output for parity with compute_skill_scores'
-    # treatment of LOCF in skill_scores.csv / skill_scores_bootstrap.csv.
-    merge_keys = [*extra_keys, "scenario", "channel", "channel_type"]
-    bl = (
-        D[D["method"] == baseline_method]
-        .drop(columns=["method"])
-        .rename(columns={"D": "D_b"})
+    # Pair each method row with the baseline's E for the same (task,
+    # subgroup_value). The inner merge restricts every (method, task) row
+    # set to subgroups the baseline also has data for, so D_j and D_b are
+    # computed over the SAME subgroup set per task. This both aligns the
+    # comparison and excludes orphan rows that would collapse D_j to 0 when
+    # a method has only one subgroup row for a task/draw.
+    bl_rows = (
+        df_attr.loc[
+            df_attr["method"] == baseline_method,
+            [*task_keys, "subgroup_value", "E"],
+        ]
+        .rename(columns={"E": "E_b"})
     )
-    jm = D.rename(columns={"D": "D_j"})
-    merged = jm.merge(bl, on=merge_keys, how="inner")
-
-    # Drop tasks where the baseline is already perfectly fair (D_b ≤ 0)
-    # or where either disparity is NaN. Mirrors compute_skill_scores'
-    # ``e_baseline <= 0 or np.isnan(e_baseline)`` drop rule.
-    keep = (
-        (merged["D_b"] > 0)
-        & merged["D_b"].notna()
-        & merged["D_j"].notna()
-        & (merged["D_j"] >= 0)  # max-min is non-negative by construction
+    aligned = df_attr.merge(
+        bl_rows, on=[*task_keys, "subgroup_value"], how="inner",
     )
-    merged = merged.loc[keep].copy()
-    if merged.empty:
+    if aligned.empty:
         return pd.DataFrame(columns=["method", *extra_keys, "S_attr", "n_tasks"])
 
-    ratio = (merged["D_j"] / merged["D_b"]).clip(
-        lower=clip_lower, upper=clip_upper,
+    grouped = aligned.groupby(method_task_keys, observed=True)
+    D = pd.DataFrame({
+        "D_j": grouped["E"].max() - grouped["E"].min(),
+        "D_b": grouped["E_b"].max() - grouped["E_b"].min(),
+        "n_sub": grouped["subgroup_value"].nunique(),
+    }).reset_index()
+
+    # Drop tasks where:
+    #   - fewer than 2 common (method ∩ baseline) subgroups exist; max-min
+    #     is degenerate (= 0) by construction and would otherwise be
+    #     rewarded as "perfect fairness" after clipping.
+    #   - the baseline is already perfectly fair (D_b ≤ 0).
+    #   - either disparity is NaN.
+    # The D_b > 0 / NaN guards mirror compute_skill_scores'
+    # ``e_baseline <= 0 or np.isnan(e_baseline)`` drop rule.
+    keep = (
+        (D["n_sub"] >= 2)
+        & (D["D_b"] > 0)
+        & D["D_b"].notna()
+        & D["D_j"].notna()
+        & (D["D_j"] >= 0)  # max-min is non-negative by construction
     )
-    merged["log_ratio"] = np.log(ratio.to_numpy())
+    D = D.loc[keep].copy()
+    if D.empty:
+        return pd.DataFrame(columns=["method", *extra_keys, "S_attr", "n_tasks"])
+
+    ratio = (D["D_j"] / D["D_b"]).clip(lower=clip_lower, upper=clip_upper)
+    D["log_ratio"] = np.log(ratio.to_numpy())
 
     agg = (
-        merged.groupby(["method", *extra_keys], observed=True)
+        D.groupby(["method", *extra_keys], observed=True)
         .agg(log_ratio_mean=("log_ratio", "mean"), n_tasks=("log_ratio", "size"))
         .reset_index()
     )

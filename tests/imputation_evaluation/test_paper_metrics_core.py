@@ -160,6 +160,93 @@ def test_method_missing_attribute_drops_from_overall():
     assert "locf" in overall_methods
 
 
+def test_single_subgroup_row_for_method_does_not_score_perfect_fair_skill():
+    """Regression: a method with only one subgroup row for a task must NOT
+    earn near-perfect fair skill.
+
+    Old behaviour: D_j = max - min = 0 over a single row → ratio = 0 / D_b,
+    clipped to ``clip_lower`` → ``S_attr ≈ 1 - clip_lower`` (≈ 0.99). With
+    the fix the task is dropped from the geometric mean because the
+    method ∩ baseline subgroup set has fewer than two members.
+    """
+    errors = _synthetic_subgroup_errors()
+    # Drop one of model_a's sex subgroups on EVERY task — model_a now has
+    # only the "male" row per task for the sex attribute, but the baseline
+    # still has both. Under the old code, every sex task contributes
+    # log(clip_lower) to model_a's mean → S_attr ≈ 0.99. Under the fix,
+    # n_sub_common = 1 on every sex task → all dropped → no sex row emitted
+    # for model_a, so it's excluded from the macro-average.
+    drop = (
+        (errors["method"] == "model_a")
+        & (errors["subgroup_attr"] == "sex")
+        & (errors["subgroup_value"] == "female")
+    )
+    errors_partial = errors[~drop].copy()
+
+    out = compute_fair_skill_scores(errors_partial, baseline_method="locf")
+
+    # model_a must not appear in the sex scope with a score near 1 - 1e-2.
+    sex_model = out[(out["scope"] == "sex") & (out["method"] == "model_a")]
+    if not sex_model.empty:
+        # If a row is emitted at all, it must NOT be the bogus near-perfect
+        # value produced by clipping a 0/D_b ratio.
+        score = float(sex_model["fair_skill_score"].iloc[0])
+        assert score < 0.5, (
+            f"model_a with a single sex subgroup got bogus near-perfect "
+            f"fair_skill_score={score} (expected the task to be dropped)"
+        )
+
+    # And the macro-average must drop model_a (sex contributes no tasks).
+    overall_methods = set(out.loc[out["scope"] == "overall", "method"].tolist())
+    assert "model_a" not in overall_methods, (
+        "model_a should be excluded from overall because its sex scope is empty"
+    )
+
+
+def test_method_baseline_subgroup_sets_aligned():
+    """When method and baseline differ on which subgroups they cover for a
+    task, D_j and D_b must be computed over the **common** subgroup set.
+
+    Construct a task where the baseline has subgroups {A, B, C} but the
+    method only has {A, B}. The fair-skill ratio must use D_b = E_A - E_B
+    (the common pair), not E_A - E_C, so the method does not get spuriously
+    rewarded or penalised by a subgroup it never reported on.
+    """
+    rows = []
+    # Single attribute, single task. Baseline covers three age buckets;
+    # model_a covers only two. Make E_C an outlier so D_b over {A,B,C} is
+    # very different from D_b over {A,B}.
+    for method, e_a, e_b, e_c in [
+        ("locf", 1.0, 1.2, 5.0),     # full baseline disparity = 4.0
+        ("model_a", 0.6, 0.8, None),  # method only has A, B
+    ]:
+        for value, e in [("<40", e_a), (">=40", e_b), (">=80", e_c)]:
+            if e is None:
+                continue
+            rows.append({
+                "method": method,
+                "scenario": "random",
+                "channel": "ch_0",
+                "channel_type": "continuous",
+                "subgroup_attr": "age_group",
+                "subgroup_value": value,
+                "E": float(e),
+            })
+    errors = pd.DataFrame(rows)
+
+    out = compute_fair_skill_scores(errors, baseline_method="locf")
+    age = out[out["scope"] == "age_group"].set_index("method")
+
+    # Expected for model_a using the aligned (A, B) subgroup set:
+    #   D_j = 0.8 - 0.6 = 0.2
+    #   D_b = 1.2 - 1.0 = 0.2  (NOT the full 4.0 from {A,B,C})
+    #   ratio = 1.0, log(1.0) = 0  ->  S_attr = 1 - exp(0) = 0
+    assert abs(float(age.loc["model_a", "fair_skill_score"]) - 0.0) < 1e-9, (
+        "alignment failed: model_a's D_b should be 0.2 (common subgroups), "
+        "not 4.0 (baseline-only full set)"
+    )
+
+
 def test_degenerate_single_subgroup_attribute_is_skipped():
     """Attributes with <2 subgroup values are skipped (max-min is degenerate)."""
     errors = _synthetic_subgroup_errors()
