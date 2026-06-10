@@ -48,7 +48,7 @@ After Phase 1 + 2 of the paper bootstrap, `${PAPER_OUT}/` contains:
 | `bootstrap_draws.parquet` | shared-draw error matrix, re-aggregatable |
 | `skill_scores_bootstrap.csv` | macro skill score vs LOCF + 95% CI |
 | `avg_rankings_bootstrap.csv` | average rank across methods + 95% CI |
-| `fairness_subgroup_scores_bootstrap.csv` | per-(age_group, sex) skill scores + CIs |
+| `fairness_skill_score_bootstrap.csv` | disparity-ratio Fairness Skill Score (leaderboard's `fair_skill_score`) + 95% CI |
 | `bootstrap_method_dirs.json` | provenance: which pairs/ fed each method |
 
 ## Prerequisites

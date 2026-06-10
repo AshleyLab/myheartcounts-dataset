@@ -7,7 +7,7 @@
 #   ${PAPER_OUT}/bootstrap_draws.parquet
 #   ${PAPER_OUT}/avg_rankings_bootstrap.csv
 #   ${PAPER_OUT}/skill_scores_bootstrap.csv
-#   ${PAPER_OUT}/fairness_subgroup_scores_bootstrap.csv
+#   ${PAPER_OUT}/fairness_skill_score_bootstrap.csv  # disparity-ratio (leaderboard)
 #
 # Re-running with --skip-eval --skip-phase1 re-aggregates from the existing
 # bootstrap_draws.parquet (cheap), or with --skip-eval alone re-bootstraps

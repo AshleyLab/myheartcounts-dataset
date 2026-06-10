@@ -2,13 +2,20 @@
 r"""Phase 2 of the imputation paper-metrics bootstrap.
 
 Reads ``bootstrap_draws.parquet`` produced by phase 1
-(``bootstrap_imputation_draws.py``) and emits the four sidecar CSVs
-that carry mean / SE / 95 % CI for the headline metrics:
+(``bootstrap_imputation_draws.py``) and emits the headline sidecar CSVs:
 
 * ``skill_scores_bootstrap.csv``
 * ``avg_rankings_bootstrap.csv``
-* ``fairness_subgroup_scores_bootstrap.csv``
-* ``fairness_summary_bootstrap.csv``
+
+The leaderboard's Fairness Skill Score (disparity-ratio formulation) is
+produced by ``aggregate_fairness_skill_score.py`` as a separate sidecar
+and is **not** emitted here.
+
+The legacy ``S − λ·D`` fairness-adjusted outputs
+(``fairness_subgroup_scores_bootstrap.csv``,
+``fairness_summary_bootstrap.csv``) are **deprecated** and no longer
+written by default. Pass ``--write-deprecated-fairness`` to opt back in
+for back-compat consumers.
 
 Phase 2 is **fast** — every reader passes a different subset of named
 disparity functions, λ, or clip bounds without re-resampling.
@@ -17,9 +24,7 @@ Example::
 
     python scripts/paper_results/aggregate_imputation_paper_metrics.py \
         --draws results/paper/bootstrap_draws.parquet \
-        --output-dir results/paper/ \
-        --disparity-fn max_minus_min --disparity-fn worst_group --disparity-fn std \
-        --lambda-fairness 0.5
+        --output-dir results/paper/
 """
 
 from __future__ import annotations
@@ -92,6 +97,12 @@ def _parse_args() -> argparse.Namespace:
         "--method-filter", nargs="+", default=None,
         help="Restrict to these methods only",
     )
+    p.add_argument(
+        "--write-deprecated-fairness", action="store_true",
+        help="Also write the deprecated S − λ·D fairness CSVs "
+             "(fairness_subgroup_scores_bootstrap.csv, "
+             "fairness_summary_bootstrap.csv). Off by default.",
+    )
     return p.parse_args()
 
 
@@ -135,9 +146,17 @@ def main() -> int:
     paths = {
         "skill_scores":       out / "skill_scores_bootstrap.csv",
         "avg_rankings":       out / "avg_rankings_bootstrap.csv",
-        "fairness_subgroups": out / "fairness_subgroup_scores_bootstrap.csv",
-        "fairness_summary":   out / "fairness_summary_bootstrap.csv",
     }
+    if args.write_deprecated_fairness:
+        paths["fairness_subgroups"] = out / "fairness_subgroup_scores_bootstrap.csv"
+        paths["fairness_summary"]   = out / "fairness_summary_bootstrap.csv"
+    else:
+        logger.info(
+            "Skipping deprecated S − λ·D fairness CSVs "
+            "(pass --write-deprecated-fairness to opt in). "
+            "Leaderboard fairness numbers come from "
+            "aggregate_fairness_skill_score.py."
+        )
     for key, path in paths.items():
         tbl = tables[key]
         tbl.to_csv(path, index=False, float_format="%.6f")

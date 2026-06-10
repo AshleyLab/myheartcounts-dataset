@@ -28,6 +28,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -391,7 +392,7 @@ def _per_method_cell_errors(
     """Compute (n_boot, n_channels) per-draw error E.
 
     Continuous channels: ``E = nRMSE`` (matches the point flow's default
-    metric in compute_imputation_paper_metrics.py:_extract_errors).
+    metric in ``paper_metrics_core.extract_errors``).
     Binary channels: ``E = 1 − AUC`` (matches the point flow's E for binary).
     Channels with no data are NaN.
     """
@@ -732,7 +733,26 @@ def aggregate_skill_rank_fairness(
                                 ``disparity_<name>_{stats}`` and
                                 ``fairness_adjusted_<name>_{stats}``,
                                 plus ``lambda, fairness_combine, n_boot``.
+
+    .. deprecated::
+        The ``fairness_subgroups`` / ``fairness_summary`` outputs implement
+        the legacy ``S − λ·D`` fairness-adjusted skill score (Family B).
+        The leaderboard now uses the disparity-ratio "Fairness Skill Score"
+        produced by
+        :func:`scripts.paper_results.aggregate_fairness_skill_score.compute_fairness_skill_scores`
+        (``fairness_skill_score_bootstrap.csv``). The ``skill_scores`` and
+        ``avg_rankings`` outputs of this function are **not** deprecated.
     """
+    warnings.warn(
+        "aggregate_skill_rank_fairness's fairness outputs "
+        "(fairness_subgroups, fairness_summary) implement the deprecated "
+        "S − λ·D fairness-adjusted skill score. Use "
+        "aggregate_fairness_skill_score.compute_fairness_skill_scores for "
+        "the leaderboard's disparity-ratio Fairness Skill Score. The "
+        "skill_scores / avg_rankings outputs of this function remain supported.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     if disparity_fns is None:
         disparity_fns = {n: spec.fn for n, spec in DISPARITY_FUNCTIONS.items()}
     fairness_combine_fn = FAIRNESS_COMBINE[fairness_combine_name]

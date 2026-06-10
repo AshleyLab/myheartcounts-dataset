@@ -1,5 +1,14 @@
 """Pluggable disparity and fairness-combine functions.
 
+.. deprecated::
+    This registry backs the legacy ``S − λ·D`` fairness-adjusted skill
+    score (Family B) consumed by
+    :func:`imputation_evaluation.evaluation.bootstrap_skill_rank.aggregate_skill_rank_fairness`.
+    The leaderboard now uses the disparity-ratio "Fairness Skill Score"
+    in :mod:`scripts.paper_results.aggregate_fairness_skill_score`, which
+    does **not** go through this module. Kept callable for back-compat
+    only; do not add new disparities here.
+
 Used by the imputation paper-metrics pipeline. Two registries:
 
 * ``DISPARITY_FUNCTIONS`` — maps a name to a callable that takes a

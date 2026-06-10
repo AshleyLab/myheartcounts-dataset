@@ -11,10 +11,12 @@ Reproduces the cross-imputer paper numbers in three stages:
 3. **Phase 1** — invoke ``bootstrap_imputation_draws.py`` to produce
    ``bootstrap_draws.parquet``.
 4. **Phase 2** — invoke ``aggregate_imputation_paper_metrics.py`` to produce
-   the four sidecar CSVs, followed by ``aggregate_fairness_skill_score.py``
-   to produce ``fairness_skill_score_bootstrap.csv`` (per-attribute and
-   macro-averaged fairness skill scores; see the script's docstring for the
-   formulation).
+   ``skill_scores_bootstrap.csv`` and ``avg_rankings_bootstrap.csv``,
+   followed by ``aggregate_fairness_skill_score.py`` to produce
+   ``fairness_skill_score_bootstrap.csv`` (per-attribute and
+   macro-averaged disparity-ratio fairness skill scores; the leaderboard's
+   ``fair_skill_score``). The legacy ``S − λ·D`` fairness CSVs are
+   deprecated and no longer emitted by this driver.
 
 The driver is intentionally minimal: each phase is a subprocess. If a method
 or phase fails, the failing command is printed and the driver exits

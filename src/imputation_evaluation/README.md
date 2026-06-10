@@ -348,16 +348,27 @@ Each `pairs/` directory must contain `manifest_<split>.parquet`,
 |---|---|
 | `skill_scores_bootstrap.csv` | `method, scope, split, n_tasks, mean, se, ci_lo, ci_hi, n_boot` |
 | `avg_rankings_bootstrap.csv` | same shape (mean of avg-rank) |
-| `fairness_subgroup_scores_bootstrap.csv` | `method, demographic_attr, subgroup, split, mean, se, ci_lo, ci_hi, n_boot` |
-| `fairness_summary_bootstrap.csv` | `method, demographic_attr, split, lambda, fairness_combine`, plus per-disparity `{S_overall, disparity_<name>, fairness_adjusted_<name>}_{mean, se, ci_lo, ci_hi}` |
+| `fairness_skill_score_bootstrap.csv` | `method, scope, split, n_tasks, mean, se, ci_lo, ci_hi, n_boot` — disparity-ratio Fairness Skill Score (leaderboard's `fair_skill_score`); `scope` ∈ {`age_group`, `sex`, `overall`} |
 
-The engine lives in
+The leaderboard's Fairness Skill Score is the disparity-ratio formulation
+`1 − GeoMean_r(clip(D_j^{(G)} / D_b^{(G)}, 0.01, 100))` produced by
+[`scripts/paper_results/aggregate_fairness_skill_score.py`](../../scripts/paper_results/aggregate_fairness_skill_score.py)
+(macro-averaged across age, sex; baseline = LOCF). The engine lives in
 [`evaluation/bootstrap_skill_rank.py`](evaluation/bootstrap_skill_rank.py)
 (per-draw error reconstruction + phase-2 aggregator) with the deterministic
 point-flow definitions in
-[`evaluation/paper_metrics_core.py`](evaluation/paper_metrics_core.py) and the
-pluggable disparity registries in
-[`evaluation/disparity_metrics.py`](evaluation/disparity_metrics.py).
+[`evaluation/paper_metrics_core.py`](evaluation/paper_metrics_core.py).
+
+**Deprecated — `S − λ·D` fairness-adjusted skill score.** The earlier
+`fairness_subgroup_scores_bootstrap.csv` and `fairness_summary_bootstrap.csv`
+outputs implemented an `S_overall − λ · disparity(S_g)` formulation with
+pluggable disparities (`max_minus_min`, `worst_group`, `std`,
+`relative_drop`) from
+[`evaluation/disparity_metrics.py`](evaluation/disparity_metrics.py). They
+are **no longer emitted by default** by `aggregate_imputation_paper_metrics.py`
+— pass `--write-deprecated-fairness` if you still need them. The underlying
+`aggregate_skill_rank_fairness` function emits a `DeprecationWarning` when
+called. Use the disparity-ratio Fairness Skill Score above for new work.
 
 ---
 

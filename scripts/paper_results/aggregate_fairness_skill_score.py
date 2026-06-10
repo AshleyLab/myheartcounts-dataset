@@ -46,6 +46,9 @@ import numpy as np
 import pandas as pd
 
 from imputation_evaluation.evaluation.bootstrap_skill_rank import read_draws_parquet
+from imputation_evaluation.evaluation.paper_metrics_core import (
+    _per_attribute_skill_keyed,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -112,65 +115,20 @@ def _per_attribute_skill(
 ) -> pd.DataFrame:
     """Per-(method, draw) fairness skill score for a single attribute.
 
-    ``df_attr`` is the subset of the draws table for one attribute (one
-    ``subgroup_attr`` value other than ``all``).
+    Thin wrapper around ``paper_metrics_core._per_attribute_skill_keyed``
+    that adds ``draw`` as an extra grouping key, so the bootstrap CSV and
+    the deterministic ``fairness_skill_scores.csv`` from
+    ``compute_imputation_paper_metrics.py`` share a single source of truth.
 
     Returns a frame with columns ``method, draw, S_attr, n_tasks``.
     """
-    # Per (draw, method, scenario, channel): D = max_g E - min_g E across
-    # subgroup values. Vectorised across all draws at once.
-    grouped = df_attr.groupby(
-        ["draw", "method", "scenario", "channel", "channel_type"],
-        observed=True,
-    )["E"]
-    D_max = grouped.max()
-    D_min = grouped.min()
-    D = (D_max - D_min).rename("D").reset_index()
-
-    # Split baseline rows from model rows on the same (draw, scenario,
-    # channel) keys; merge so each model row carries its paired D_b.
-    # Keep the baseline on both sides so its self-ratio (D_b/D_b = 1, clipped
-    # → S = 0) lands in the output for parity with compute_skill_scores'
-    # treatment of LOCF in skill_scores_bootstrap.csv.
-    bl = (
-        D[D["method"] == baseline_method]
-        .drop(columns=["method"])
-        .rename(columns={"D": "D_b"})
+    return _per_attribute_skill_keyed(
+        df_attr,
+        extra_keys=["draw"],
+        baseline_method=baseline_method,
+        clip_lower=clip_lower,
+        clip_upper=clip_upper,
     )
-    jm = D.rename(columns={"D": "D_j"})
-    merged = jm.merge(
-        bl,
-        on=["draw", "scenario", "channel", "channel_type"],
-        how="inner",
-    )
-
-    # Drop tasks where the baseline is already perfectly fair (D_b ≤ 0)
-    # or where either disparity is NaN. Mirrors compute_skill_scores'
-    # ``e_baseline <= 0 or np.isnan(e_baseline)`` drop rule.
-    keep = (
-        (merged["D_b"] > 0)
-        & merged["D_b"].notna()
-        & merged["D_j"].notna()
-        & (merged["D_j"] >= 0)  # max-min is non-negative by construction
-    )
-    merged = merged.loc[keep].copy()
-    if merged.empty:
-        return pd.DataFrame(columns=["method", "draw", "S_attr", "n_tasks"])
-
-    # Clip the ratio then take the per-(method, draw) geometric mean via
-    # log-mean-exp. The skill score is 1 - GM(clipped_ratios).
-    ratio = (merged["D_j"] / merged["D_b"]).clip(
-        lower=clip_lower, upper=clip_upper,
-    )
-    merged["log_ratio"] = np.log(ratio.to_numpy())
-
-    agg = (
-        merged.groupby(["method", "draw"], observed=True)
-        .agg(log_ratio_mean=("log_ratio", "mean"), n_tasks=("log_ratio", "size"))
-        .reset_index()
-    )
-    agg["S_attr"] = 1.0 - np.exp(agg["log_ratio_mean"])
-    return agg[["method", "draw", "S_attr", "n_tasks"]]
 
 
 def _summarise_across_draws(
