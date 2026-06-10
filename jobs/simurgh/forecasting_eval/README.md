@@ -1,26 +1,36 @@
-# Simurgh (SC) Forecasting Evaluation — CPU baselines
+# Simurgh (SC) Forecasting Evaluation
 
-SLURM wrappers for the public Hydra forecasting CLI (`mhc-forecast-eval`),
-adapted from `jobs/sherlock/forecasting_eval/` for the Simurgh cluster.
+SLURM wrappers for the public Hydra forecasting CLI (`mhc-forecast-eval`) plus the
+one-command **paper pipeline** that produces the full Track-3 leaderboard.
 
-Covers the four **CPU-only** Track-3 baselines:
-`seasonal_naive`, `seasonal_naive_average_history`, `autoARIMA`, `autoETS`.
-GPU models (chronos2/toto/mixlinear/dlinear/segrnn) are out of scope here.
+Models: CPU baselines (`seasonal_naive`, `seasonal_naive_average_history`,
+`autoARIMA`, `autoETS`) and GPU models (`chronos2`, `toto`, `dlinear`, `mixlinear`,
+`segrnn`). Each `mhc-forecast-eval` run emits point **and** binary metrics
+(`auprc/auroc/f1`) co-located under `<model>_metrics/<RUN_LABEL>/`, which the
+Layer-2 summaries (skill score + mean rank) read directly.
 
 ## Files
 
-- `_common.sh` — conda activation, dataset root, BLAS pinning, output roots, and
-  the `run_forecast_model` helper.
-- `run_naive.sbatch` — `seasonal_naive` + `seasonal_naive_average_history`
-  (2 cpus, 32G, 4h).
-- `run_autoets.sbatch` — `autoETS` (8 cpus, 64G, 24h).
-- `run_autoarima.sbatch` — `autoARIMA` (16 cpus, 64G, 48h; the long pole,
-  resumable).
-- `skill_rank.sbatch` — **canonical** Layer-2 summary: skill score (mae + auprc
-  vs `seasonal_naive`) + grouped mean-rank for a RUN_LABEL, in one job.
-- `aggregate_results.sbatch` — *deprecated* (MAE-by-channel-hour table only);
-  superseded by `skill_rank.sbatch`.
-- `submit_all.sh` — submits the 3 CPU jobs + chains aggregation (`afterok`).
+**Per-model eval jobs** — each writes `<model>_metrics/<RUN_LABEL>/{point + binary}`:
+- `run_naive.sbatch` — `seasonal_naive` + `seasonal_naive_average_history` (CPU).
+- `run_autoets.sbatch` / `run_autoarima.sbatch` — `autoETS` / `autoARIMA` (CPU; autoARIMA resumable).
+- `run_chronos2.sbatch` / `run_toto.sbatch` — foundation models, zero-shot + fine-tuned variants (GPU).
+- `run_dlinear.sbatch` / `run_mixlinear.sbatch` / `run_segrnn.sbatch` — retrained PyPOTS
+  models (GPU; need `MHC_FORECAST_<MODEL>_RELEASE_DIR`).
+
+**Launchers:**
+- `submit_pipeline.sh` — **one-command end-to-end**: fan out every eval job under one
+  `RUN_LABEL`, then chain the paper pipeline (`afterok`). Writes a job manifest.
+- `submit_models.sh` — submit the GPU models under a shared label.
+- `submit_all.sh` — submit the CPU baselines under a shared label.
+
+**Layer-2 aggregation:**
+- `run_paper_pipeline.sbatch` — runs
+  `scripts/paper_results/forecasting/run_paper_pipeline.py --skip-eval`
+  (discover + skill + rank); submitted by `submit_pipeline.sh`.
+- `skill_rank.sbatch` — standalone skill score + grouped mean-rank for a `RUN_LABEL`.
+- `aggregate_results.sbatch` — *deprecated* (MAE-by-channel-hour table only).
+- `_common.sh` — conda activation, dataset root, BLAS pinning, output roots.
 
 ## Prerequisites (one-time)
 
@@ -32,23 +42,29 @@ The `openmhc` conda env needs the statistical-model deps:
 
 ## Usage
 
-Full CPU suite (recommended):
+**Full leaderboard, all methods, one command** — fans out every eval job under one
+label, then runs the paper pipeline once they finish:
+
+```bash
+MHC_FORECAST_RUN_LABEL=forecasting_paper_001 \
+  jobs/simurgh/forecasting_eval/submit_pipeline.sh
+# subset:    jobs/simurgh/forecasting_eval/submit_pipeline.sh --only dlinear segrnn
+# eval-only: MHC_FORECAST_PIPELINE=0 jobs/simurgh/forecasting_eval/submit_pipeline.sh
+```
+Results land in `results/forecasting_eval/simurgh/summary/<RUN_LABEL>/`
+(`forecasting_skill_score_*` + `forecasting_grouped_metric_rank_*`).
+
+**CPU baselines only:**
 
 ```bash
 jobs/simurgh/forecasting_eval/submit_all.sh
 ```
 
-A single model:
+**Single model / re-aggregate an existing label:**
 
 ```bash
 sbatch jobs/simurgh/forecasting_eval/run_autoarima.sbatch
-```
-
-Fixed run label / skip aggregation:
-
-```bash
-MHC_FORECAST_RUN_LABEL=paper_001 jobs/simurgh/forecasting_eval/submit_all.sh
-MHC_FORECAST_AGGREGATE=0          jobs/simurgh/forecasting_eval/submit_all.sh
+sbatch --export=ALL,MHC_FORECAST_RUN_LABEL=<label> jobs/simurgh/forecasting_eval/skill_rank.sbatch
 ```
 
 ## Environment
@@ -62,7 +78,9 @@ MHC_FORECAST_AGGREGATE=0          jobs/simurgh/forecasting_eval/submit_all.sh
 | `MHC_FORECAST_RUNS_ROOT` | output root | `results/forecasting_eval/simurgh` |
 | `MHC_FORECAST_RUN_LABEL` | shared run label | `forecasting_<jobid>` |
 | `MHC_FORECAST_OVERWRITE` | overwrite existing parquets (else resume by skipping) | `false` |
-| `MHC_FORECAST_AGGREGATE` | set `0` to skip aggregation | `1` |
+| `MHC_FORECAST_AGGREGATE` | (legacy `submit_all`/`submit_models`) set `0` to skip the deprecated aggregation | `1` |
+| `MHC_FORECAST_PIPELINE` | (`submit_pipeline.sh`) set `0` to submit eval jobs only, no paper pipeline | `1` |
+| `MHC_FORECAST_<MODEL>_RELEASE_DIR` | release bundle for a trained model (`DLINEAR`/`SEGRNN`/`MIXLINEAR`/`CHRONOS2`/`TOTO`) | `submit_pipeline.sh` defaults |
 
 ## Notes
 
