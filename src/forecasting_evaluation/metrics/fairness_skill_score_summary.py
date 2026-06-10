@@ -1,5 +1,15 @@
 """Compute forecasting fairness-adjusted skill scores.
 
+.. deprecated::
+    The ``S_overall − λ·D`` "fairness-adjusted skill score" computed here is the
+    legacy "Family B" metric. The default fairness metric is now the
+    disparity-ratio **Fairness Skill Score** in
+    :mod:`forecasting_evaluation.metrics.fair_skill_score` (point) and
+    :mod:`forecasting_evaluation.metrics.bootstrap_fair_skill_score` (bootstrap
+    CIs). This module is kept callable for back-compat; its demographics helpers
+    (``load_user_demographics``, ``bin_age``, ``normalize_sex``) and
+    ``_build_error_table`` are reused by the new metric.
+
 This paper-result helper follows the unified scoring definition used for the
 benchmark: task errors are converted to ratios against a fixed baseline,
 clipped, then aggregated with a geometric mean. For subgroup scores, model
@@ -96,6 +106,7 @@ def load_user_demographics(
     user_ids: set[str],
     labels_path: str | Path,
     enrollment_path: str | Path,
+    age_bins: tuple[int, ...] = DEFAULT_AGE_BINS,
 ) -> dict[str, dict[str, str]]:
     """Load age-group and sex labels for the requested users."""
     labels_file = Path(labels_path)
@@ -114,7 +125,9 @@ def load_user_demographics(
         age_value = _last_value(age_entries, user_id)
         sex_value = _last_value(sex_entries, user_id)
         demographics[user_id] = {
-            "age_group": bin_age(float(age_value) if age_value is not None else None),
+            "age_group": bin_age(
+                float(age_value) if age_value is not None else None, age_bins=age_bins
+            ),
             "sex": normalize_sex(sex_value),
         }
     return demographics

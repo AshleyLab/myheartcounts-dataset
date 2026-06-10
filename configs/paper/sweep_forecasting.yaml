@@ -22,8 +22,8 @@ aggregation_unit: user
 # Phase 0 (mhc-forecast-eval) overrides applied to every model.
 common_overrides: []
 
-# Phase 3 — paired user-level bootstrap CIs for skill score + mean rank.
-# (fairness/age_bins are reserved for a follow-up; skill+rank only for now.)
+# Phase 3 — paired user-level bootstrap CIs for skill score + mean rank, and
+# (when fairness: true) the disparity-ratio fairness skill score (point + CIs).
 bootstrap:
   enabled: false
   n_boot: 1000
@@ -32,6 +32,8 @@ bootstrap:
   splits: [test]
   age_bins: [18, 30, 40, 50, 60]
   fairness: true
+  labels_path: data/labels/last_labels.json
+  enrollment_path: data/labels/enrollment_info.json
 
 models:
   - {name: seasonal_naive, type: seasonal_naive}

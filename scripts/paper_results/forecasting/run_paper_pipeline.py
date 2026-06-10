@@ -12,9 +12,10 @@ forecasting. Stages (each skippable):
    ignore any extra model dirs that happen to be present.
 3. **Phase 2 (skill + rank)** — ``skill_score_summary`` + ``grouped_metric_rank_summary``
    (continuous=mae, binary=auprc, vs ``baseline``) → ``output_root``.
-4. **Phase 3 (bootstrap CIs + fairness)** — NOT YET IMPLEMENTED (scope B). The
-   ``bootstrap`` config section and the ``_phase_bootstrap`` hook exist so it can
-   be added later without restructuring.
+4. **Phase 3 (bootstrap CIs + fairness)** — paired user-level bootstrap CIs for
+   skill score + mean rank; when ``bootstrap.fairness`` is set, also the
+   disparity-ratio fairness skill score (deterministic point CSV + bootstrap-CI
+   CSV). Gated on ``bootstrap.enabled``.
 
 Usage::
 
@@ -184,9 +185,9 @@ def _phase_skill_rank(cfg: dict, selected: dict[str, str], dry_run: bool) -> Non
 def _phase_bootstrap(cfg: dict, selected: dict[str, str], dry_run: bool) -> None:
     """Phase 3 — paired user-level bootstrap CIs for skill score + mean rank.
 
-    Fairness CIs remain out of scope here (the ``bootstrap.fairness``/``age_bins``
-    keys are reserved for a follow-up). Writes two CSVs alongside the Phase-2
-    point summaries.
+    When ``bootstrap.fairness`` is set, also writes the disparity-ratio fairness
+    skill score as both a deterministic point CSV and a bootstrap-CI CSV. Writes
+    alongside the Phase-2 point summaries.
     """
     sys.path.insert(0, str(REPO_ROOT / "src"))
     from forecasting_evaluation.metrics import metric_spec as _spec
@@ -224,6 +225,34 @@ def _phase_bootstrap(cfg: dict, selected: dict[str, str], dry_run: bool) -> None
     tables["skill_scores"].to_csv(skill_path, index=False)
     tables["avg_rankings"].to_csv(rank_path, index=False)
     logger.info("Wrote bootstrap CIs: %s , %s", skill_path, rank_path)
+
+    if not bs.get("fairness"):
+        return
+
+    from forecasting_evaluation.metrics.bootstrap_fair_skill_score import (
+        bootstrap_fair_skill_score,
+    )
+
+    logger.info("Phase 3 fairness: disparity-ratio fair skill score (point + bootstrap)")
+    ftables = bootstrap_fair_skill_score(
+        models=models,
+        baseline_model=cfg["baseline"],
+        continuous_metrics=cfg.get("continuous_metrics", ["mae"]),
+        binary_metrics=cfg.get("binary_metrics", ["auprc"]),
+        continuous_channel_indices=_spec.CONTINUOUS_CHANNELS,
+        binary_channel_indices=_spec.BINARY_CHANNELS,
+        labels_path=bs.get("labels_path", "data/labels/last_labels.json"),
+        enrollment_path=bs.get("enrollment_path", "data/labels/enrollment_info.json"),
+        age_bins=tuple(bs.get("age_bins", [18, 30, 40, 50, 60])),
+        n_boot=n_boot,
+        seed=seed,
+        ci_level=ci_level,
+    )
+    fair_point_path = out / "forecasting_fairness_skill_score.csv"
+    fair_boot_path = out / "forecasting_fairness_skill_score_bootstrap.csv"
+    ftables["fairness_skill_scores_point"].to_csv(fair_point_path, index=False)
+    ftables["fairness_skill_scores"].to_csv(fair_boot_path, index=False)
+    logger.info("Wrote fairness skill score (point + bootstrap): %s , %s", fair_point_path, fair_boot_path)
 
 
 def main() -> int:
