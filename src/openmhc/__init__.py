@@ -99,6 +99,7 @@ def evaluate_imputation(
     data_dir: str | Path | None = None,
     seed: int = 42,
     *,
+    n_days: int = 1,
     bootstrap: bool | dict = False,
     max_samples: int | None = None,
 ) -> ImputationResults:
@@ -114,6 +115,11 @@ def evaluate_imputation(
         data_dir: Path to the dataset root directory. If omitted,
             ``MHC_DATA_DIR`` must be set.
         seed: Random seed for mask generation.
+        n_days: Number of consecutive days per evaluation window (1-7).
+            Defaults to ``1`` (single-day windows — matches all daily
+            models). Set ``n_days=7`` for weekly models like
+            ``LSM2WeeklySparseImputer`` or any 7-day PyPOTS variant; the
+            imputer then receives tensors of shape ``(B, 19, n_days * 1440)``.
         bootstrap: Opt-in participant-level cluster bootstrap. See
             :func:`openmhc._evaluate.evaluate_imputation` for the full
             shape of the option.
@@ -131,6 +137,7 @@ def evaluate_imputation(
         masking_scenarios=masking_scenarios,
         data_dir=data_dir,
         seed=seed,
+        n_days=n_days,
         bootstrap=bootstrap,
         max_samples=max_samples,
     )
