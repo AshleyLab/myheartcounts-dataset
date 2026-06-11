@@ -23,7 +23,7 @@ Usage::
     PYTHONPATH=src python scripts/paper_results/aggregate_fairness_skill_score.py \
         --draws results/paper/bootstrap_draws.parquet \
         --output results/paper/fairness_skill_score_bootstrap.csv \
-        --baseline-method stat_simple
+        --baseline-method linear
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ from pathlib import Path
 
 import numpy as np
 
-from downstream_evaluation.evaluation.bootstrap_skill_rank import read_draws_parquet
+from downstream_evaluation.evaluation.bootstrap_skill_rank import POINT_DRAW, read_draws_parquet
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 log = logging.getLogger(__name__)
@@ -43,19 +43,20 @@ log = logging.getLogger(__name__)
 SENSITIVE_ATTRS = ("age_group", "sex")
 
 
-def _summarise(values: list[float], ci_level: float) -> dict[str, float]:
+def _summarise(values: list[float], ci_level: float, point: float | None = None) -> dict[str, float]:
+    """Point estimate (full cohort) as the value + SE / percentile-CI from the draws."""
     arr = np.asarray(values, dtype=np.float64)
     arr = arr[np.isfinite(arr)]
+    center = (
+        float(point)
+        if point is not None and np.isfinite(point)
+        else (float(np.mean(arr)) if len(arr) else float("nan"))
+    )
     if len(arr) == 0:
-        return {
-            "mean": float("nan"),
-            "se": float("nan"),
-            "ci_lo": float("nan"),
-            "ci_hi": float("nan"),
-        }
+        return {"point": center, "se": float("nan"), "ci_lo": float("nan"), "ci_hi": float("nan")}
     a = (1.0 - ci_level) / 2.0
     return {
-        "mean": float(np.mean(arr)),
+        "point": center,
         "se": float(np.std(arr, ddof=1)) if len(arr) > 1 else float("nan"),
         "ci_lo": float(np.percentile(arr, 100 * a)),
         "ci_hi": float(np.percentile(arr, 100 * (1 - a))),
@@ -72,7 +73,7 @@ def main() -> int:
     p.add_argument(
         "--output", type=Path, required=True, help="Output CSV (fairness_skill_score_bootstrap.csv)"
     )
-    p.add_argument("--baseline-method", default="stat_simple")
+    p.add_argument("--baseline-method", default="linear")
     p.add_argument("--clip-lower", type=float, default=1e-2)
     p.add_argument("--clip-upper", type=float, default=100.0)
     p.add_argument("--ci-level", type=float, default=0.95)
@@ -85,7 +86,7 @@ def main() -> int:
         Path(args.output).parent.mkdir(parents=True, exist_ok=True)
         import pandas as pd
 
-        pd.DataFrame(columns=["method", "scope", "mean", "se", "ci_lo", "ci_hi", "n_boot"]).to_csv(
+        pd.DataFrame(columns=["method", "scope", "point", "se", "ci_lo", "ci_hi", "n_boot"]).to_csv(
             args.output,
             index=False,
         )
@@ -93,7 +94,7 @@ def main() -> int:
 
     methods = sorted(draws["method"].unique())
     base = args.baseline_method
-    n_boot = int(draws["draw"].nunique())
+    n_boot = int(draws.loc[draws["draw"] != POINT_DRAW, "draw"].nunique())
     # S^(G)_j per draw: sg[method][attr][draw] = score
     sg: dict[str, dict[str, dict[int, float]]] = {
         m: {a: {} for a in SENSITIVE_ATTRS} for m in methods
@@ -120,22 +121,32 @@ def main() -> int:
     rows = []
     for m in methods:
         for attr in SENSITIVE_ATTRS:
+            pt = sg[m][attr].get(POINT_DRAW)
+            boot = [v for b, v in sg[m][attr].items() if b != POINT_DRAW]
             rows.append(
                 {
                     "method": m,
                     "scope": attr,
-                    **_summarise(list(sg[m][attr].values()), args.ci_level),
+                    **_summarise(boot, args.ci_level, pt),
                     "n_boot": n_boot,
                 }
             )
-        all_draws = sorted(set().union(*[set(sg[m][a]) for a in SENSITIVE_ATTRS]))
-        macro = []
-        for b in all_draws:
+        # Macro over the sensitive attributes, per draw; the point draw is the value.
+        boot_draws = sorted({b for a in SENSITIVE_ATTRS for b in sg[m][a] if b != POINT_DRAW})
+        macro_boot = []
+        for b in boot_draws:
             vals = [sg[m][a][b] for a in SENSITIVE_ATTRS if b in sg[m][a]]
             if vals:
-                macro.append(float(np.mean(vals)))
+                macro_boot.append(float(np.mean(vals)))
+        pt_vals = [sg[m][a][POINT_DRAW] for a in SENSITIVE_ATTRS if POINT_DRAW in sg[m][a]]
+        macro_point = float(np.mean(pt_vals)) if pt_vals else None
         rows.append(
-            {"method": m, "scope": "overall", **_summarise(macro, args.ci_level), "n_boot": n_boot}
+            {
+                "method": m,
+                "scope": "overall",
+                **_summarise(macro_boot, args.ci_level, macro_point),
+                "n_boot": n_boot,
+            }
         )
 
     import pandas as pd

@@ -30,14 +30,14 @@ from pathlib import Path
 # (csv_key, display_name, mtype) — order is the display order in the JSON, which
 # the schema expects to coincide with skill-score ranking (asserted at render).
 METHODS: list[tuple[str, str, str]] = [
-    ("mae_encoder", "LSM-2", "Self-Supervised"),
-    ("fe_xgboost", "XGBoost", "Statistical"),
+    ("mae", "LSM-2", "Self-Supervised"),
+    ("xgboost", "XGBoost", "Statistical"),
     ("multirocket", "MultiRocket", "Convolutional"),
-    ("hybrid_ssl_stat_simple", "WBM", "Self-Supervised"),
-    ("stat_simple", "Linear (baseline)", "Statistical"),
-    ("gru_d_multitask", "GRU-D", "Deep Learning"),
-    ("chronos2_encoder", "Chronos-2", "Foundation"),
-    ("toto_encoder", "Toto", "Foundation"),
+    ("wbm", "WBM", "Self-Supervised"),
+    ("linear", "Linear (baseline)", "Statistical"),
+    ("gru_d", "GRU-D", "Deep Learning"),
+    ("chronos2", "Chronos-2", "Foundation"),
+    ("toto", "Toto", "Foundation"),
 ]
 
 SUBMITTER = "OpenMHC team"
@@ -58,7 +58,7 @@ def _load_scope(path: Path, scope: str) -> dict[str, float]:
     with path.open() as f:
         for r in csv.DictReader(f):
             if r["scope"] == scope:
-                out[r["method"]] = float(r["mean"])
+                out[r["method"]] = float(r["point"])
     return out
 
 
@@ -69,7 +69,7 @@ def _load_domains(path: Path) -> dict[str, dict[str, float]]:
             field = DOMAIN_FIELD.get(r["scope"])
             if field is None:
                 continue
-            out.setdefault(r["method"], {})[field] = float(r["mean"])
+            out.setdefault(r["method"], {})[field] = float(r["point"])
     return out
 
 

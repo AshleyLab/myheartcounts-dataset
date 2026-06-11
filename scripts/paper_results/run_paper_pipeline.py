@@ -18,9 +18,8 @@ Usage::
         --predictions_dir results/eval/final/predictions \
         --csvs_dir results/eval/final \
         --output-dir results/paper \
-        --methods stat_simple multirocket mae_encoder toto_encoder \
-                  chronos2_encoder fe_xgboost hybrid_ssl_stat_simple gru_d_multitask \
-        --baseline stat_simple --n-bootstrap 1000
+        --methods linear multirocket mae toto chronos2 xgboost wbm gru_d \
+        --baseline linear --n-bootstrap 1000
 """
 
 from __future__ import annotations
@@ -57,7 +56,7 @@ def main() -> None:
     p.add_argument("--csvs_dir", type=Path, required=True)
     p.add_argument("--output-dir", type=Path, required=True)
     p.add_argument("--methods", nargs="+", required=True)
-    p.add_argument("--baseline", default="stat_simple")
+    p.add_argument("--baseline", default="linear")
     p.add_argument("--n-bootstrap", type=int, default=1000)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument(

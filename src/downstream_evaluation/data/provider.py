@@ -1,18 +1,22 @@
-"""TaskDataProvider — the inclusion-criteria (IC) + temporal-constraint (TC) authority.
+"""TaskDataProvider — derives each task's cohort, eligibility, and labels from the lookup.
 
-This is the single place the per-task cohort and temporal scope are decided, and
-it derives both from the **shipped embedded-temporal labels lookup** — never by
-recomputing IC/TC from raw labels. A lookup cell is *non-sentinel* iff that
-segment is a valid wearable day (IC) inside the task's forward window (TC), so the
-non-sentinel mask is simultaneously the cohort, the temporal scope, and the label
-value. Deriving everything from this one lookup keeps the cohort and temporal scope
-reproducible and self-consistent.
+This is the single place the per-task cohort and temporal scope are decided, and it
+reads them from the **shipped labels lookup** rather than recomputing them from raw
+labels. A lookup cell is *non-sentinel* iff that segment is a valid wearable day that
+passes the data-quality inclusion criteria, within the lookup's temporal scope; the
+non-sentinel mask is therefore at once the cohort, the temporal scope, and the label
+value. Deriving everything from one lookup keeps every method on an identical,
+reproducible cohort.
+
+The benchmark's default lookup applies the inclusion criteria over each participant's
+full history; a forward-windowed ablation lookup additionally caps eligibility at
+``label + weeks_after`` (see ``TemporalWindowConfig``).
 
 The provider hands each model **eligible data + labels per (user, task)** at a
 declared granularity; the model never sees the lookup, the segment grid, or the
 mask. Granularity controls only *which* lookup supplies eligibility:
 
-  - ``"weekly"`` → weekly windowed lookup (weekly-segment models, e.g. SSL)
+  - ``"weekly"`` → weekly lookup          (weekly-segment models, e.g. SSL)
   - ``"daily"``  → daily lookup           (daily-segment models, e.g. MAE)
   - ``"series"`` → daily lookup, eligibility broadcast to the continuous timeline
                    (models that window the raw series themselves, e.g. 5h/2048h)
@@ -41,6 +45,17 @@ LOOKUP_BY_GRANULARITY: dict[str, str] = {
 }
 
 
+def lookup_filename(granularity: str, full_history: bool = False) -> str:
+    """Lookup parquet filename for ``granularity``.
+
+    With ``full_history`` the variant built without a forward-window cap is used, so
+    the cohort spans each participant's whole record. The data-quality inclusion
+    criteria still apply — only the forward window is dropped.
+    """
+    name = LOOKUP_BY_GRANULARITY[granularity]
+    return name.replace(".parquet", "_full_history.parquet") if full_history else name
+
+
 @dataclass
 class TaskData:
     """Eligible data + labels for one ``(task, split)``, handed to a model.
@@ -64,7 +79,7 @@ class TaskData:
 
 
 class TaskDataProvider:
-    """Derive per-task cohort/labels/eligibility from the embedded-temporal lookup."""
+    """Derive per-task cohort/labels/eligibility from the labels lookup."""
 
     def __init__(
         self,
@@ -96,8 +111,9 @@ class TaskDataProvider:
     def _task_index(self, task: str) -> dict[str, tuple]:
         """``{user_id: (label, row_positions)}`` from non-sentinel cells.
 
-        A user appears iff they have ≥1 non-sentinel cell for ``task`` (IC); the
-        row positions are the lookup rows where the cell is non-sentinel (TC) —
+        A user appears iff they have ≥1 non-sentinel cell for ``task`` (passing the
+        inclusion criteria); the row positions are the lookup rows where the cell is
+        non-sentinel (within the lookup's temporal scope) —
         which index the row-aligned segment data directly; the label is the
         constant non-sentinel value (true for the cross-sectional tasks).
         """

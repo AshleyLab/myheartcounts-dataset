@@ -44,6 +44,9 @@ set -u
 export PYTHONNOUSERSITE=1
 export PYTHONPATH="$REPO/src:${PYTHONPATH:-}"
 export TMPDIR="/tmp/slurm_${SLURM_JOB_ID:-$$}"
+# Per-job bytecode cache: avoids stale .pyc on the shared filesystem, whose coarse
+# mtimes can defeat Python's source-vs-bytecode check after a code edit.
+export PYTHONPYCACHEPREFIX="$TMPDIR/pycache"
 export HF_HOME="${HF_HOME:-$TMPDIR/hf_cache}"
 # hf-xet's temp/lock file ops fail on the RDS network filesystem; force plain HTTPS.
 export HF_HUB_DISABLE_XET=1
@@ -61,7 +64,7 @@ export CHRONOS2_CHECKPOINT="${CHRONOS2_CHECKPOINT:-$PRIV/models/final/chronos2_F
 
 export OUT_CSV="${OUT_CSV:-eval_${METHOD}.csv}"
 
-python jobs/imperial/slurm/run_eval.py
+python scripts/run_eval.py
 
 echo "=== downstream eval complete ($METHOD) -> $OUT_CSV ==="
 date

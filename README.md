@@ -40,7 +40,6 @@ class MeanPoolEncoder:
 
 results = openmhc.evaluate_prediction(MeanPoolEncoder())
 print(results.summary())
-print("global score (mean AUROC over binary tasks):", results.global_score)
 ```
 
 ### Track 2 — imputation (`Imputer`)

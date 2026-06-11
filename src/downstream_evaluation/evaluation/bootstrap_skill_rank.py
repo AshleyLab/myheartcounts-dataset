@@ -414,6 +414,11 @@ DRAW_COLS = [
     "E",
 ]
 
+# Sentinel ``draw`` id for the point estimate — the full cohort, no resampling. The
+# reported value is this point estimate; the bootstrap draws (``draw >= 0``) give only
+# the standard error / CI around it (we never report the bootstrap mean as the value).
+POINT_DRAW = -1
+
 
 def compute_per_draw_errors(
     aligned: dict[str, dict[str, dict]],
@@ -466,8 +471,8 @@ def compute_per_draw_errors(
                     }
                 )
 
-    for b in range(n_bootstrap):
-        idx_b = {t: task_indices[t][b] for t in tasks}
+    def _emit_for_indices(idx_b: dict[str, np.ndarray], b: int) -> None:
+        """Emit global + per-subgroup errors for one set of row indices (draw ``b``)."""
         per_task_global = _per_task_metric_on_indices(aligned, methods, tasks, idx_b)
         _emit(per_task_global, "all", "all", b)
         if do_fairness:
@@ -486,13 +491,15 @@ def compute_per_draw_errors(
                     if not masks_b:
                         continue
                     sub_per_task = _per_task_metric_on_indices(
-                        aligned,
-                        methods,
-                        tasks,
-                        idx_b,
-                        mask_per_task=masks_b,
+                        aligned, methods, tasks, idx_b, mask_per_task=masks_b
                     )
                     _emit(sub_per_task, attr, value, b)
+
+    # Point estimate first — the full cohort in order, no resampling — then the B
+    # paired bootstrap resamples that quantify its standard error.
+    _emit_for_indices({t: np.arange(task_n[t]) for t in tasks}, POINT_DRAW)
+    for b in range(n_bootstrap):
+        _emit_for_indices({t: task_indices[t][b] for t in tasks}, b)
 
     return pd.DataFrame(rows, columns=DRAW_COLS)
 
@@ -515,20 +522,26 @@ def read_draws_parquet(path: Path) -> tuple[pd.DataFrame, dict | None]:
     return df, meta
 
 
-def _summarise(values: list[float], ci_level: float) -> dict[str, float]:
-    """Mean / se / percentile-CI over the finite bootstrap draws of one quantity."""
+def _summarise(values: list[float], ci_level: float, point: float | None = None) -> dict[str, float]:
+    """Point estimate + SE / percentile-CI from the bootstrap draws of one quantity.
+
+    ``values`` are the bootstrap draws (the point draw excluded). ``point`` is the
+    full-cohort estimate that is reported as the value; SE and the percentile CI come
+    from the bootstrap draws. When ``point`` is omitted the bootstrap mean is the
+    fallback value (used only where no point estimate is available).
+    """
     arr = np.asarray(values, dtype=np.float64)
     arr = arr[np.isfinite(arr)]
+    center = (
+        float(point)
+        if point is not None and np.isfinite(point)
+        else (float(np.mean(arr)) if len(arr) else float("nan"))
+    )
     if len(arr) == 0:
-        return {
-            "mean": float("nan"),
-            "se": float("nan"),
-            "ci_lo": float("nan"),
-            "ci_hi": float("nan"),
-        }
+        return {"point": center, "se": float("nan"), "ci_lo": float("nan"), "ci_hi": float("nan")}
     alpha = (1.0 - ci_level) / 2.0
     return {
-        "mean": float(np.mean(arr)),
+        "point": center,
         "se": float(np.std(arr, ddof=1)) if len(arr) > 1 else float("nan"),
         "ci_lo": float(np.percentile(arr, 100 * alpha)),
         "ci_hi": float(np.percentile(arr, 100 * (1 - alpha))),
@@ -566,7 +579,7 @@ def aggregate_skill_rank_fairness(
     methods = sorted(draws["method"].unique())
     glob = draws[draws["subgroup_attr"] == "all"]
     sub = draws[draws["subgroup_attr"] != "all"]
-    n_boot = int(draws["draw"].nunique())
+    n_boot = int(draws.loc[draws["draw"] != POINT_DRAW, "draw"].nunique())
 
     task_dom = dict(zip(glob["task"], glob["domain"]))
     domains = sorted({d for d in task_dom.values() if d is not None})
@@ -585,12 +598,19 @@ def aggregate_skill_rank_fairness(
         }
         for m in methods
     }
+    # Point estimates (full cohort, draw == POINT_DRAW) — the reported values.
+    skill_point: dict[str, dict[str, float]] = {m: {} for m in methods}
+    rank_point: dict[str, dict[str, float]] = {m: {} for m in methods}
+    subS_point: dict[str, dict[tuple[str, str], float]] = {m: {} for m in methods}
+    fair_point: dict[str, dict[str, float]] = {m: {} for m in methods}
 
     for b, g in glob.groupby("draw"):
+        is_point = b == POINT_DRAW
         per_task_metric: dict[str, dict[str, float]] = {}
         for t, m_, e_ in zip(g["task"], g["method"], g["E"]):
             per_task_metric.setdefault(t, {})[m_] = 1.0 - e_
         ranks_b = _per_domain_avg_rank(per_task_metric, methods, domain_map)
+        cur_overall: dict[str, float] = {}
         for m in methods:
             skill = _per_domain_skill_from_ratios(
                 _ratios_for_method(per_task_metric, m, baseline),
@@ -598,10 +618,17 @@ def aggregate_skill_rank_fairness(
                 clip_lower,
                 clip_upper,
             )
+            cur_overall[m] = skill.get("Overall", float("nan"))
             for scope, val in skill.items():
-                skill_draws[m].setdefault(scope, []).append(val)
+                if is_point:
+                    skill_point[m][scope] = val
+                else:
+                    skill_draws[m].setdefault(scope, []).append(val)
             for scope, per_m in ranks_b.items():
-                rank_draws[m].setdefault(scope, []).append(per_m[m])
+                if is_point:
+                    rank_point[m][scope] = per_m[m]
+                else:
+                    rank_draws[m].setdefault(scope, []).append(per_m[m])
 
         if sub.empty:
             continue
@@ -619,20 +646,27 @@ def aggregate_skill_rank_fairness(
                     clip_upper,
                 )
                 subgroup_S[m].setdefault(attr, {})[value] = s_sub
-                subS_draws[m].setdefault((attr, value), []).append(s_sub)
+                if is_point:
+                    subS_point[m][(attr, value)] = s_sub
+                else:
+                    subS_draws[m].setdefault((attr, value), []).append(s_sub)
         for m in methods:
-            s_overall = (
-                skill_draws[m]["Overall"][-1] if skill_draws[m].get("Overall") else float("nan")
-            )
-            fair_draws[m]["S_overall"].append(s_overall)
+            s_overall = cur_overall[m]
+            if is_point:
+                fair_point[m]["S_overall"] = s_overall
+            else:
+                fair_draws[m]["S_overall"].append(s_overall)
             for dname, dfn in disparity_fns.items():
                 per_attr = [dfn(vals) for vals in subgroup_S[m].values() if vals]
                 per_attr = [d for d in per_attr if np.isfinite(d)]
                 mean_disp = float(np.mean(per_attr)) if per_attr else 0.0
-                fair_draws[m][f"disparity_{dname}"].append(mean_disp)
-                fair_draws[m][f"fairness_adjusted_{dname}"].append(
-                    combine_fn(s_overall, mean_disp, lambda_fairness),
-                )
+                fa = combine_fn(s_overall, mean_disp, lambda_fairness)
+                if is_point:
+                    fair_point[m][f"disparity_{dname}"] = mean_disp
+                    fair_point[m][f"fairness_adjusted_{dname}"] = fa
+                else:
+                    fair_draws[m][f"disparity_{dname}"].append(mean_disp)
+                    fair_draws[m][f"fairness_adjusted_{dname}"].append(fa)
 
     skill_rows, rank_rows = [], []
     for m in methods:
@@ -642,7 +676,7 @@ def aggregate_skill_rank_fairness(
                     {
                         "method": m,
                         "scope": scope,
-                        **_summarise(skill_draws[m][scope], ci_level),
+                        **_summarise(skill_draws[m][scope], ci_level, skill_point[m].get(scope)),
                         "n_boot": n_boot,
                         "n_tasks": n_tasks.get(scope, 0),
                     }
@@ -652,7 +686,7 @@ def aggregate_skill_rank_fairness(
                     {
                         "method": m,
                         "scope": scope,
-                        **_summarise(rank_draws[m][scope], ci_level),
+                        **_summarise(rank_draws[m][scope], ci_level, rank_point[m].get(scope)),
                         "n_boot": n_boot,
                     }
                 )
@@ -665,7 +699,7 @@ def aggregate_skill_rank_fairness(
                     "method": m,
                     "demographic_attr": attr,
                     "subgroup": value,
-                    **_summarise(vals, ci_level),
+                    **_summarise(vals, ci_level, subS_point[m].get((attr, value))),
                     "n_boot": n_boot,
                 }
             )
@@ -676,21 +710,29 @@ def aggregate_skill_rank_fairness(
         row.update(
             {
                 f"S_overall_{k}": v
-                for k, v in _summarise(fair_draws[m]["S_overall"], ci_level).items()
+                for k, v in _summarise(
+                    fair_draws[m]["S_overall"], ci_level, fair_point[m].get("S_overall")
+                ).items()
             }
         )
         for dname in disparity_fns:
             row.update(
                 {
                     f"disparity_{dname}_{k}": v
-                    for k, v in _summarise(fair_draws[m][f"disparity_{dname}"], ci_level).items()
+                    for k, v in _summarise(
+                        fair_draws[m][f"disparity_{dname}"],
+                        ci_level,
+                        fair_point[m].get(f"disparity_{dname}"),
+                    ).items()
                 }
             )
             row.update(
                 {
                     f"fairness_adjusted_{dname}_{k}": v
                     for k, v in _summarise(
-                        fair_draws[m][f"fairness_adjusted_{dname}"], ci_level
+                        fair_draws[m][f"fairness_adjusted_{dname}"],
+                        ci_level,
+                        fair_point[m].get(f"fairness_adjusted_{dname}"),
                     ).items()
                 }
             )

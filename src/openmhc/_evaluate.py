@@ -116,6 +116,7 @@ def evaluate_prediction(
     tasks: str | list[str] = "all",
     data_dir: str | Path | None = None,
     seed: int = 42,
+    predictions_dir: str | Path | None = None,
 ) -> PredictionResults:
     """Run health-prediction evaluation with a custom encoder.
 
@@ -134,10 +135,12 @@ def evaluate_prediction(
             sub-paths (`processed/daily_hourly_hf/`, `splits/`, `labels/`,
             etc.) are derived from this root.
         seed: Random seed for classifiers and splits.
+        predictions_dir: when set, write per-(method, task) test predictions +
+            a shared ``_subgroups.json`` here — the input the paper-metrics
+            bootstrap paired-resamples for skill / rank / fairness CIs.
 
     Returns:
-        A PredictionResults instance with per-task metrics and a global score
-        (mean AUROC across binary tasks).
+        A PredictionResults instance with per-task metrics.
     """
     paths = _DatasetPaths.resolve(data_dir)
     _ensure_labels_env(paths.labels_dir)
@@ -160,9 +163,13 @@ def evaluate_prediction(
     # run_eval): an external encoder exposes ``encode``; a bundled baseline exposes
     # ``encode_cohort``/``fit``. run_eval selects the path, applies the uniform
     # PCA-50 + linear probe, and reports the primary metric per task type. The
-    # per-task temporal scope is baked into the windowed lookup (no eval-time knob).
+    # cohort and per-task temporal scope come from the lookup the engine selects.
     cfg = EvalConfig(
-        data_dir=str(paths.root), split_users=split_users, tasks=task_list, seed=seed
+        data_dir=str(paths.root),
+        split_users=split_users,
+        tasks=task_list,
+        seed=seed,
+        predictions_dir=str(predictions_dir) if predictions_dir is not None else None,
     )
     # A pure external encoder implements only the public ``encode(data)`` contract, so
     # wrap it to translate the engine's per-participant ``ParticipantSegments`` into the
@@ -175,8 +182,7 @@ def evaluate_prediction(
     results = run_eval(cfg, model)
 
     # Flatten the engine's ``{task: {metric: value, n_test}}`` into long-format
-    # records; the global score is the mean test AUPRC over binary tasks (AUPRC is
-    # the primary binary metric).
+    # records.
     probe_by_type = {
         "binary": "logistic_regression",
         "multiclass": "logistic_regression",
@@ -184,7 +190,6 @@ def evaluate_prediction(
         "regression": "linear_regression",
     }
     records: list[dict] = []
-    binary_primary: list[float] = []
     for task_name, task_metrics in results.items():
         if task_name == "config":
             continue
@@ -201,11 +206,7 @@ def evaluate_prediction(
                 "value": value,
                 "n_test": n_test,
             })
-        if task_type == "binary" and "auprc" in task_metrics:
-            binary_primary.append(task_metrics["auprc"])
-
-    global_score = float(np.mean(binary_primary)) if binary_primary else 0.0
-    return PredictionResults(records=records, global_score=global_score)
+    return PredictionResults(records=records)
 
 
 class _EncoderMethodAdapter:

@@ -5,8 +5,8 @@ first-order-differenced series) to each daily ``(19, 24)`` segment, yielding a
 49,728-d feature vector per segment. The daily-segment matrix (~1M segments ×
 49,728 ≈ 200 GB) is far too large to materialize, so we chunk-transform and pool
 into **per-(task, user)** running means over the segments whose label cell is
-non-sentinel for that task (the embedded-temporal before-label window, IC + TC,
-from the daily lookup).
+non-sentinel for that task (the eligible segments from the daily lookup — each
+participant's full history by default, subject to the inclusion criteria).
 
 Both stages run from raw data:
 

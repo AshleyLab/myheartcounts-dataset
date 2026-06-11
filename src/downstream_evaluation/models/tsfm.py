@@ -108,25 +108,28 @@ def build_user_timeline(ds, indices: list[int], n_channels: int):
 
 def build_window(timeline: UserTimeline, user_id, task, label_date, window_hours, n_channels,
                  weeks_after):
-    """Create a left-padded/cropped TSFM input window for one user-task pair.
+    """Create a left-padded/cropped input window for one participant-task pair.
 
-    ``weeks_after`` is the task's forward-window length (weeks), supplied by the
-    runner's temporal policy — not hardcoded here.
+    ``weeks_after`` is the task's forward-window length in weeks (from the runner's
+    temporal policy), or ``None`` to use the full history with no forward-window cap.
     """
     import pandas as pd
 
-    # Window endpoint = label + the per-task forward window (matches the feature
-    # methods' before_label window), so the encoder cohort stays aligned with the
-    # canonical IC: a user whose pre-label region is empty but who has data inside
-    # the forward window is kept rather than silently dropped.
+    # Eligible region = from the start of the participant's record up to the label
+    # date plus the per-task forward window. This matches how the cohort methods'
+    # lookup is built, so a participant with no pre-label data but data inside the
+    # forward window is kept rather than dropped. When the forward window is disabled
+    # (weeks_after is None), the whole record is eligible with no label-anchored cap.
     label_ts = pd.Timestamp(label_date).normalize()
-    label_end_ts = label_ts + pd.Timedelta(weeks=weeks_after)
-    cutoff_days = int((label_end_ts - timeline.start_date).days)
-    cutoff_hours = cutoff_days * HOURS_PER_DAY
-    if cutoff_hours <= 0:
-        return None
-
-    cutoff_hours = min(cutoff_hours, timeline.values.shape[0])
+    if weeks_after is None:
+        cutoff_hours = timeline.values.shape[0]
+    else:
+        label_end_ts = label_ts + pd.Timedelta(weeks=weeks_after)
+        cutoff_days = int((label_end_ts - timeline.start_date).days)
+        cutoff_hours = cutoff_days * HOURS_PER_DAY
+        if cutoff_hours <= 0:
+            return None
+        cutoff_hours = min(cutoff_hours, timeline.values.shape[0])
     initial_observed = timeline.observed_hours[:cutoff_hours]
     observed_positions = np.flatnonzero(initial_observed)
     if observed_positions.size == 0:
@@ -303,8 +306,8 @@ class TSFMEncoder:
         """Receive the runner's forward-window policy (``run_eval`` injects this)."""
         self._temporal = temporal
 
-    def _weeks_after(self, task: str) -> int:
-        """Forward-window length for ``task`` from the injected policy (52 default)."""
+    def _weeks_after(self, task: str) -> int | None:
+        """Forward window (weeks) for ``task`` from the injected policy; ``None`` = full history."""
         if self._temporal is not None:
             return self._temporal.weeks_after(task)
         # Standalone use without the runner: fall back to the shared defaults.
@@ -329,7 +332,12 @@ class TSFMEncoder:
     def _resolve_cache_dir(self) -> Path:
         if self._cache_dir is not None:
             return Path(self._cache_dir)
-        return Path("results") / f"{self.name}_embeddings" / "from_raw"
+        # Full-history embeddings live in their own directory so a forward-windowed
+        # cache is never silently reused for a full-history run (or vice versa). With
+        # no policy injected yet, fall back to the full-history default.
+        full_history = self._temporal is None or self._temporal.is_full_history
+        variant = "from_raw_full_history" if full_history else "from_raw"
+        return Path("results") / f"{self.name}_embeddings" / variant
 
     def _task_file(self, split: str, task: str) -> Path:
         return self._resolve_cache_dir() / split / f"{safe_task_filename(task)}.h5"

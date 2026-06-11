@@ -5,13 +5,19 @@
 external model (wrapped by the openmhc adapter) and the bundled baseline models
 through one engine.
 
+  - ``Method``    — the unified contract (``predicts_from_arrays=True``):
+                    ``fit(data, labels, task_type)`` / ``predict(data)``, per-participant
+                    arrays in and predictions out. Encoder-style methods run the uniform
+                    ``openmhc.LinearProbe`` inside ``predict``; end-to-end methods own
+                    their head. Supersedes ``Encoder`` + ``Predictor`` below, which the
+                    not-yet-migrated baselines still use.
   - ``Encoder``   — ``encode(data) -> (D,)`` per participant; the evaluator fits a
                     *uniform* PCA + linear probe, so the score reflects the
                     representation, not the probe.
   - ``Predictor`` — end-to-end; the evaluator scores its predictions directly.
 
 All cohort / temporal / label logic comes from :class:`TaskDataProvider` (the
-embedded-temporal lookup). The model only ever sees a participant's *eligible* data,
+labels lookup). The model only ever sees a participant's *eligible* data,
 at the granularity it declares via ``input_granularity`` (default series).
 """
 
@@ -21,7 +27,7 @@ import logging
 
 from downstream_evaluation.config import EvalConfig, TemporalWindowConfig
 from downstream_evaluation.data.binder import SegmentBinder
-from downstream_evaluation.data.provider import LOOKUP_BY_GRANULARITY, TaskDataProvider
+from downstream_evaluation.data.provider import TaskDataProvider, lookup_filename
 from downstream_evaluation.evaluation.evaluator import DownstreamEvaluator
 
 logger = logging.getLogger(__name__)
@@ -41,7 +47,7 @@ def run_eval(config: EvalConfig, model) -> dict[str, dict]:
     Returns ``{task: {**metrics, "n_test": int}, "config": {...}}``.
     """
     grain = getattr(model, "input_granularity", "series")
-    lookup = f"{config.data_dir}/processed/{LOOKUP_BY_GRANULARITY[grain]}"
+    lookup = f"{config.data_dir}/processed/{lookup_filename(grain, config.temporal.is_full_history)}"
     provider = TaskDataProvider(lookup, config.split_users, granularity=grain)
     # Cache-based models (precomputed per-user features/embeddings) declare
     # needs_segments=False and skip the segment binder entirely.
@@ -56,8 +62,29 @@ def run_eval(config: EvalConfig, model) -> dict[str, dict]:
 
     logger.info("Running prediction eval (granularity=%s) on %d tasks", grain, len(config.tasks))
 
-    evaluator = DownstreamEvaluator(seed=config.seed, pca_n_components=config.pca_n_components)
+    evaluator = DownstreamEvaluator(
+        seed=config.seed,
+        pca_n_components=config.pca_n_components,
+        predictions_dir=config.predictions_dir,
+    )
     results = evaluator.run(provider, binder, model, config.tasks)
+
+    # Predictions export: alongside the per-(method, task) parquets the evaluator
+    # wrote, persist one shared per-user subgroup map (age_group + sex) for the
+    # fairness bootstrap. Demographics come from the daily lookup regardless of the
+    # model's granularity, so the map covers the widest set of users.
+    if config.predictions_dir is not None:
+        from downstream_evaluation.evaluation.predictions_io import write_subgroup_map
+
+        test_users: set[str] = set()
+        for task in config.tasks:
+            try:
+                test_users.update(provider.task_data(task, "test").user_ids.tolist())
+            except KeyError:
+                continue
+        daily_lookup = f"{config.data_dir}/processed/{lookup_filename('daily', config.temporal.is_full_history)}"
+        write_subgroup_map(config.predictions_dir, daily_lookup, test_users)
+
     results["config"] = {
         "model": getattr(model, "name", type(model).__name__),
         "seed": config.seed,

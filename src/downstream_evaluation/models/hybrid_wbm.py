@@ -11,7 +11,8 @@ ordinal Spearman) each branch's predictions are percentile-ranked to [0, 1]
 independently before being combined, so the two independently-trained probes sit
 on a common scale; regression is left raw (Pearson r is scale-invariant).
 
-End-to-end ``Predictor``: the engine scores ``predict`` directly (no uniform probe).
+Unified ``Method`` (``predicts_from_arrays=True``): the engine scores ``predict``
+directly — Hybrid owns both branch probes, so no uniform probe is applied.
 """
 
 from __future__ import annotations
@@ -40,6 +41,7 @@ class Hybrid:
     name = "wbm"  # the reported WBM model is this hybrid
     input_granularity = "daily"  # full cohort + Linear fallback come from the daily lookup
     needs_segments = True  # the Linear branch needs the daily binder
+    predicts_from_arrays = True  # implements the unified Method contract
 
     def __init__(
         self, data_dir: str | None = None, checkpoint: str = DEFAULT_CHECKPOINT, seed: int = 42
@@ -52,6 +54,14 @@ class Hybrid:
         self._ssl_pca = None
         self._ssl_clf = None
         self._ttype: str | None = None
+        self._ctx = None  # EvalContext (task / split / cohort user_ids), injected per call
+
+    def set_context(self, ctx) -> None:
+        """Receive the per-(task, split) cohort context; the engine injects it before
+        ``fit`` / ``predict``. The SSL branch keys its weekly cache by ``task`` and the
+        Linear fallback needs ``user_ids`` / ``task`` — neither carried by the clean
+        ``fit(data, labels, task_type)`` signature, so they arrive here."""
+        self._ctx = ctx
 
     def _weekly_td(self, task: str, split: str) -> TaskData:
         """Weekly cohort + eligible week_starts for ``task`` (for the SSL branch)."""
@@ -71,22 +81,24 @@ class Hybrid:
             )
         return self._weekly_provider.task_data(task, split)
 
-    def fit(self, task_data: TaskData) -> None:
+    def fit(self, data, labels, task_type) -> None:
         from sklearn.decomposition import PCA
 
         from downstream_evaluation.config import ClassifierConfig
-        from downstream_evaluation.evaluation.metrics import get_task_type
         from downstream_evaluation.models.registry import create_model
 
-        self._ttype = get_task_type(task_data.task)
+        self._ttype = task_type
 
         # Fallback: Linear (38-d + demographics + scaler) fit on ALL train users.
-        self._linear.fit(task_data)
+        # Linear is a unified Method now — ``data`` is already the public (n,24,38)
+        # arrays it wants, and it shares Hybrid's cohort context, so forward both.
+        self._linear.set_context(self._ctx)
+        self._linear.fit(data, labels, self._ttype)
 
         # SSL: weekly WBM embeddings (build-on-miss) → PCA-50 → no-scaler probe,
         # fit on the SSL (weekly) train cohort only.
-        wtd = self._weekly_td(task_data.task, "train")
-        X_ssl = self._wbm.encode_cohort(task_data.task, wtd)  # (n_weekly, 256)
+        wtd = self._weekly_td(self._ctx.task, "train")
+        X_ssl = self._wbm.encode_cohort(self._ctx.task, wtd)  # (n_weekly, 256)
         self._ssl_pca = PCA(n_components=50, whiten=False).fit(X_ssl)
         X_ssl = self._ssl_pca.transform(X_ssl)
         y_ssl = wtd.labels
@@ -99,20 +111,21 @@ class Hybrid:
     def _branch_pred(self, clf, X):
         return clf.predict_proba(X)[:, 1] if self._ttype == "binary" else clf.predict(X)
 
-    def predict(self, task_data: TaskData) -> np.ndarray:
-        """Per-user routed predictions, aligned with ``task_data.user_ids``."""
+    def predict(self, data) -> np.ndarray:
+        """Per-user routed predictions, aligned with ``self._ctx.user_ids``."""
         from scipy.stats import rankdata
 
-        daily_users = [str(u) for u in task_data.user_ids]
+        daily_users = [str(u) for u in self._ctx.user_ids]
 
         # SSL-branch predictions, keyed by user (weekly cohort = SSL users).
-        wtd = self._weekly_td(task_data.task, task_data.split)
+        wtd = self._weekly_td(self._ctx.task, self._ctx.split)
         ssl_users = [str(u) for u in wtd.user_ids]
-        ssl_pred = self._branch_pred(self._ssl_clf, self._ssl_pca.transform(self._wbm.encode_cohort(task_data.task, wtd)))
+        ssl_pred = self._branch_pred(self._ssl_clf, self._ssl_pca.transform(self._wbm.encode_cohort(self._ctx.task, wtd)))
         ssl_by_user = dict(zip(ssl_users, ssl_pred))
 
         # Fallback predictions for every daily-cohort user (Linear, fit on all).
-        fb_pred = np.asarray(self._linear.predict(task_data))  # aligned to daily_users
+        self._linear.set_context(self._ctx)
+        fb_pred = np.asarray(self._linear.predict(data))  # aligned to daily_users
         fb_by_user = dict(zip(daily_users, fb_pred))
 
         ssl_set = set(ssl_users)

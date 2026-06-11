@@ -32,9 +32,9 @@ results.to_csv("my_results.csv")     # full long-format results
 ```
 
 `evaluate_prediction(model, tasks="all", data_dir=None, seed=42)` returns a
-`PredictionResults` with `.summary()`, `.to_csv()`, `.to_json()`, `.to_dataframe()`,
-and `.global_score` (mean AUPRC over the binary tasks). Set `data_dir` to the dataset
-root (or the `MHC_DATA_DIR` env var). List the tasks with `openmhc.list_tasks()`.
+`PredictionResults` with `.summary()`, `.to_csv()`, `.to_json()`, and `.to_dataframe()`.
+Set `data_dir` to the dataset root (or the `MHC_DATA_DIR` env var). List the tasks with
+`openmhc.list_tasks()`.
 
 ## How scoring works
 

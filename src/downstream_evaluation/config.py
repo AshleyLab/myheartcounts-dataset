@@ -23,25 +23,36 @@ LABEL_REFERENCE_DATE = "2020-06-01"
 # --------------------------------------------------------------------------- #
 @dataclass
 class TemporalWindowConfig:
-    """Per-task forward window (weeks) — the before-label window every method shares.
+    """Forward-window policy — the before-label window every method shares.
 
-    A task's eligible region runs from the start of a user's data up to ``label +
-    weeks_after(task)`` weeks. This is baked into the prebuilt ``*_windowed`` label
-    lookups the cohort methods read, and applied live by the from-raw window builders
-    (Toto/Chronos-2). Keeping it here makes it the single source of truth: the runner
-    owns the policy, and any from-raw model is handed the window rather than redefining
-    it. age and BiologicalSex widen to a 156-week window (these demographic tasks
-    include data further from the label date).
+    The benchmark uses each participant's full history: by default there is no forward
+    window, so a participant's whole record is eligible (subject to the data-quality
+    inclusion criteria). ``weeks_after`` returns ``None`` for every task, the cohort
+    comes from the inclusion-criteria-only lookup, and from-raw models (Toto/Chronos-2)
+    build their input over the full history.
+
+    The forward-windowed policy is retained for ablation via :meth:`windowed`: it caps
+    each task's eligible region at ``label + weeks_after`` weeks (52 by default; 156 for
+    age and BiologicalSex, which include data further from the label date), and is baked
+    into the prebuilt ``*_windowed`` label lookups the cohort methods read.
     """
 
-    default_weeks_after: int = 52
-    task_weeks_after: dict[str, int] = field(
-        default_factory=lambda: {"age": 156, "BiologicalSex": 156}
-    )
+    default_weeks_after: int | None = None
+    task_weeks_after: dict[str, int] = field(default_factory=dict)
 
-    def weeks_after(self, task: str) -> int:
-        """Forward-window length (weeks) for ``task``."""
+    def weeks_after(self, task: str) -> int | None:
+        """Forward-window length in weeks for ``task`` (``None`` = no cap, full history)."""
         return self.task_weeks_after.get(task, self.default_weeks_after)
+
+    @property
+    def is_full_history(self) -> bool:
+        """True when no forward-window cap applies (the benchmark default)."""
+        return self.default_weeks_after is None and not self.task_weeks_after
+
+    @classmethod
+    def windowed(cls) -> "TemporalWindowConfig":
+        """Forward-windowed ablation policy (52 weeks; age and BiologicalSex 156)."""
+        return cls(default_weeks_after=52, task_weeks_after={"age": 156, "BiologicalSex": 156})
 
 
 @dataclass
@@ -55,6 +66,9 @@ class EvalConfig:
         seed: random_state for the probe / model.
         pca_n_components: PCA dim for the encoder probe (``None`` to disable).
         temporal: the per-task forward-window policy (handed to from-raw models).
+        predictions_dir: when set, the evaluator writes per-(method, task) test
+            predictions + a shared ``_subgroups.json`` here (input to the
+            paper-metrics bootstrap); ``None`` disables prediction export.
     """
 
     data_dir: str
@@ -63,6 +77,7 @@ class EvalConfig:
     seed: int = 42
     pca_n_components: int | None = 50
     temporal: TemporalWindowConfig = field(default_factory=TemporalWindowConfig)
+    predictions_dir: str | None = None
 
 
 # --------------------------------------------------------------------------- #

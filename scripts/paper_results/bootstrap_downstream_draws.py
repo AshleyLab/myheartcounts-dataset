@@ -15,8 +15,7 @@ Usage::
     PYTHONPATH=src python scripts/paper_results/bootstrap_downstream_draws.py \
         --predictions_dir results/eval/final/predictions \
         --csvs_dir results/eval/final \
-        --methods stat_simple multirocket mae_encoder toto_encoder \
-                  chronos2_encoder fe_xgboost hybrid_ssl_stat_simple gru_d_multitask \
+        --methods linear multirocket mae toto chronos2 xgboost wbm gru_d \
         --n_bootstrap 1000 --seed 42 \
         --output results/paper/bootstrap_draws.parquet
 

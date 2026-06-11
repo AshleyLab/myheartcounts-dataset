@@ -6,6 +6,7 @@ No base class inheritance required -- just implement the right methods.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
 import numpy as np
@@ -13,11 +14,12 @@ import numpy as np
 
 @runtime_checkable
 class Encoder(Protocol):
-    """Protocol for health-prediction encoders — the model contract for Surface 1
-    (external submissions) and the bundled Surface-2 baselines alike.
+    """Protocol for health-prediction encoders — the model contract for external
+    submissions and the bundled baselines alike.
 
     An encoder maps **one participant's eligible wearable data** — already filtered
-    to the task's cohort and temporal window by the benchmark (IC + TC) — to a
+    to the task's cohort and temporal scope by the benchmark (the inclusion criteria,
+    plus any forward window) — to a
     single fixed-size embedding. The benchmark then fits a *uniform* linear probe
     on the embeddings and scores it, so a model's result reflects its representation
     rather than its choice of probe. The same protocol is implemented by external
@@ -81,6 +83,82 @@ class Predictor(Protocol):
 
     def fit(self, data: list[np.ndarray], labels: np.ndarray) -> None:
         """Fit on the train cohort: per-participant eligible data + aligned labels."""
+        ...
+
+    def predict(self, data: list[np.ndarray]) -> np.ndarray:
+        """Return one prediction per participant, aligned with ``data``."""
+        ...
+
+
+@dataclass
+class EvalContext:
+    """Per-(task, split) context the benchmark hands a bundled baseline.
+
+    The unified :class:`Method` contract passes only clean arrays + labels +
+    ``task_type`` — everything a from-scratch external model needs. A *bundled*
+    baseline may additionally need to know **which** cohort it is being fit on (to
+    align a precomputed per-user feature/embedding cache) or the **task name** (the
+    ``linear`` baseline drops a demographic covariate on its own task, e.g. age is
+    not a feature for the ``age`` task). The engine delivers that here via the
+    optional ``set_context`` hook — called once before ``fit`` (train context) and
+    once before ``predict`` (test context) — so the public ``fit`` / ``predict``
+    signatures stay minimal. External models simply don't implement ``set_context``
+    and never see it.
+
+    Attributes:
+        task: the task name (e.g. ``"Diabetes"``); ``task_type`` is ``get_task_type(task)``.
+        split: the cohort split — ``"train"`` / ``"validation"`` / ``"test"``.
+        user_ids: cohort user ids, aligned with the ``data`` / ``labels`` passed to
+            ``fit`` / ``predict``.
+    """
+
+    task: str
+    split: str
+    user_ids: np.ndarray
+
+
+@runtime_checkable
+class Method(Protocol):
+    """Unified prediction contract — **fit on arrays + labels, return predictions**.
+
+    Supersedes :class:`Encoder` + :class:`Predictor` with one shape: a method fits on
+    the train cohort's per-participant data and labels, then returns one prediction
+    per participant on a held-out cohort. Representation isolation is preserved by
+    *convention*: an encoder-style method runs its own representation and then the
+    benchmark's uniform head, :class:`openmhc.LinearProbe`, inside ``fit`` /
+    ``predict`` — so its score still reflects the representation, not the choice of
+    classifier — while an end-to-end method owns its head directly.
+
+    ``data`` is a list with one entry per participant, at ``input_granularity``
+    (default ``"daily"`` → each entry ``(n_segments, 24, 38)``: channels 0-18 raw
+    sensor values with NaN at missing positions, 19-37 the missingness mask).
+    ``labels`` is a ``(n,)`` array aligned with ``data``. ``task_type`` is one of
+    ``"binary"``, ``"multiclass"``, ``"ordinal"``, ``"regression"``.
+
+    Engine opt-in: the benchmark routes a model through this contract when it sets the
+    class attribute ``predicts_from_arrays = True``. A model may also define the
+    optional ``set_context(ctx: EvalContext)`` hook; the engine calls it before
+    ``fit`` and again before ``predict`` (bundled baselines only — see
+    :class:`EvalContext`).
+
+    Example (encoder-style, via the uniform probe)::
+
+        import openmhc
+
+        class MyMethod:
+            input_granularity = "daily"
+            predicts_from_arrays = True
+
+            def fit(self, data, labels, task_type):
+                emb = np.stack([self._encode(x) for x in data])
+                self._probe = openmhc.LinearProbe(task_type).fit(emb, labels)
+
+            def predict(self, data):
+                return self._probe.predict(np.stack([self._encode(x) for x in data]))
+    """
+
+    def fit(self, data: list[np.ndarray], labels: np.ndarray, task_type: str) -> None:
+        """Fit on the train cohort: per-participant ``data`` + aligned ``labels``."""
         ...
 
     def predict(self, data: list[np.ndarray]) -> np.ndarray:

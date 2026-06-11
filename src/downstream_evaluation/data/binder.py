@@ -31,6 +31,18 @@ class ParticipantSegments:
     values: np.ndarray
     mask: np.ndarray
 
+    def as_array(self) -> np.ndarray:
+        """The public ``(n_segments, T, 38)`` form handed to a :class:`~openmhc.Method`:
+        values (channels 0-18, NaN at missing) concatenated with the missingness mask
+        (channels 19-37). Both halves are already float32, so this is lossless."""
+        return np.concatenate(
+            [
+                np.asarray(self.values, dtype=np.float32),
+                np.asarray(self.mask, dtype=np.float32),
+            ],
+            axis=-1,
+        )
+
 
 class SegmentBinder:
     """Materialize per-participant eligible segments from lookup row positions.

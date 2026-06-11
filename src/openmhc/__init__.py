@@ -5,7 +5,6 @@ Quick start:
     >>> import openmhc
     >>> results = openmhc.evaluate_prediction(my_encoder)
     >>> results.summary()
-    >>> results.global_score  # mean AUROC across binary tasks
 
     >>> results = openmhc.evaluate_imputation(my_imputer)
     >>> results.summary()
@@ -17,19 +16,31 @@ Quick start:
 
 from openmhc._constants import MASKING_SCENARIOS, SENSOR_CHANNELS
 from openmhc._dataset import data_dir, download_dataset
-from openmhc._protocols import Encoder, Forecaster, Imputer, Predictor
+from openmhc._protocols import (
+    Encoder,
+    EvalContext,
+    Forecaster,
+    Imputer,
+    Method,
+    Predictor,
+)
 from openmhc._results import (
     ForecastingResults,
     ImputationResults,
     PredictionResults,
 )
+from openmhc.probe import LinearProbe
 
 __all__ = [
     # Protocols
+    "Method",
+    "EvalContext",
     "Encoder",
     "Predictor",
     "Imputer",
     "Forecaster",
+    # Standard probe (turns embeddings into predictions)
+    "LinearProbe",
     # Evaluation functions
     "evaluate_prediction",
     "evaluate_imputation",
@@ -53,6 +64,7 @@ def evaluate_prediction(
     tasks: str | list[str] = "all",
     data_dir: str | None = None,
     seed: int = 42,
+    predictions_dir: str | None = None,
 ) -> PredictionResults:
     """Run health-prediction evaluation with a custom encoder.
 
@@ -62,13 +74,17 @@ def evaluate_prediction(
         data_dir: Path to the `daily_hourly_hf` dataset directory.
             None uses the default location.
         seed: Random seed for classifiers and splits.
+        predictions_dir: when set, write per-(method, task) test predictions +
+            a shared ``_subgroups.json`` here, for the paper-metrics bootstrap.
 
     Returns:
-        PredictionResults with per-task metrics and a global score.
+        PredictionResults with per-task metrics.
     """
     from openmhc._evaluate import evaluate_prediction as _eval
 
-    return _eval(encoder, tasks=tasks, data_dir=data_dir, seed=seed)
+    return _eval(
+        encoder, tasks=tasks, data_dir=data_dir, seed=seed, predictions_dir=predictions_dir
+    )
 
 
 def evaluate_imputation(

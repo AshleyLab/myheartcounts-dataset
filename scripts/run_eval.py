@@ -25,7 +25,10 @@ def build_model(method: str, data_dir: str):
     """Instantiate a bundled baseline by name."""
     if method in ("wbm", "hybrid"):
         from downstream_evaluation.models.hybrid_wbm import Hybrid
-        return Hybrid(data_dir)
+        # WBM_CHECKPOINT overrides the default wandb SSL ref with a local .ckpt path
+        # (e.g. the wandb-cached copy) so the run needs no network on the compute node.
+        ckpt = os.environ.get("WBM_CHECKPOINT")
+        return Hybrid(data_dir, checkpoint=ckpt) if ckpt else Hybrid(data_dir)
     if method == "linear":
         from downstream_evaluation.models.linear import Linear
         return Linear(data_dir=data_dir)
@@ -61,13 +64,18 @@ def main() -> None:
     paths = _DatasetPaths.resolve(os.environ.get("MHC_DATA_DIR"))
     model = build_model(method, str(paths.root))
 
+    # PREDICTIONS_DIR (optional): emit per-(method, task) test predictions +
+    # _subgroups.json for the paper-metrics bootstrap (skill / rank / fairness CIs).
     results = openmhc.evaluate_prediction(
-        model, tasks=HEADLINE_TASKS, data_dir=str(paths.root)
+        model,
+        tasks=HEADLINE_TASKS,
+        data_dir=str(paths.root),
+        predictions_dir=os.environ.get("PREDICTIONS_DIR"),
     )
 
     out = os.environ.get("OUT_CSV", f"eval_{method}.csv")
     results.to_csv(out)
-    print(f"wrote {out}: {len(results.records)} records, global_score={results.global_score:.4f}")
+    print(f"wrote {out}: {len(results.records)} records")
 
 
 if __name__ == "__main__":

@@ -16,8 +16,6 @@ import warnings
 
 import numpy as np
 
-from downstream_evaluation.data.provider import TaskData
-
 logger = logging.getLogger(__name__)
 
 _DEMO_COVARIATES = ["age", "BiologicalSex", "BMI_values"]
@@ -51,10 +49,11 @@ def _pool_mean_std(values: np.ndarray) -> np.ndarray:
 
 
 class Linear:
-    """End-to-end ``Predictor``: raw 38-d mean/std + demographics + a linear probe."""
+    """Unified ``Method``: raw 38-d mean/std + demographics + a linear probe."""
 
     name = "linear"
     input_granularity = "daily"
+    predicts_from_arrays = True  # implements the unified Method contract
 
     def __init__(self, data_dir: str | None = None, seed: int = 42) -> None:
         """Args:
@@ -66,6 +65,15 @@ class Linear:
         self._demo_lookup: dict | None = None
         self._clf = None
         self._ttype: str | None = None
+        self._ctx = None  # EvalContext (task name + cohort user_ids), injected per call
+
+    def set_context(self, ctx) -> None:
+        """Receive the cohort context; the engine injects it before ``fit`` / ``predict``.
+
+        Demographics need the participants' ``user_ids`` (to look each one up) and the
+        ``task`` name (to drop a covariate on its own task), neither of which the clean
+        ``fit(data, labels, task_type)`` signature carries — so they arrive here."""
+        self._ctx = ctx
 
     def _ensure_demo_lookup(self) -> None:
         if self._demo_lookup is not None:
@@ -80,25 +88,29 @@ class Linear:
         labels_df = pd.read_parquet(paths.daily_labels_lookup)
         self._demo_lookup = build_demo_user_lookup_from_labels_df(labels_df, _DEMO_COVARIATES)
 
-    def _features(self, task_data: TaskData) -> np.ndarray:
-        """Per-user pooled 38-d + demographics (per-task exclusions), NaN/inf-filled."""
+    def _features(self, data) -> np.ndarray:
+        """Per-user pooled 38-d + demographics (per-task exclusions), NaN/inf-filled.
+
+        ``data`` is one public ``(n_segments, 24, 38)`` array per participant; channels
+        0-18 are the raw values this baseline pools (the mask, 19-37, is unused)."""
         from downstream_evaluation.demo_covariates import apply_demographics
 
         self._ensure_demo_lookup()
-        X = np.stack([_pool_mean_std(p.values) for p in task_data.inputs])  # (n_users, 38)
+        X = np.stack(
+            [_pool_mean_std(np.asarray(d, dtype=np.float32)[..., :19]) for d in data]
+        )  # (n_users, 38)
         X = apply_demographics(
-            X, task_data.user_ids, task_data.task, self._demo_lookup, _DEMO_COVARIATES
+            X, self._ctx.user_ids, self._ctx.task, self._demo_lookup, _DEMO_COVARIATES
         )
         return np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
 
-    def fit(self, task_data: TaskData) -> None:
+    def fit(self, data, labels, task_type) -> None:
         from downstream_evaluation.config import ClassifierConfig
-        from downstream_evaluation.evaluation.metrics import get_task_type
         from downstream_evaluation.models.registry import create_model
 
-        self._ttype = get_task_type(task_data.task)
-        X = self._features(task_data)
-        y = task_data.labels
+        self._ttype = task_type
+        X = self._features(data)
+        y = labels
         if self._ttype in ("binary", "multiclass", "ordinal"):
             y = y.astype(int)
         cfg = ClassifierConfig(
@@ -107,8 +119,8 @@ class Linear:
         self._clf = create_model(cfg, random_state=self.seed, task_type=self._ttype)
         self._clf.fit(X, y)
 
-    def predict(self, task_data: TaskData) -> np.ndarray:
-        X = self._features(task_data)
+    def predict(self, data) -> np.ndarray:
+        X = self._features(data)
         if self._ttype == "binary":
             return self._clf.predict_proba(X)[:, 1]
         return self._clf.predict(X)

@@ -18,7 +18,7 @@ Usage::
     PYTHONPATH=src python scripts/paper_results/aggregate_downstream_paper_metrics.py \
         --draws results/paper/bootstrap_draws.parquet \
         --output-dir results/paper/ \
-        --baseline-method stat_simple \
+        --baseline-method linear \
         --disparity-fn max_minus_min --disparity-fn worst_group \
         --lambda-fairness 0.5
 """
@@ -53,8 +53,8 @@ def main() -> int:
     p.add_argument("--output-dir", type=Path, required=True, help="Dir for the four sidecar CSVs")
     p.add_argument(
         "--baseline-method",
-        default="stat_simple",
-        help="Method treated as the skill-score baseline (default: stat_simple)",
+        default="linear",
+        help="Method treated as the skill-score baseline (default: linear)",
     )
     p.add_argument("--clip-lower", type=float, default=1e-2)
     p.add_argument("--clip-upper", type=float, default=100.0)
