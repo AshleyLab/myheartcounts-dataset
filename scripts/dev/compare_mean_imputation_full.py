@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -46,10 +47,17 @@ logger = logging.getLogger(__name__)
 #   dataset_version.json — version marker (required by the strict resolver)
 DATA_DIR = Path.home() / ".cache" / "openmhc" / "data-full"
 
-PRIVATE_RUN_DIR = Path(
-    "/home/narayanschuetz/MHC-benchmark/results/imputation_eval"
-    "/baselines_max91d_21679652_imputation_mean_20260416_044624"
-)
+# Override via MHC_BENCHMARK_MEAN_RUN env var to point at your local canonical
+# private mean run (the script is dev-only; the reference run lives in a
+# private repo).
+PRIVATE_RUN_DIR = Path(os.environ.get(
+    "MHC_BENCHMARK_MEAN_RUN",
+    str(
+        Path.home()
+        / "MHC-benchmark/results/imputation_eval"
+        / "baselines_max91d_21679652_imputation_mean_20260416_044624"
+    ),
+))
 PRIVATE_METRICS_FILE = PRIVATE_RUN_DIR / "pairs" / "aggregated_metrics.json"
 
 ATOL = 1e-3

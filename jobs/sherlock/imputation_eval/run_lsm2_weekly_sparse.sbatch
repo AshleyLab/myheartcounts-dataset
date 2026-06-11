@@ -11,11 +11,11 @@
 # GPU_MEM tiers on Sherlock: 11,12,16,24,32,48,80 (40 is not a real label).
 # Weekly-sparse keeps activations across 7 days; request 32GB tier for headroom.
 #SBATCH --constraint=GPU_MEM:32GB
-#SBATCH --output=/scratch/users/schuetzn/logs/openmhc/lsm2_weekly_sparse_%j.out
-#SBATCH --error=/scratch/users/schuetzn/logs/openmhc/lsm2_weekly_sparse_%j.err
+#SBATCH --output=/scratch/users/%u/logs/openmhc/lsm2_weekly_sparse_%j.out
+#SBATCH --error=/scratch/users/%u/logs/openmhc/lsm2_weekly_sparse_%j.err
 
 # shellcheck disable=SC1091
-source /home/users/schuetzn/myheartcounts-dataset/jobs/sherlock/imputation_eval/_common.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_common.sh"
 
 nvidia-smi || true
 

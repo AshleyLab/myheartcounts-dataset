@@ -27,11 +27,11 @@
 #SBATCH --mem=128G
 #SBATCH --gpus=1
 # NOTE: no GPU_MEM constraint — let SLURM place us on whichever GPU is free.
-#SBATCH --output=/scratch/users/schuetzn/logs/openmhc/lsm2_weekly_sparse_24gb_%j.out
-#SBATCH --error=/scratch/users/schuetzn/logs/openmhc/lsm2_weekly_sparse_24gb_%j.err
+#SBATCH --output=/scratch/users/%u/logs/openmhc/lsm2_weekly_sparse_24gb_%j.out
+#SBATCH --error=/scratch/users/%u/logs/openmhc/lsm2_weekly_sparse_24gb_%j.err
 
 # shellcheck disable=SC1091
-source /home/users/schuetzn/myheartcounts-dataset/jobs/sherlock/imputation_eval/_common.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_common.sh"
 
 nvidia-smi || true
 

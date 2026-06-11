@@ -2,7 +2,7 @@
 # Recommended: ``release_dir`` to a manifest-bundled release.
 type: timesnet
 release_dir: ???
-device: cuda
+device: auto
 inference_batch_size: 64
 pypots:
   model_path: ""

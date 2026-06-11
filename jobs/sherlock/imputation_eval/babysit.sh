@@ -6,7 +6,7 @@
 # and prints a status table.
 #
 # Trigger via /loop:
-#   /loop 1h bash /home/users/schuetzn/myheartcounts-dataset/jobs/sherlock/imputation_eval/babysit.sh
+#   /loop 1h bash <repo>/jobs/sherlock/imputation_eval/babysit.sh
 
 set -euo pipefail
 exec python3 "$(dirname "$0")/_babysit.py" "$@"

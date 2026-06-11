@@ -3,7 +3,7 @@
 type: segrnn
 segrnn:
   checkpoint_path: ???
-  device: cuda
+  device: auto
   batch_size: 64
   seg_len: 24
   d_model: 64

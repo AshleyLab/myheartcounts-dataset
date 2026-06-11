@@ -1,41 +1,38 @@
 # shellcheck shell=bash
 # Common environment for every imputation-eval sbatch on Sherlock.
 # Source from each sbatch as:
-#   source /home/users/schuetzn/myheartcounts-dataset/jobs/sherlock/imputation_eval/_common.sh
+#   source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_common.sh"
 #
-# Idempotent. Safe to source multiple times.
+# Idempotent. Safe to source multiple times. All overridable knobs come
+# from ``../jobs/sherlock/_env.sh`` (REPO, SCRATCH_RUN_ROOT, LOGS,
+# MHC_CACHE, MHC_DATA_DIR, WANDB_DIR, RELEASES).
 
 set -euo pipefail
 
-# --- Paths --------------------------------------------------------------------
-export REPO=/home/users/schuetzn/myheartcounts-dataset
+# --- Shared defaults ----------------------------------------------------------
+# Resolve location of this file, source the shared env defaults.
+_COMMON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+source "${_COMMON_DIR}/../_env.sh"
 
-# Dataset cache populated by `openmhc.download_dataset(version="full")`.
+# --- Eval-specific paths ------------------------------------------------------
+# Dataset cache populated by ``openmhc.download_dataset(version="full")``.
 # 292 GB, 11894 users, 2.82M daily rows. version="full".
-export MHC_CACHE=/scratch/users/schuetzn/.myheartcounts-dataset-cache/data-full
-export MHC_DATA_DIR=${MHC_CACHE}          # required by reference-imputer fit-phase loaders
 export DAILY_HF_DIR=${MHC_CACHE}/processed/daily_hf
 export SPLIT_FILE=${MHC_CACHE}/splits/sharable_users_seed42_2026.json
 
 # Output roots. Everything under OUT_BASE; nothing in $HOME.
-export OUT_BASE=/scratch/users/schuetzn/openmhc-imputation-eval
+: "${OUT_BASE:=${SCRATCH_RUN_ROOT}/openmhc-imputation-eval}"
+export OUT_BASE
 export RUNS_ROOT=${OUT_BASE}/runs       # one subdir per method (sweep config layout)
 export PAPER_OUT=${OUT_BASE}/paper
-export LOGS=/scratch/users/schuetzn/logs/openmhc
-
-# W&B-downloaded paper checkpoint bundles (populated by 00_setup.sh).
-export RELEASES=/scratch/users/schuetzn/releases
 
 # Mask files for strict parity with MHC-benchmark's max91d ablation.
-# Copied from the DVC cache (the in-repo /data/imputation/masks/ paths are
-# LFS pointer stubs on this checkout, since git-lfs isn't installed on
-# Sherlock). Materialized once by hand from /home/users/schuetzn/MHC-benchmark/
-# (DVC symlinks -> /scratch/users/schuetzn/dvc-cache/).
+# Materialized once from your DVC cache, if you have one.
 export MASKS=${OUT_BASE}/masks/sharable_users_seed42_2026_max91d
 
 # --- Hydra / W&B housekeeping -------------------------------------------------
 export HYDRA_FULL_ERROR=1
-export WANDB_DIR=/scratch/users/schuetzn/wandb_data/openmhc
 
 mkdir -p "$OUT_BASE" "$RUNS_ROOT" "$PAPER_OUT" "$LOGS" "$WANDB_DIR"
 

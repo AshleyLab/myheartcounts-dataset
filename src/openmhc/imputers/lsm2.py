@@ -43,6 +43,7 @@ from typing import Any
 
 import numpy as np
 
+from openmhc._device import resolve_device
 from openmhc.imputers._base import BaseImputer
 from openmhc.imputers._release import ReleaseLoadableMixin
 
@@ -70,7 +71,7 @@ class _LSM2ImputerBase(ReleaseLoadableMixin, BaseImputer):
         model_path: str | Path,
         version,
         *,
-        device: str = "cuda",
+        device: str = "auto",
         inference_batch_size: int = 64,
         inference_dropout_removal_ratio: float | None = 0.0,
         normalization_stats_path: str | Path | None = None,
@@ -80,7 +81,7 @@ class _LSM2ImputerBase(ReleaseLoadableMixin, BaseImputer):
 
         super().__init__(version=version, data_dir=data_dir)
         self._torch = torch
-        self._device = torch.device(device)
+        self._device = torch.device(resolve_device(device))
         self._inference_batch_size = int(inference_batch_size)
         self._inference_dropout_removal_ratio = inference_dropout_removal_ratio
         self._ckpt_file = self._resolve_ckpt_file(Path(model_path))
@@ -286,7 +287,7 @@ class LSM2Imputer(_LSM2ImputerBase):
         decoder_num_heads: int = 4,
         mlp_ratio: float = 4.0,
         mask_ratio: float = 0.5,
-        device: str = "cuda",
+        device: str = "auto",
         inference_batch_size: int = 64,
         inference_dropout_removal_ratio: float | None = 0.0,
         normalization_stats_path: str | Path | None = None,
@@ -421,7 +422,7 @@ class LSM2WeeklySparseImputer(_LSM2ImputerBase):
         decoder_num_heads: int = 4,
         mlp_ratio: float = 4.0,
         mask_ratio: float = 0.5,
-        device: str = "cuda",
+        device: str = "auto",
         inference_batch_size: int = 16,
         inference_dropout_removal_ratio: float | None = 0.0,
         normalization_stats_path: str | Path | None = None,

@@ -19,6 +19,7 @@ Run from 00_setup.sh; idempotent.
 
 from __future__ import annotations
 
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -26,10 +27,17 @@ from pathlib import Path
 # Import openmhc's write_manifest so the schema stays in sync.
 from openmhc.imputers._release import write_manifest
 
-RELEASES = Path("/scratch/users/schuetzn/releases")
+# Allow overrides via env vars so anyone with a Sherlock-style layout can run
+# this without editing the file. Defaults match the layout produced by
+# ``jobs/sherlock/_env.sh`` + ``00_setup.sh``.
+_SCRATCH = Path(os.environ.get("SCRATCH_RUN_ROOT", f"/scratch/users/{os.environ.get('USER', 'unknown')}"))
+RELEASES = Path(os.environ.get("RELEASES", str(_SCRATCH / "releases")))
+_MHC_CACHE = Path(os.environ.get("MHC_CACHE", str(_SCRATCH / ".myheartcounts-dataset-cache/data-full")))
 STATS_SRC = Path(
-    "/scratch/users/schuetzn/.myheartcounts-dataset-cache/data-full/processed/"
-    "normalization_stats.json"
+    os.environ.get(
+        "MHC_NORMALIZATION_STATS",
+        str(_MHC_CACHE / "processed" / "normalization_stats.json"),
+    )
 )
 
 # Per-model arch params extracted from

@@ -311,6 +311,26 @@ class TestBaseImputer:
             bi.impute(np.zeros((1, 19, 10)), np.ones((1, 19, 10)), np.zeros((1, 19, 10)))
 
 
+# The ``stub_iter_train_data`` fixture yields exactly these two batches as
+# the training stream (see ``_fake_iter_split_data`` above). Independently
+# reconstructing them here lets the mean/mode tests compute expected fill
+# values from the *training data*, not from the imputer's stored statistics
+# — otherwise the assertion would be tautological (filling-with-X equals X).
+_FIXTURE_TRAIN_BATCH_SEEDS: tuple[int, ...] = (10, 11)
+_FIXTURE_TRAIN_BATCH_SIZE: int = 40
+
+
+def _materialize_fixture_train_data() -> tuple[np.ndarray, np.ndarray]:
+    """Reproduce the concatenated (data, mask) the stub fixture streams."""
+    batches = [
+        _make_synthetic_batch(_FIXTURE_TRAIN_BATCH_SIZE, seed=s)
+        for s in _FIXTURE_TRAIN_BATCH_SEEDS
+    ]
+    data = np.concatenate([b[0] for b in batches], axis=0)
+    mask = np.concatenate([b[1] for b in batches], axis=0)
+    return data, mask
+
+
 class TestMeanImputer:
     def test_fills_only_target_positions_with_channel_mean(self, stub_iter_train_data):
         from openmhc.imputers import MeanImputer
@@ -332,12 +352,20 @@ class TestMeanImputer:
         # Every target position got a finite value.
         target_bool = target > 0.5
         assert np.all(np.isfinite(out[target_bool]))
-        # Per-channel: filled value equals the imputer's stored channel mean.
+
+        # Compute the expected channel mean directly from the training batches
+        # the fixture streams — using ``np.nanmean``, which is independent of
+        # the imputer's streaming sum/count implementation.
+        train_data, train_mask = _materialize_fixture_train_data()
+        train_obs = train_data.copy()
+        train_obs[train_mask < 0.5] = np.nan
+        expected_means = np.nanmean(train_obs, axis=(0, 2)).astype(np.float32)
+
         for ch in range(N_CHANNELS):
             ch_target = target_bool[:, ch, :]
             if ch_target.any():
                 vals = out[:, ch, :][ch_target]
-                np.testing.assert_allclose(vals, imp._channel_means[ch], rtol=1e-5)
+                np.testing.assert_allclose(vals, expected_means[ch], rtol=1e-5)
 
 
 class TestModeImputer:
@@ -350,12 +378,41 @@ class TestModeImputer:
         out = imp.impute(data, mask, target)
         assert out.shape == data.shape
         assert out.dtype == np.float32
+
+        # Recompute the per-channel value distribution from the same training
+        # batches the fixture streams, then verify each channel's fill value
+        # is *a* mode (has maximum count among rounded values). We can't
+        # assert equality with a single expected value because round-to-1dp
+        # ties are common; we instead check "filled value is one of the
+        # most-frequent values" — which is the contract ``ModeImputer``
+        # implements. ``np.unique`` + ``argmax`` is independent of the
+        # imputer's ``Counter``-based path.
+        train_data, train_mask = _materialize_fixture_train_data()
         target_bool = target > 0.5
         for ch in range(N_CHANNELS):
             ch_target = target_bool[:, ch, :]
-            if ch_target.any():
-                vals = out[:, ch, :][ch_target]
-                np.testing.assert_allclose(vals, imp._channel_modes[ch], rtol=1e-5)
+            if not ch_target.any():
+                continue
+            vals = out[:, ch, :][ch_target]
+            # All target positions in this channel get the same fill value.
+            assert np.all(vals == vals[0]), f"ch={ch}: fill not constant: {vals}"
+            filled = float(vals[0])
+
+            ch_valid = (train_mask[:, ch, :] > 0.5) & np.isfinite(train_data[:, ch, :])
+            if not ch_valid.any():
+                continue
+            rounded = np.round(train_data[:, ch, :][ch_valid], imp.decimal_precision)
+            unique, counts = np.unique(rounded, return_counts=True)
+            max_count = int(counts.max())
+            match = np.where(np.isclose(unique, filled, atol=1e-5))[0]
+            assert match.size == 1, (
+                f"ch={ch}: filled value {filled!r} is not among the observed "
+                f"rounded training values {unique.tolist()}"
+            )
+            assert int(counts[match[0]]) == max_count, (
+                f"ch={ch}: filled={filled} has count {int(counts[match[0]])}, "
+                f"max count={max_count} — not a mode"
+            )
 
 
 class TestLinearImputer:

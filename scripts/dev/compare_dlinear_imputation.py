@@ -14,7 +14,7 @@ the same schema produced by ``ScenarioMetricsAccumulator.compute()`` in
 Usage:
     python scripts/dev/compare_dlinear_imputation.py \
         --public  results/imputation_eval/<run>/results.json \
-        --private /home/narayanschuetz/MHC-benchmark/results/imputation_eval/dlinear_max91d_20260417_210743/pairs/aggregated_metrics.json
+        --private "$HOME/MHC-benchmark/results/imputation_eval/dlinear_max91d_<timestamp>/pairs/aggregated_metrics.json"
 """
 
 from __future__ import annotations

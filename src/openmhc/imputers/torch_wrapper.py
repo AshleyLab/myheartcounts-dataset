@@ -18,6 +18,7 @@ from typing import Literal
 
 import numpy as np
 
+from openmhc._device import resolve_device
 from openmhc.imputers._base import BaseImputer
 
 
@@ -33,7 +34,9 @@ class TorchImputer(BaseImputer):
     Args:
         model: A ``torch.nn.Module`` with weights already loaded. The
             wrapper sets it to ``eval()`` and moves it to ``device``.
-        device: Torch device (e.g. ``"cuda"``, ``"cuda:0"``, ``"cpu"``).
+        device: Torch device. Use ``"auto"`` (the default) to pick CUDA if
+            available, then MPS, otherwise CPU. Explicit values
+            (``"cuda"``, ``"cuda:0"``, ``"cpu"``, ``"mps"``) are honored.
         inference_batch_size: Inner mini-batch size; the wrapper splits
             the outer batch into chunks of this size to bound GPU memory.
         channels_first: ``True`` if the model wants shape
@@ -63,7 +66,7 @@ class TorchImputer(BaseImputer):
         self,
         model,
         version,
-        device: str = "cuda",
+        device: str = "auto",
         inference_batch_size: int = 128,
         channels_first: bool = True,
         nan_fill: Literal["zero", "channel_mean"] = "channel_mean",
@@ -77,7 +80,7 @@ class TorchImputer(BaseImputer):
 
         super().__init__(version=version, data_dir=data_dir)
         self._torch = torch
-        self._device = torch.device(device)
+        self._device = torch.device(resolve_device(device))
         self._model = model.to(self._device).eval()
         self._inference_batch_size = inference_batch_size
         self._channels_first = channels_first

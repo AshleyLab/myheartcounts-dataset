@@ -3,7 +3,7 @@
 type: mixlinear
 mixlinear:
   checkpoint_path: ???
-  device: cuda
+  device: auto
   batch_size: 64
   period_len: 24
   lpf: 2

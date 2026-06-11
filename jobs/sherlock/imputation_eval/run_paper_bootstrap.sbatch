@@ -18,11 +18,11 @@
 #SBATCH --time=08:00:00
 #SBATCH --cpus-per-task=12
 #SBATCH --mem=128G
-#SBATCH --output=/scratch/users/schuetzn/logs/openmhc/paper_bootstrap_%j.out
-#SBATCH --error=/scratch/users/schuetzn/logs/openmhc/paper_bootstrap_%j.err
+#SBATCH --output=/scratch/users/%u/logs/openmhc/paper_bootstrap_%j.out
+#SBATCH --error=/scratch/users/%u/logs/openmhc/paper_bootstrap_%j.err
 
 # shellcheck disable=SC1091
-source /home/users/schuetzn/myheartcounts-dataset/jobs/sherlock/imputation_eval/_common.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_common.sh"
 
 python scripts/paper_results/run_paper_pipeline.py \
   --sweep-config jobs/sherlock/imputation_eval/sweep_methods.yaml \

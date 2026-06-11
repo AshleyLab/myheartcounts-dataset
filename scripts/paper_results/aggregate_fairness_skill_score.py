@@ -103,6 +103,14 @@ def _parse_args() -> argparse.Namespace:
         "--method-filter", nargs="+", default=None,
         help="Restrict to these methods only.",
     )
+    p.add_argument(
+        "--strict", action="store_true",
+        help=(
+            "Fail (non-zero exit) on any sensitive attribute that is missing, "
+            "degenerate, or yields no usable tasks instead of warning-and-"
+            "skipping. Required for runs whose numbers are published."
+        ),
+    )
     return p.parse_args()
 
 
@@ -176,6 +184,7 @@ def compute_fairness_skill_scores(
     clip_lower: float = 1e-2,
     clip_upper: float = 100.0,
     ci_level: float = 0.95,
+    strict: bool = False,
 ) -> pd.DataFrame:
     """End-to-end: per-attribute + macro-averaged fairness skill score.
 
@@ -199,18 +208,21 @@ def compute_fairness_skill_scores(
         for attr in attrs:
             df_attr = df_split[df_split["subgroup_attr"] == attr]
             if df_attr.empty:
-                logger.warning(
-                    "[split=%s] no rows for attribute %r — skipping",
-                    split, attr,
-                )
+                msg = f"[split={split}] no rows for attribute {attr!r}"
+                if strict:
+                    raise RuntimeError(f"[strict] {msg} — aborting")
+                logger.warning("%s — skipping", msg)
                 continue
             n_subgroups = df_attr["subgroup_value"].nunique()
             if n_subgroups < 2:
-                logger.warning(
-                    "[split=%s] attribute %r has only %d subgroup value(s) — "
-                    "max-min disparity is degenerate; skipping.",
-                    split, attr, n_subgroups,
+                msg = (
+                    f"[split={split}] attribute {attr!r} has only "
+                    f"{n_subgroups} subgroup value(s) — max-min disparity is "
+                    f"degenerate"
                 )
+                if strict:
+                    raise RuntimeError(f"[strict] {msg} — aborting")
+                logger.warning("%s; skipping.", msg)
                 continue
 
             per_draw = _per_attribute_skill(
@@ -220,11 +232,13 @@ def compute_fairness_skill_scores(
                 clip_upper=clip_upper,
             )
             if per_draw.empty:
-                logger.warning(
-                    "[split=%s] attribute %r yielded no usable tasks after "
-                    "dropping D_b<=0; skipping.",
-                    split, attr,
+                msg = (
+                    f"[split={split}] attribute {attr!r} yielded no usable "
+                    f"tasks after dropping D_b<=0"
                 )
+                if strict:
+                    raise RuntimeError(f"[strict] {msg} — aborting")
+                logger.warning("%s; skipping.", msg)
                 continue
             per_attr_results[attr] = per_draw
 
@@ -320,6 +334,7 @@ def main() -> int:
         clip_lower=args.clip_lower,
         clip_upper=args.clip_upper,
         ci_level=args.ci_level,
+        strict=args.strict,
     )
     out_df.to_csv(args.output, index=False, float_format="%.6f")
     logger.info("Wrote %s (%d rows)", args.output, len(out_df))

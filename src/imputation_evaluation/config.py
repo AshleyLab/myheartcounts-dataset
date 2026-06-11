@@ -147,7 +147,7 @@ class LSM2MethodConfig:
     """LSM2 (formerly MAE) method configuration."""
 
     checkpoint_path: str = ""  # Path to trained LSM2 checkpoint (.ckpt)
-    device: str = "cuda"  # Device for inference ("cuda", "cuda:0", "cpu")
+    device: str = "auto"  # Device for inference ("auto", "cuda", "cuda:0", "cpu")
     inference_batch_size: int = 64  # Batch size for GPU inference
 
     # Must match LSM2 training config (configs/lsm2/default.yaml in the private repo).
@@ -164,7 +164,7 @@ class PyPOTSMethodConfig:
 
     model_path: str = ""  # Path to saved PyPOTS model directory
     model_name: str = "brits"  # PyPOTS model class name (brits, saits)
-    device: str = "cuda"  # Device for inference ("cuda", "cuda:0", "cpu")
+    device: str = "auto"  # Device for inference ("auto", "cuda", "cuda:0", "cpu")
     inference_batch_size: int = 64  # Batch size for inference
     normalization_stats_path: str | None = None  # Path to normalization_stats.json from H5 export
     # Architecture params needed to construct model before loading weights
@@ -223,7 +223,7 @@ class MethodConfig:
     ] = "mean"
     decimal_precision: int = 1  # Rounding precision for mode computation
     release_dir: str | None = None  # Manifest-bundled release dir (paper checkpoints)
-    device: str = "cuda"  # Inference device for neural imputers
+    device: str = "auto"  # Inference device for neural imputers
     inference_batch_size: int = 64  # Inference batch size for neural imputers
     lsm2: LSM2MethodConfig = field(default_factory=LSM2MethodConfig)  # LSM2-specific config
     pypots: PyPOTSMethodConfig = field(default_factory=PyPOTSMethodConfig)  # PyPOTS-specific config

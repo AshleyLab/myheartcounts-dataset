@@ -30,11 +30,11 @@
 # scripts/dev/_fedformer_vram_probe.py), so any Tesla GPU >=16 GB fits.
 # No GPU_MEM filter needed — keeps the queue depth small.
 #SBATCH --constraint=GPU_BRD:TESLA
-#SBATCH --output=/scratch/users/schuetzn/logs/openmhc/train_fedformer_%j.out
-#SBATCH --error=/scratch/users/schuetzn/logs/openmhc/train_fedformer_%j.err
+#SBATCH --output=/scratch/users/%u/logs/openmhc/train_fedformer_%j.out
+#SBATCH --error=/scratch/users/%u/logs/openmhc/train_fedformer_%j.err
 
 # shellcheck disable=SC1091
-source /home/users/schuetzn/myheartcounts-dataset/jobs/sherlock/imputation_train/_common.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_common.sh"
 
 nvidia-smi || true
 

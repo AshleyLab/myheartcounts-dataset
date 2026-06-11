@@ -49,6 +49,7 @@ from imputation_evaluation.evaluation.bootstrap import (
 from imputation_evaluation.evaluation.disparity_metrics import (
     DISPARITY_FUNCTIONS,
     FAIRNESS_COMBINE,
+    disparity_higher_is_better,
 )
 from imputation_evaluation.evaluation.paper_metrics_core import (
     EXCLUDE_BINARY_SCENARIOS,
@@ -442,6 +443,128 @@ def _channel_type(ch: int) -> str:
     return "continuous" if ch in CONTINUOUS_CHANNEL_INDICES else "binary"
 
 
+_REQUIRED_MANIFEST_COLUMNS: tuple[str, ...] = ("sample_idx", "user_id", "date")
+
+
+def _assert_manifests_agree(
+    method_manifests: dict[str, pa.Table],
+    *,
+    split: str,
+    reference_method: str | None = None,
+    n_examples: int = 5,
+) -> None:
+    """Fail fast if methods disagree on ``sample_idx -> (user_id, date)``.
+
+    Fairness subgroup mappings are built from one reference method's manifest
+    and then applied to every method's per-method manifest. If a method's
+    ``sample_idx`` indexes a different ``(user_id, date)`` pair than the
+    reference, fairness subgroup rows are silently mis-assigned to the wrong
+    demographic. This validator enforces the invariant that all methods share
+    the same ``sample_idx -> (user_id, date)`` mapping before any metric work
+    happens.
+
+    Args:
+        method_manifests: Mapping ``{method: pyarrow.Table}`` for one split.
+        split: Split name, used only for error messages.
+        reference_method: Method to treat as the source of truth. If ``None``,
+            uses the first key of ``method_manifests`` (matches the
+            "first method" contract in ``bootstrap_imputation_draws.py``).
+        n_examples: Max number of example ``sample_idx`` rows per mismatch
+            category to include in the error message.
+
+    Raises:
+        ValueError: When any manifest is missing a required column, contains
+            duplicate ``sample_idx`` values, or disagrees with the reference
+            on the set of ``sample_idx`` or the ``(user_id, date)`` mapping.
+    """
+    if not method_manifests:
+        return
+
+    methods = list(method_manifests.keys())
+    if reference_method is None:
+        reference_method = methods[0]
+    if reference_method not in method_manifests:
+        raise ValueError(
+            f"[split={split}] reference_method={reference_method!r} not in "
+            f"method_manifests (have {methods})"
+        )
+
+    def _check_columns(method: str, table: pa.Table) -> None:
+        missing_cols = [c for c in _REQUIRED_MANIFEST_COLUMNS if c not in table.column_names]
+        if missing_cols:
+            raise ValueError(
+                f"[split={split}] manifest for method {method!r} is missing "
+                f"required columns: {missing_cols}. Have: {list(table.column_names)}"
+            )
+
+    def _build_map(method: str, table: pa.Table) -> dict[int, tuple[str, str]]:
+        sample_idxs = table.column("sample_idx").to_pylist()
+        user_ids = table.column("user_id").to_pylist()
+        dates = table.column("date").to_pylist()
+        out: dict[int, tuple[str, str]] = {}
+        duplicates: list[int] = []
+        for sidx, uid, date_str in zip(sample_idxs, user_ids, dates):
+            key = int(sidx)
+            if key in out:
+                duplicates.append(key)
+                continue
+            out[key] = (str(uid), str(date_str))
+        if duplicates:
+            dup_examples = duplicates[:n_examples]
+            raise ValueError(
+                f"[split={split}] manifest for method {method!r} has "
+                f"duplicate sample_idx values (not unique): "
+                f"{len(duplicates)} duplicates, examples: {dup_examples}"
+            )
+        return out
+
+    # Validate every manifest's columns first so column errors surface together
+    # with reference-vs-method errors below.
+    for method, table in method_manifests.items():
+        _check_columns(method, table)
+
+    ref_map = _build_map(reference_method, method_manifests[reference_method])
+    ref_keys = set(ref_map.keys())
+
+    for method, table in method_manifests.items():
+        if method == reference_method:
+            continue
+        method_map = _build_map(method, table)
+        method_keys = set(method_map.keys())
+
+        missing = sorted(ref_keys - method_keys)  # in ref, not in method
+        extra = sorted(method_keys - ref_keys)  # in method, not in ref
+        common = ref_keys & method_keys
+        mismatched = sorted(s for s in common if ref_map[s] != method_map[s])
+
+        if not (missing or extra or mismatched):
+            continue
+
+        lines = [
+            f"Manifest mismatch in [split={split}] between reference method "
+            f"{reference_method!r} and method {method!r}:",
+            f"  missing sample_idx (in reference, not in {method!r}): {len(missing)}",
+            f"  extra sample_idx   (in {method!r}, not in reference): {len(extra)}",
+            f"  user_id/date mismatched: {len(mismatched)} of {len(common)}",
+        ]
+        if missing:
+            lines.append("Examples (missing):")
+            for s in missing[:n_examples]:
+                lines.append(f"  sample_idx={s}   ref={ref_map[s]}")
+        if extra:
+            lines.append("Examples (extra):")
+            for s in extra[:n_examples]:
+                lines.append(f"  sample_idx={s}   {method!r}={method_map[s]}")
+        if mismatched:
+            lines.append("Examples (mismatched):")
+            for s in mismatched[:n_examples]:
+                lines.append(
+                    f"  sample_idx={s}   ref={ref_map[s]}   "
+                    f"{method!r}={method_map[s]}"
+                )
+        raise ValueError("\n".join(lines))
+
+
 def compute_per_draw_errors(
     method_dirs: dict[str, Path],
     scenarios: list[str],
@@ -469,6 +592,9 @@ def compute_per_draw_errors(
         seed: master RNG seed; per-split seeds are derived deterministically.
         subgroup_mappings: optional ``{split_name: {sample_idx: {attr: val}}}``
             built externally (mirrors ``aggregate_imputation_pairs.py``).
+            When provided, per-method manifests are required to agree on the
+            ``sample_idx -> (user_id, date)`` mapping; mismatches raise
+            ``ValueError`` before any metric work happens.
         channel_stds: array of length ``n_channels``. If ``None``, loaded
             from each method's ``pairs_root/channel_stds.npy`` and asserted
             to match across methods.
@@ -516,6 +642,12 @@ def compute_per_draw_errors(
 
         if not method_manifests:
             continue
+
+        # When fairness subgroups are requested, the shared sample_idx -> demo
+        # map only makes sense if every method's manifest agrees on
+        # sample_idx -> (user_id, date). Fail fast if not.
+        if sg_map is not None and len(method_manifests) >= 2:
+            _assert_manifests_agree(method_manifests, split=split)
 
         all_user_ids: list[str] = []
         seen: set[str] = set()
@@ -907,10 +1039,18 @@ def aggregate_skill_rank_fairness(
                         d = float(fn(group_scores))
                         rec[f"disparity_{name}"] = d
                         if np.isfinite(s_overall) and np.isfinite(d):
+                            # The combine fn applies ``S − λ·d_eff``. For
+                            # disparities where *higher* values mean *fairer*
+                            # (e.g. ``worst_group`` = min(S_g)), flip the sign
+                            # so the fairness-adjusted score still rewards
+                            # better fairness. Lower-is-fairer disparities
+                            # (``max_minus_min``, ``std``, ``relative_drop``)
+                            # are passed through unchanged.
+                            d_eff = -d if disparity_higher_is_better(name) else d
                             rec[f"fairness_adjusted_{name}"] = float(
                                 fairness_combine_fn(
                                     float(s_overall),
-                                    d,
+                                    d_eff,
                                     lambda_fairness,
                                 )
                             )

@@ -36,6 +36,7 @@ from typing import Literal
 
 import numpy as np
 
+from openmhc._device import resolve_device
 from openmhc.imputers._base import BaseImputer
 from openmhc.imputers._release import ReleaseLoadableMixin
 
@@ -57,7 +58,7 @@ class _PyPOTSImputerBase(ReleaseLoadableMixin, BaseImputer):
         model_path: str | Path,
         version,
         *,
-        device: str = "cuda",
+        device: str = "auto",
         inference_batch_size: int = 64,
         normalization_stats_path: str | Path | None = None,
         n_steps: int = 1440,
@@ -65,7 +66,7 @@ class _PyPOTSImputerBase(ReleaseLoadableMixin, BaseImputer):
         data_dir: str | Path | None = None,
     ) -> None:
         super().__init__(version=version, data_dir=data_dir)
-        self._device = device
+        self._device = resolve_device(device)
         self._inference_batch_size = int(inference_batch_size)
         self._n_steps = int(n_steps)
         self._n_features = int(n_features)
@@ -200,7 +201,7 @@ class BRITSImputer(_PyPOTSImputerBase):
         version,
         *,
         rnn_hidden_size: int = 128,
-        device: str = "cuda",
+        device: str = "auto",
         inference_batch_size: int = 64,
         normalization_stats_path: str | Path | None = None,
         n_steps: int = 1440,
@@ -261,7 +262,7 @@ class TimesNetImputer(_PyPOTSImputerBase):
         n_kernels: int = 6,
         dropout: float = 0.1,
         apply_nonstationary_norm: bool = False,
-        device: str = "cuda",
+        device: str = "auto",
         inference_batch_size: int = 64,
         normalization_stats_path: str | Path | None = None,
         n_steps: int = 1440,
@@ -327,7 +328,7 @@ class DLinearImputer(_PyPOTSImputerBase):
         moving_avg_window_size: int = 25,
         d_model: int | None = 64,
         individual: bool = False,
-        device: str = "cuda",
+        device: str = "auto",
         inference_batch_size: int = 64,
         normalization_stats_path: str | Path | None = None,
         n_steps: int = 1440,
@@ -428,7 +429,7 @@ class FEDformerImputer(_PyPOTSImputerBase):
         modes: int = 32,
         mode_select: Literal["random", "low"] = "random",
         fourier_modes_path: str | Path | None = None,
-        device: str = "cuda",
+        device: str = "auto",
         inference_batch_size: int = 64,
         normalization_stats_path: str | Path | None = None,
         n_steps: int = 1440,

@@ -11,11 +11,11 @@
 # GPU_MEM tiers on Sherlock: 11,12,16,24,32,48,80 (40 is not a real label).
 # LSM2 daily needs ~8-16GB; 24GB tier is plenty with inference_batch_size=32.
 #SBATCH --constraint=GPU_MEM:24GB
-#SBATCH --output=/scratch/users/schuetzn/logs/openmhc/lsm2_%j.out
-#SBATCH --error=/scratch/users/schuetzn/logs/openmhc/lsm2_%j.err
+#SBATCH --output=/scratch/users/%u/logs/openmhc/lsm2_%j.out
+#SBATCH --error=/scratch/users/%u/logs/openmhc/lsm2_%j.err
 
 # shellcheck disable=SC1091
-source /home/users/schuetzn/myheartcounts-dataset/jobs/sherlock/imputation_eval/_common.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_common.sh"
 
 nvidia-smi || true
 

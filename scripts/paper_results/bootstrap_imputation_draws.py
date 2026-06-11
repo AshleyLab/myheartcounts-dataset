@@ -117,6 +117,14 @@ def _parse_args() -> argparse.Namespace:
         "--channel-stds-path", type=Path, default=None,
         help="Override channel_stds.npy path (default: <first method dir>/channel_stds.npy)",
     )
+    p.add_argument(
+        "--strict", action="store_true",
+        help=(
+            "Fail (non-zero exit) on any missing method dir or missing "
+            "per-split subgroup manifest instead of warning-and-skipping. "
+            "Required for runs whose numbers are published."
+        ),
+    )
     return p.parse_args()
 
 
@@ -195,6 +203,11 @@ def main() -> int:
     # Validate paths
     for m, p in list(method_dirs.items()):
         if not p.exists():
+            if args.strict:
+                logger.error(
+                    "[strict] method=%s: %s does not exist — aborting", m, p,
+                )
+                return 2
             logger.warning("method=%s: %s does not exist — skipping", m, p)
             method_dirs.pop(m)
     if not method_dirs:
@@ -223,6 +236,12 @@ def main() -> int:
         for split in args.splits:
             sg = _build_subgroup_mapping(ref_dir, split, args.age_bins)
             if sg is None:
+                if args.strict:
+                    logger.error(
+                        "[strict] No manifest_%s.parquet at %s — aborting",
+                        split, ref_dir,
+                    )
+                    return 2
                 logger.warning(
                     "No manifest_%s.parquet at %s; skipping fairness for this split",
                     split, ref_dir,

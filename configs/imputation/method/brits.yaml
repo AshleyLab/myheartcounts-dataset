@@ -8,7 +8,7 @@
 #   mhc-impute-eval method=brits method.release_dir=/path/to/brits-release
 type: brits
 release_dir: ???   # required at run-time
-device: cuda
+device: auto
 inference_batch_size: 64
 # Inline-arch fallback (only consulted when ``release_dir`` is unset):
 pypots:

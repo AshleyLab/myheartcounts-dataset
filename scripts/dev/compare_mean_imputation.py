@@ -13,6 +13,7 @@ Expected output: per-scenario metrics from both repos followed by a parity repor
 from __future__ import annotations
 
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -23,7 +24,12 @@ import numpy as np
 # ---------------------------------------------------------------------------
 
 REPO_ROOT = Path(__file__).parent.parent
-PRIVATE_REPO_SRC = Path("/home/narayanschuetz/MHC-benchmark/src")
+# Override via MHC_BENCHMARK_SRC env var to point at your local MHC-benchmark
+# clone (private repo, not pip-installable).
+PRIVATE_REPO_SRC = Path(os.environ.get(
+    "MHC_BENCHMARK_SRC",
+    str(Path.home() / "MHC-benchmark" / "src"),
+))
 
 # Public repo src must come first so its versions of shared modules win.
 sys.path.insert(0, str(REPO_ROOT / "src"))

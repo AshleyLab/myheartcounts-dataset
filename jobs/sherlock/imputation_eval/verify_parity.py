@@ -8,8 +8,9 @@ balanced accuracy) per (method, scenario, split) within tolerance:
 
 Sources:
   new:  ${RUNS_ROOT}/<method>/results.json  (or pairs/aggregated_metrics.json)
-  old:  /scratch/users/schuetzn/mhc-benchmark-results/imputation_eval/
-        <pattern matched per method>/{results.json,pairs/aggregated_metrics.json}
+  old:  ${MHC_BENCHMARK_RESULTS}/imputation_eval/<pattern matched per method>/
+        {results.json,pairs/aggregated_metrics.json}
+        (override OLD_ROOT / OLD_PAPER env vars to point at your reference layout)
 
 Also (best-effort) compares:
   - Per-imputer CIs in {new,old}/bootstrap_metrics.json overlap test.
@@ -28,15 +29,26 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import sys
 from pathlib import Path
 
-OUT_BASE = Path("/scratch/users/schuetzn/openmhc-imputation-eval")
+_SCRATCH = Path(os.environ.get(
+    "SCRATCH_RUN_ROOT", f"/scratch/users/{os.environ.get('USER', 'unknown')}",
+))
+OUT_BASE = Path(os.environ.get("OUT_BASE", str(_SCRATCH / "openmhc-imputation-eval")))
 RUNS_ROOT = OUT_BASE / "runs"
 PAPER_OUT = OUT_BASE / "paper"
 
-OLD_ROOT = Path("/scratch/users/schuetzn/mhc-benchmark-results/imputation_eval")
-OLD_PAPER = Path("/home/users/schuetzn/MHC-benchmark/results/paper")
+# Parity references — point at your own MHC-benchmark layout via env vars.
+OLD_ROOT = Path(os.environ.get(
+    "MHC_BENCHMARK_RESULTS",
+    str(_SCRATCH / "mhc-benchmark-results"),
+)) / "imputation_eval"
+OLD_PAPER = Path(os.environ.get(
+    "MHC_BENCHMARK_PAPER",
+    str(Path.home() / "MHC-benchmark" / "results" / "paper"),
+))
 
 # Map openmhc method name -> glob pattern under OLD_ROOT for the matching
 # MHC-benchmark max91d run. Multiple matches are allowed; we'll pick the

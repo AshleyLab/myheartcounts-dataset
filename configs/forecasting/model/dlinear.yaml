@@ -3,7 +3,7 @@
 type: dlinear
 dlinear:
   checkpoint_path: ???
-  device: cuda
+  device: auto
   batch_size: 64
   moving_avg_window_size: 25
   individual: false

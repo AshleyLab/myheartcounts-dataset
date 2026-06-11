@@ -24,7 +24,10 @@ from pathlib import Path
 # ----------------------------- configuration --------------------------------
 
 JOBS_DIR = Path(__file__).resolve().parent
-OUT_BASE = Path("/scratch/users/schuetzn/openmhc-imputation-eval")
+_SCRATCH = Path(os.environ.get(
+    "SCRATCH_RUN_ROOT", f"/scratch/users/{os.environ.get('USER', 'unknown')}",
+))
+OUT_BASE = Path(os.environ.get("OUT_BASE", str(_SCRATCH / "openmhc-imputation-eval")))
 MANIFEST = OUT_BASE / "job_manifest.tsv"
 LOG_FILE = OUT_BASE / "babysit.log"
 

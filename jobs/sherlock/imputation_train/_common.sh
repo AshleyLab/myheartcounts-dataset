@@ -1,32 +1,33 @@
 # shellcheck shell=bash
 # Common environment for every imputation-train sbatch on Sherlock.
 # Source from each sbatch as:
-#   source /home/users/schuetzn/myheartcounts-dataset/jobs/sherlock/imputation_train/_common.sh
+#   source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_common.sh"
 #
-# Idempotent. Safe to source multiple times.
+# Idempotent. Safe to source multiple times. All overridable knobs come
+# from ``../jobs/sherlock/_env.sh`` (REPO, SCRATCH_RUN_ROOT, LOGS,
+# MHC_CACHE, MHC_DATA_DIR, WANDB_DIR, RELEASES).
 
 set -euo pipefail
 
-# --- Paths --------------------------------------------------------------------
-export REPO=/home/users/schuetzn/myheartcounts-dataset
+# --- Shared defaults ----------------------------------------------------------
+_COMMON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+source "${_COMMON_DIR}/../_env.sh"
 
 # Same dataset cache the eval pipeline uses — train and eval share splits exactly.
-export MHC_CACHE=/scratch/users/schuetzn/.myheartcounts-dataset-cache/data-full
-export MHC_DATA_DIR=${MHC_CACHE}
 export DAILY_HF_DIR=${MHC_CACHE}/processed/daily_hf
 export SPLIT_FILE=${MHC_CACHE}/splits/sharable_users_seed42_2026.json
 # normalization_stats.json is read from <MHC_CACHE>/processed/ automatically.
 
 # Output roots. Everything under TRAIN_BASE; nothing in $HOME.
-export TRAIN_BASE=/scratch/users/schuetzn/openmhc-imputation-train
+: "${TRAIN_BASE:=${SCRATCH_RUN_ROOT}/openmhc-imputation-train}"
+export TRAIN_BASE
 export H5_CACHE=${TRAIN_BASE}/h5         # H5 export cache (content-addressed subdirs)
 export RUNS_ROOT=${TRAIN_BASE}/runs      # one subdir per training run (PyPOTS' saving_path)
 export RELEASES_ROOT=${TRAIN_BASE}/releases   # one openmhc release bundle per trained model
-export LOGS=/scratch/users/schuetzn/logs/openmhc
 
 # --- Hydra / W&B housekeeping -------------------------------------------------
 export HYDRA_FULL_ERROR=1
-export WANDB_DIR=/scratch/users/schuetzn/wandb_data/openmhc
 
 # Pull WANDB_API_KEY from ~/.netrc so wandb.init() works in batch jobs without
 # a TTY login. (Matches MHC-benchmark/jobs/.../train_pypots.sbatch.)

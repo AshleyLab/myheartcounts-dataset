@@ -30,8 +30,8 @@ jobs/sherlock/imputation_eval/
 ## Deliverables (per method)
 
 Every imputer job writes to `${RUNS_ROOT}/<method>/` where
-`RUNS_ROOT=/scratch/users/schuetzn/openmhc-imputation-eval/runs`. That dir
-contains:
+`RUNS_ROOT=${SCRATCH_RUN_ROOT}/openmhc-imputation-eval/runs` (defaults to
+`/scratch/users/$USER/...` via `jobs/sherlock/_env.sh`). That dir contains:
 
 | file | purpose |
 |------|---------|
@@ -53,20 +53,21 @@ After Phase 1 + 2 of the paper bootstrap, `${PAPER_OUT}/` contains:
 
 ## Prerequisites
 
-1. **openmhc venv** at `/scratch/users/schuetzn/envs/openmhc/` (already
-   exists — created with `python -m venv` against
-   `/share/software/user/open/python/3.12.1`). Has openmhc, pypots,
-   pytorch_lightning, hydra-submitit-launcher.
-2. **dataset cache** at
-   `/scratch/users/schuetzn/.myheartcounts-dataset-cache/data-full/`
-   (already populated, 292 GB, 11894 users).
+1. **openmhc venv** somewhere on `$SCRATCH` (created with `python -m venv`
+   against `/share/software/user/open/python/3.12.1`). Has openmhc, pypots,
+   pytorch_lightning, hydra-submitit-launcher. `scripts/dev/activate-openmhc.sh`
+   activates it.
+2. **dataset cache** under `${MHC_CACHE}` (defaults to
+   `${SCRATCH_RUN_ROOT}/.myheartcounts-dataset-cache/data-full/`, populated by
+   `python -c "import openmhc; openmhc.download_dataset(version='full')"` — 292
+   GB, 11894 users).
 3. **W&B credentials** at `~/.netrc` (`machine api.wandb.ai`) — needed for
    downloading paper checkpoints.
 
 ## End-to-end usage
 
 ```bash
-cd /home/users/schuetzn/myheartcounts-dataset
+cd "$REPO"   # your clone of myheartcounts-dataset
 
 # (one-time) verify env + download all 6 paper checkpoints
 bash jobs/sherlock/imputation_eval/00_setup.sh
@@ -76,8 +77,8 @@ sh_dev -t 1:00:00
 source jobs/sherlock/imputation_eval/_common.sh
 mhc-impute-eval method=mean data=xs masking=sleep_gap_only \
   hydra.run.dir=$OUT_BASE/_smoke bootstrap=on \
-  data.daily_hf_dir=/scratch/users/schuetzn/.myheartcounts-dataset-cache/data-xs/processed/daily_hf \
-  data.split_file=/scratch/users/schuetzn/.myheartcounts-dataset-cache/data-xs/splits/sharable_users_seed42_2026.json
+  data.daily_hf_dir=${SCRATCH_RUN_ROOT}/.myheartcounts-dataset-cache/data-xs/processed/daily_hf \
+  data.split_file=${SCRATCH_RUN_ROOT}/.myheartcounts-dataset-cache/data-xs/splits/sharable_users_seed42_2026.json
 ls $OUT_BASE/_smoke/{results.json,bootstrap_metrics.json,pairs}
 
 # submit everything (7 imputer jobs + 1 paper-bootstrap with afterok dep)
@@ -146,7 +147,7 @@ label, and:
 Triggered hourly via:
 
 ```
-/loop 1h bash /home/users/schuetzn/myheartcounts-dataset/jobs/sherlock/imputation_eval/babysit.sh
+/loop 1h bash "$REPO/jobs/sherlock/imputation_eval/babysit.sh"
 ```
 
 A one-line summary of every action is appended to
@@ -176,9 +177,10 @@ the imputer jobs complete; mismatches → inspect:
 
 ## Known open items
 
-- **`daily_hf_dir`**: confirmed at
-  `/scratch/users/schuetzn/.myheartcounts-dataset-cache/data-full/processed/daily_hf`.
-  If you point at a different cache, edit `_common.sh`.
+- **`daily_hf_dir`**: defaults to
+  `${MHC_CACHE}/processed/daily_hf` (which expands to
+  `${SCRATCH_RUN_ROOT}/.myheartcounts-dataset-cache/data-full/processed/daily_hf`).
+  Override `MHC_CACHE` or `SCRATCH_RUN_ROOT` if your layout differs.
 - **Personalized baselines**: added stub YAMLs at
   `configs/imputation/method/personalized_{mean,mode,temporal_mean}.yaml`
   to match the existing pattern. Smoke-test before trusting full runs.

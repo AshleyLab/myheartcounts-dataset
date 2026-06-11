@@ -15,11 +15,11 @@
 # Sherlock the Tesla-family tiers >=32GB are {32GB,48GB,80GB} — enumerate
 # them via OR to maximize the eligible pool.
 #SBATCH --constraint=GPU_BRD:TESLA&(GPU_MEM:32GB|GPU_MEM:48GB|GPU_MEM:80GB)
-#SBATCH --output=/scratch/users/schuetzn/logs/openmhc/timesnet_%j.out
-#SBATCH --error=/scratch/users/schuetzn/logs/openmhc/timesnet_%j.err
+#SBATCH --output=/scratch/users/%u/logs/openmhc/timesnet_%j.out
+#SBATCH --error=/scratch/users/%u/logs/openmhc/timesnet_%j.err
 
 # shellcheck disable=SC1091
-source /home/users/schuetzn/myheartcounts-dataset/jobs/sherlock/imputation_eval/_common.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_common.sh"
 
 nvidia-smi || true
 

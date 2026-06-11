@@ -116,6 +116,15 @@ def _parse_args() -> argparse.Namespace:
         "--channel-stds-path", type=Path, default=None,
         help="Override channel_stds.npy path (default: <first method dir>/channel_stds.npy)",
     )
+    p.add_argument(
+        "--strict", action="store_true",
+        help=(
+            "Fail (non-zero exit) on any missing method dir, missing per-split "
+            "subgroup manifest, or missing method/scenario/split directory "
+            "instead of warning-and-skipping. Required for runs whose numbers "
+            "are published."
+        ),
+    )
     return p.parse_args()
 
 
@@ -214,6 +223,7 @@ def _gather_registry(
     age_bins: list[int],
     exclude_unknown: bool,
     channel_stds_path: Path | None,
+    strict: bool = False,
 ) -> pd.DataFrame:
     """Build the long-format errors registry for every (method, scenario, split, subgroup) cell."""
     methods = list(method_dirs.keys())
@@ -236,6 +246,11 @@ def _gather_registry(
         ref_root = Path(method_dirs[methods[0]])
         mapping = _build_subgroup_mapping(ref_root, split, age_bins)
         if mapping is None:
+            if strict:
+                raise RuntimeError(
+                    f"[strict] [split={split}] could not load manifest from "
+                    f"{ref_root} — fairness rows would be empty"
+                )
             logger.warning(
                 "[split=%s] could not load manifest from %s — fairness rows will be empty",
                 split, ref_root,
@@ -251,6 +266,11 @@ def _gather_registry(
             for scenario in scenarios:
                 ssd = root / scenario / split
                 if not ssd.exists():
+                    if strict:
+                        raise RuntimeError(
+                            f"[strict] method={method} scenario={scenario} "
+                            f"split={split}: {ssd} missing"
+                        )
                     logger.info("method=%s scenario=%s split=%s: %s missing — skipping",
                                 method, scenario, split, ssd)
                     continue
@@ -352,6 +372,11 @@ def main() -> int:
 
     for m, p in list(method_dirs.items()):
         if not p.exists():
+            if args.strict:
+                logger.error(
+                    "[strict] method=%s: %s does not exist — aborting", m, p,
+                )
+                return 2
             logger.warning("method=%s: %s does not exist — skipping", m, p)
             method_dirs.pop(m)
     if not method_dirs:
@@ -376,6 +401,7 @@ def main() -> int:
         age_bins=args.age_bins,
         exclude_unknown=args.exclude_unknown,
         channel_stds_path=args.channel_stds_path,
+        strict=args.strict,
     )
     logger.info("Registry rows: %d", len(registry))
     if registry.empty:

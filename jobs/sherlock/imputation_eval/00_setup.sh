@@ -5,16 +5,18 @@
 #     bash jobs/sherlock/imputation_eval/00_setup.sh
 #
 # What it does:
-#   1. Activates the openmhc venv (already exists at $SCRATCH/envs/openmhc).
+#   1. Activates the openmhc venv (somewhere on $SCRATCH; the in-repo
+#      activator script handles the path).
 #   2. Verifies critical Python imports.
-#   3. Downloads all 6 paper W&B artifacts to /scratch/users/schuetzn/releases/.
+#   3. Downloads all 6 paper W&B artifacts to ${RELEASES}
+#      (defaults to ${SCRATCH_RUN_ROOT}/releases).
 #   4. Confirms each release bundle has an openmhc_manifest.json sidecar.
 #
 # Required:
 #   - W&B credentials at ~/.netrc (machine api.wandb.ai) OR
 #     WANDB_API_KEY env var.
-#   - The dataset cache populated under
-#     /scratch/users/schuetzn/.myheartcounts-dataset-cache/data-full/.
+#   - The dataset cache populated under ${MHC_CACHE} (defaults to
+#     ${SCRATCH_RUN_ROOT}/.myheartcounts-dataset-cache/data-full/).
 #     If missing, run from a login node:
 #         python -c "import openmhc; openmhc.download_dataset(version='full')"
 

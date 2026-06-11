@@ -14,7 +14,7 @@ arrays are preserved verbatim. `generated_at` is bumped to today.
 Usage:
     python scripts/paper_results/build_leaderboard_json.py \
         --current  /tmp/leaderboard_canonical.json \
-        --paper-dir /scratch/users/schuetzn/openmhc-imputation-eval/paper \
+        --paper-dir "${SCRATCH_RUN_ROOT:-/scratch/users/$USER}/openmhc-imputation-eval/paper" \
         --output   /tmp/leaderboard_updated.json
 """
 

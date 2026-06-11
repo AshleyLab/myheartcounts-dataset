@@ -5,5 +5,5 @@ patience: 10
 optimizer_lr: 0.001
 weight_decay: 0.0
 clip_grad_norm: null         # set to e.g. 1.0 to enable gradient clipping
-device: cuda
+device: auto
 num_workers: 4

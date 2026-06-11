@@ -10,10 +10,16 @@
 
 set -euo pipefail
 
-JOBS_DIR=/home/users/schuetzn/myheartcounts-dataset/jobs/sherlock/imputation_eval
-OUT_BASE=/scratch/users/schuetzn/openmhc-imputation-eval
+# Resolve script directory so submit_all.sh works regardless of where the
+# repo lives on disk. ``_env.sh`` provides ``SCRATCH_RUN_ROOT`` / ``LOGS``
+# defaults that callers can override.
+JOBS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+source "${JOBS_DIR}/../_env.sh"
+
+: "${OUT_BASE:=${SCRATCH_RUN_ROOT}/openmhc-imputation-eval}"
 MANIFEST=${OUT_BASE}/job_manifest.tsv
-mkdir -p "$OUT_BASE" /scratch/users/schuetzn/logs/openmhc
+mkdir -p "$OUT_BASE" "$LOGS"
 
 # --- args ----------------------------------------------------------------
 RUN_PAPER=1

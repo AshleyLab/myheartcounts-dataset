@@ -94,7 +94,7 @@ class Chronos2ModelConfig:
     checkpoint_path: str | None = None
     training_output_dir: str | None = None
     finetuned_ckpt_name: str | None = None
-    device: str = "cuda"
+    device: str = "auto"
     torch_dtype: Literal["auto", "float32", "float16", "bfloat16"] = "auto"
 
 
@@ -105,7 +105,7 @@ class TotoModelConfig:
     pretrained_model_name_or_path: str = "Datadog/Toto-Open-Base-1.0"
     checkpoint_path: str | None = None
     lora_alpha: float | None = None
-    device: str = "cuda"
+    device: str = "auto"
     context_length: int = 2048
     num_samples: int = 256
     samples_per_batch: int = 256
@@ -118,7 +118,7 @@ class MixLinearModelConfig:
     """mixlinear model hyperparameters."""
 
     checkpoint_path: str | None = None
-    device: str = "cuda"
+    device: str = "auto"
     batch_size: int = 64
     n_steps: int | None = None
     n_pred_steps: int | None = None
@@ -134,7 +134,7 @@ class DLinearModelConfig:
     """dlinear model hyperparameters."""
 
     checkpoint_path: str | None = None
-    device: str = "cuda"
+    device: str = "auto"
     batch_size: int = 64
     n_steps: int | None = None
     n_pred_steps: int | None = None
@@ -149,7 +149,7 @@ class SegRNNModelConfig:
     """segrnn model hyperparameters."""
 
     checkpoint_path: str | None = None
-    device: str = "cuda"
+    device: str = "auto"
     batch_size: int = 64
     n_steps: int | None = None
     n_pred_steps: int | None = None

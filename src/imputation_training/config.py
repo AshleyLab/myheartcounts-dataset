@@ -93,7 +93,7 @@ class TrainingConfig:
     optimizer_lr: float = 1e-3
     weight_decay: float = 0.0
     clip_grad_norm: float | None = None
-    device: str = "cuda"
+    device: str = "auto"
     num_workers: int = 4
 
 

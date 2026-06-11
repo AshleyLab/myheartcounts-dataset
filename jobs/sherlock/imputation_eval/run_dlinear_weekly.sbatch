@@ -25,11 +25,11 @@
 # Mem bumped to 128G for extra headroom on the dataloader buffers.
 #SBATCH --mem=128G
 #SBATCH --gpus=1
-#SBATCH --output=/scratch/users/schuetzn/logs/openmhc/dlinear_weekly_%j.out
-#SBATCH --error=/scratch/users/schuetzn/logs/openmhc/dlinear_weekly_%j.err
+#SBATCH --output=/scratch/users/%u/logs/openmhc/dlinear_weekly_%j.out
+#SBATCH --error=/scratch/users/%u/logs/openmhc/dlinear_weekly_%j.err
 
 # shellcheck disable=SC1091
-source /home/users/schuetzn/myheartcounts-dataset/jobs/sherlock/imputation_eval/_common.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_common.sh"
 
 nvidia-smi || true
 

@@ -9,7 +9,7 @@
 # matches ``DLinearImputer.model_name``.
 type: dlinear_weekly
 release_dir: ???
-device: cuda
+device: auto
 inference_batch_size: 64
 pypots:
   model_path: ""

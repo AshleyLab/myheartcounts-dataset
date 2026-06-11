@@ -64,6 +64,17 @@ def register_fairness_combine(name: str, fn: FairnessCombineFn) -> None:
     FAIRNESS_COMBINE[name] = fn
 
 
+def disparity_higher_is_better(name: str) -> bool:
+    """Return whether higher values of disparity ``name`` indicate *fairer* outcomes.
+
+    Falls back to ``False`` for unregistered names so legacy callers passing
+    raw callables (without a :class:`DisparitySpec`) keep the previous
+    ``S − λ·D`` convention.
+    """
+    spec = DISPARITY_FUNCTIONS.get(name)
+    return bool(spec.higher_is_better) if spec is not None else False
+
+
 def _max_minus_min(g: dict[str, float]) -> float:
     vals = [v for v in g.values() if v is not None and np.isfinite(v)]
     if len(vals) < 2:

@@ -137,6 +137,11 @@ def run_training(config: PyPOTSTrainingConfig) -> Path:
     )
 
     # ---- 3. Model -------------------------------------------------------
+    # Resolve "auto" → concrete device once so PyPOTS (which does not
+    # understand "auto") sees a real device string.
+    from openmhc._device import resolve_device
+
+    config.training.device = resolve_device(config.training.device)
     model = create_model(config.model, config.training, config.output)
 
     # ---- 4. Fit ---------------------------------------------------------

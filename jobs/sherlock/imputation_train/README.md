@@ -44,13 +44,13 @@ processes, machines, and Python invocations.
 
 ## Prerequisites
 
-1. **OpenMHC venv** at `/scratch/users/schuetzn/envs/openmhc/` (same one
-   the eval pipeline uses).
-2. **Dataset cache** at
-   `/scratch/users/schuetzn/.myheartcounts-dataset-cache/data-full/`
-   with `processed/daily_hf/`, `processed/normalization_stats.json`,
-   and `splits/sharable_users_seed42_2026.json`. Same cache the eval
-   pipeline reads.
+1. **OpenMHC venv** somewhere on `$SCRATCH` (same one the eval pipeline
+   uses; `scripts/dev/activate-openmhc.sh` activates it).
+2. **Dataset cache** under `${MHC_CACHE}` (defaults to
+   `${SCRATCH_RUN_ROOT}/.myheartcounts-dataset-cache/data-full/`) with
+   `processed/daily_hf/`, `processed/normalization_stats.json`, and
+   `splits/sharable_users_seed42_2026.json`. Same cache the eval pipeline
+   reads.
 3. **GPU access** to the `gpu` partition. The sbatch requests
    Tesla-family cards explicitly to avoid the consumer-RTX-3090
    "GPU is lost" failures we hit during eval.
@@ -64,11 +64,12 @@ sbatch jobs/sherlock/imputation_train/run_fedformer_train.sbatch
 ```
 
 That submits one ~48h GPU job. Watch progress with `squeue -u $USER`
-and `tail -f /scratch/users/schuetzn/logs/openmhc/train_fedformer_*.out`.
+and `tail -f ${LOGS}/train_fedformer_*.out` (defaults to
+`/scratch/users/$USER/logs/openmhc/train_fedformer_*.out`).
 
 When training finishes, a release bundle appears at
-`/scratch/users/schuetzn/openmhc-imputation-train/releases/fedformer_<timestamp>/`
-containing:
+`${TRAIN_BASE}/releases/fedformer_<timestamp>/` (defaults to
+`${SCRATCH_RUN_ROOT}/openmhc-imputation-train/releases/...`) containing:
 
 ```
 fedformer_<timestamp>/
@@ -83,7 +84,7 @@ fedformer_<timestamp>/
 ```bash
 # Point the FEDformer eval sbatch at the new release dir
 sed -i \
-  "s|method.release_dir=\${RELEASES}/fedformer|method.release_dir=/scratch/users/schuetzn/openmhc-imputation-train/releases/fedformer_<timestamp>|" \
+  "s|method.release_dir=\${RELEASES}/fedformer|method.release_dir=${TRAIN_BASE}/releases/fedformer_<timestamp>|" \
   jobs/sherlock/imputation_eval/run_fedformer.sbatch
 
 # Re-run FEDformer eval
@@ -125,7 +126,7 @@ the tiny `xs` dataset:
 ```bash
 sh_dev -t 1:00:00 -p gpu --gres=gpu:1
 source jobs/sherlock/imputation_train/_common.sh
-export MHC_DATA_DIR=/scratch/users/schuetzn/.myheartcounts-dataset-cache/data-xs
+export MHC_DATA_DIR=${SCRATCH_RUN_ROOT}/.myheartcounts-dataset-cache/data-xs
 
 mhc-impute-train \
   model=fedformer \

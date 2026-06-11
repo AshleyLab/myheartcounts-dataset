@@ -3,6 +3,10 @@
 # All paths point at /scratch (home is quota-limited). Release dirs reference
 # the bundles downloaded by jobs/sherlock/imputation_eval/00_setup.sh.
 #
+# ``${VAR}`` placeholders are expanded by ``run_paper_pipeline.py`` from the
+# process environment. Defaults are set by ``jobs/sherlock/_env.sh`` so the
+# file works for any Sherlock user without editing.
+#
 # Consumed by:
 #   scripts/paper_results/run_paper_pipeline.py \
 #       --sweep-config jobs/sherlock/imputation_eval/sweep_methods.yaml \
@@ -12,10 +16,10 @@
 # jobs/sherlock/imputation_eval/run_*.sbatch — they write to runs_root/<name>/
 # so the manifest reconstruction in `_phase0_run_methods` finds them.
 
-output_root: /scratch/users/schuetzn/openmhc-imputation-eval/paper
-runs_root:   /scratch/users/schuetzn/openmhc-imputation-eval/runs
-draws_path:  /scratch/users/schuetzn/openmhc-imputation-eval/paper/bootstrap_draws.parquet
-manifest_path: /scratch/users/schuetzn/openmhc-imputation-eval/paper/bootstrap_method_dirs.json
+output_root: ${SCRATCH_RUN_ROOT}/openmhc-imputation-eval/paper
+runs_root:   ${SCRATCH_RUN_ROOT}/openmhc-imputation-eval/runs
+draws_path:  ${SCRATCH_RUN_ROOT}/openmhc-imputation-eval/paper/bootstrap_draws.parquet
+manifest_path: ${SCRATCH_RUN_ROOT}/openmhc-imputation-eval/paper/bootstrap_method_dirs.json
 
 # Phase 0 (Hydra eval) — kept here for completeness so that a direct
 # `run_paper_pipeline.py` invocation (without --skip-eval) would reproduce the
@@ -23,9 +27,9 @@ manifest_path: /scratch/users/schuetzn/openmhc-imputation-eval/paper/bootstrap_m
 common_overrides:
   - evaluation.save_pairs=true
   - data.version=full
-  - data.daily_hf_dir=/scratch/users/schuetzn/.myheartcounts-dataset-cache/data-full/processed/daily_hf
-  - data.split_file=/scratch/users/schuetzn/.myheartcounts-dataset-cache/data-full/splits/sharable_users_seed42_2026.json
-  - +masking.masks_file=/scratch/users/schuetzn/openmhc-imputation-eval/masks/sharable_users_seed42_2026_max91d
+  - data.daily_hf_dir=${MHC_CACHE}/processed/daily_hf
+  - data.split_file=${MHC_CACHE}/splits/sharable_users_seed42_2026.json
+  - +masking.masks_file=${SCRATCH_RUN_ROOT}/openmhc-imputation-eval/masks/sharable_users_seed42_2026_max91d
   - bootstrap=on
   - seed=42
 
@@ -64,19 +68,19 @@ methods:
   - {name: personalized_mode}
   - {name: personalized_temporal_mean}
   - name: brits
-    overrides: [method.release_dir=/scratch/users/schuetzn/releases/brits]
+    overrides: [method.release_dir=${RELEASES}/brits]
   - name: dlinear
-    overrides: [method.release_dir=/scratch/users/schuetzn/releases/dlinear]
+    overrides: [method.release_dir=${RELEASES}/dlinear]
   # 7-day DLinear (W&B v48). Note the release dir is dlinear-7day (kebab),
   # decoupled from the registry key dlinear_weekly. Sweep entry name must
   # match the registry key; the path lives only in the override.
   - name: dlinear_weekly
-    overrides: [method.release_dir=/scratch/users/schuetzn/releases/dlinear-7day]
+    overrides: [method.release_dir=${RELEASES}/dlinear-7day]
   - name: fedformer
-    overrides: [method.release_dir=/scratch/users/schuetzn/releases/fedformer]
+    overrides: [method.release_dir=${RELEASES}/fedformer]
   - name: timesnet
-    overrides: [method.release_dir=/scratch/users/schuetzn/releases/timesnet]
+    overrides: [method.release_dir=${RELEASES}/timesnet]
   - name: lsm2
-    overrides: [method.release_dir=/scratch/users/schuetzn/releases/lsm2]
+    overrides: [method.release_dir=${RELEASES}/lsm2]
   - name: lsm2_weekly_sparse
-    overrides: [method.release_dir=/scratch/users/schuetzn/releases/lsm2_weekly_sparse]
+    overrides: [method.release_dir=${RELEASES}/lsm2_weekly_sparse]

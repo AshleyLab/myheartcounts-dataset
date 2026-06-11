@@ -39,9 +39,11 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -53,6 +55,25 @@ logger = logging.getLogger(__name__)
 
 # Resolve repo root from this script's location.
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _expand_env_vars(obj: Any) -> Any:
+    """Recursively expand ``${VAR}`` / ``$VAR`` placeholders in YAML strings.
+
+    Sweep configs reference per-user paths via env vars (set by
+    ``jobs/sherlock/_env.sh``). We expand here so downstream code that
+    consumes plain strings keeps working unchanged. ``os.path.expandvars``
+    leaves unknown ``${...}`` placeholders untouched, which keeps any
+    accidental config mis-spellings visible rather than silently turning
+    them into ``""``.
+    """
+    if isinstance(obj, str):
+        return os.path.expandvars(obj)
+    if isinstance(obj, dict):
+        return {k: _expand_env_vars(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_expand_env_vars(v) for v in obj]
+    return obj
 
 
 def _parse_args() -> argparse.Namespace:
@@ -80,6 +101,14 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument(
         "--dry-run", action="store_true",
         help="Print commands that would be executed; do not run them",
+    )
+    p.add_argument(
+        "--strict", action="store_true",
+        help=(
+            "Fail (non-zero exit) on any missing method, scenario, or "
+            "manifest instead of warning-and-skipping. Required for runs "
+            "whose numbers are published."
+        ),
     )
     return p.parse_args()
 
@@ -122,10 +151,18 @@ def _phase0_run_methods(cfg: dict, methods: list[dict], dry_run: bool) -> dict[s
     return method_dirs
 
 
-def _write_manifest(method_dirs: dict[str, Path], manifest_path: Path, dry_run: bool) -> None:
+def _write_manifest(
+    method_dirs: dict[str, Path], manifest_path: Path, dry_run: bool,
+    *, strict: bool = False,
+) -> None:
     manifest = {m: str(p.resolve()) for m, p in method_dirs.items() if p.exists()}
     missing = sorted(set(method_dirs) - set(manifest))
     if missing:
+        if strict:
+            logger.error(
+                "[strict] Methods with no pairs/ dir: %s — aborting", missing,
+            )
+            sys.exit(2)
         logger.warning("Manifest skipping methods with no pairs/ dir: %s", missing)
     if not manifest:
         logger.error("No method has a pairs/ dir at the expected location; aborting")
@@ -137,7 +174,7 @@ def _write_manifest(method_dirs: dict[str, Path], manifest_path: Path, dry_run: 
     manifest_path.write_text(json.dumps(manifest, indent=2))
 
 
-def _phase1_bootstrap(cfg: dict, dry_run: bool) -> None:
+def _phase1_bootstrap(cfg: dict, dry_run: bool, *, strict: bool = False) -> None:
     script = REPO_ROOT / "scripts" / "paper_results" / "bootstrap_imputation_draws.py"
     cmd = [
         sys.executable, str(script),
@@ -154,10 +191,12 @@ def _phase1_bootstrap(cfg: dict, dry_run: bool) -> None:
         cmd.append("--no-auc")
     if cfg.get("exclude_unknown", False):
         cmd.append("--exclude-unknown")
+    if strict:
+        cmd.append("--strict")
     _run(cmd, dry_run)
 
 
-def _phase2_aggregate(cfg: dict, dry_run: bool) -> None:
+def _phase2_aggregate(cfg: dict, dry_run: bool, *, strict: bool = False) -> None:
     script = REPO_ROOT / "scripts" / "paper_results" / "aggregate_imputation_paper_metrics.py"
     cmd = [
         sys.executable, str(script),
@@ -172,10 +211,12 @@ def _phase2_aggregate(cfg: dict, dry_run: bool) -> None:
     ]
     for d in cfg.get("disparity_fns", []) or []:
         cmd.extend(["--disparity-fn", d])
+    if strict:
+        cmd.append("--strict")
     _run(cmd, dry_run)
 
 
-def _phase2_fairness_skill_score(cfg: dict, dry_run: bool) -> None:
+def _phase2_fairness_skill_score(cfg: dict, dry_run: bool, *, strict: bool = False) -> None:
     """Sidecar reducer: fairness skill score (per-attribute and macro-averaged).
 
     Independent of the four CSVs produced by ``_phase2_aggregate`` — reads
@@ -195,13 +236,15 @@ def _phase2_fairness_skill_score(cfg: dict, dry_run: bool) -> None:
         "--clip-upper", str(cfg["clip_upper"]),
         "--ci-level", str(cfg["ci_level"]),
     ]
+    if strict:
+        cmd.append("--strict")
     _run(cmd, dry_run)
 
 
 def main() -> int:
     """CLI entry point — see module docstring for usage."""
     args = _parse_args()
-    cfg = yaml.safe_load(args.sweep_config.read_text())
+    cfg = _expand_env_vars(yaml.safe_load(args.sweep_config.read_text()))
 
     methods = cfg["methods"]
     if args.methods:
@@ -218,16 +261,18 @@ def main() -> int:
         method_dirs = {m["name"]: runs_root / m["name"] / "pairs" for m in methods}
 
     # Build manifest
-    _write_manifest(method_dirs, Path(cfg["manifest_path"]), args.dry_run)
+    _write_manifest(
+        method_dirs, Path(cfg["manifest_path"]), args.dry_run, strict=args.strict,
+    )
 
     # Phase 1
     if not args.skip_phase1:
-        _phase1_bootstrap(cfg, args.dry_run)
+        _phase1_bootstrap(cfg, args.dry_run, strict=args.strict)
 
     # Phase 2
     if not args.skip_phase2:
-        _phase2_aggregate(cfg, args.dry_run)
-        _phase2_fairness_skill_score(cfg, args.dry_run)
+        _phase2_aggregate(cfg, args.dry_run, strict=args.strict)
+        _phase2_fairness_skill_score(cfg, args.dry_run, strict=args.strict)
 
     logger.info("Done. Sidecar CSVs in %s", cfg["output_root"])
     return 0
