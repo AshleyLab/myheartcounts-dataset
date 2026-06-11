@@ -56,12 +56,13 @@ declare -A JOBS=(
   [baselines]=run_baselines.sbatch
   [brits]=run_brits.sbatch
   [dlinear]=run_dlinear.sbatch
+  [dlinear_weekly]=run_dlinear_weekly.sbatch
   [fedformer]=run_fedformer.sbatch
   [timesnet]=run_timesnet.sbatch
   [lsm2]=run_lsm2.sbatch
   [lsm2_weekly_sparse]=run_lsm2_weekly_sparse.sbatch
 )
-ORDER=(baselines brits dlinear fedformer timesnet lsm2 lsm2_weekly_sparse)
+ORDER=(baselines brits dlinear dlinear_weekly fedformer timesnet lsm2 lsm2_weekly_sparse)
 
 IDS=()
 for label in "${ORDER[@]}"; do

@@ -43,6 +43,9 @@ methods:
   - name: linear
   - name: temporal_mean
   - name: temporal_mode
+  - name: personalized_mean
+  - name: personalized_mode
+  - name: personalized_temporal_mean
   - name: lsm2
     overrides:
       - method.release_dir=PLEASE_FILL_IN
@@ -56,6 +59,9 @@ methods:
     overrides:
       - method.release_dir=PLEASE_FILL_IN
   - name: dlinear
+    overrides:
+      - method.release_dir=PLEASE_FILL_IN
+  - name: dlinear_weekly
     overrides:
       - method.release_dir=PLEASE_FILL_IN
   - name: fedformer
