@@ -109,6 +109,11 @@ def _phase0_run_methods(cfg: dict, methods: list[dict], dry_run: bool) -> dict[s
             "mhc-impute-eval",
             f"method={name}",
             f"hydra.run.dir={run_dir}",
+            # Runner writes pairs to ``config.output.results_dir/pairs`` (see
+            # src/imputation_evaluation/runner.py). Without this override every
+            # method shares the default results dir and clobbers the same
+            # pairs/ — and Phase 1 then can't find pairs under runs_root/<m>/.
+            f"output.results_dir={run_dir}",
             *common_overrides,
             *(m.get("overrides", []) or []),
         ]
