@@ -17,6 +17,8 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+pytest.importorskip("pypots")
+
 from imputation_training.release import (
     build_arch,
     extract_fourier_indices,

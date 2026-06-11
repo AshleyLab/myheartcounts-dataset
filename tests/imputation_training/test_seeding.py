@@ -10,6 +10,9 @@ produce identical indices.
 from __future__ import annotations
 
 import numpy as np
+import pytest
+
+pytest.importorskip("pypots")
 
 from imputation_training.seeding import seed_everything
 
