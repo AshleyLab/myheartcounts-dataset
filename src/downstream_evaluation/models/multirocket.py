@@ -78,12 +78,18 @@ class MultiRocket:
         self._pooled: dict | None = None  # {uid: (49728,) float32} pooled MultiRocket features
         self._probe = None
         self._ctx = None  # EvalContext (cohort user_ids), injected per call
+        self._loader = None  # shared DataLoader, injected by run_eval (whole-store access)
 
     def set_context(self, ctx) -> None:
         """Receive the per-(task, split) cohort context; the engine injects it before
         ``fit`` / ``predict``. The clean ``Method`` signature carries no ``user_ids``,
         which MultiRocket needs to select the cohort's pooled features."""
         self._ctx = ctx
+
+    def set_loader(self, loader) -> None:
+        """Receive the shared :class:`DataLoader`; MultiRocket fits + transforms the whole
+        segment store from it rather than re-reading the dataset."""
+        self._loader = loader
 
     def _ensure_pooled(self) -> None:
         """Fit kernels + train stats on the global train split, transform every segment
@@ -94,7 +100,6 @@ class MultiRocket:
         """
         if self._pooled is not None:
             return
-        import datasets as hf_ds
         from sktime.transformations.panel.rocket import MultiRocketMultivariate
         from tqdm import tqdm
 
@@ -104,15 +109,10 @@ class MultiRocket:
         paths = _DatasetPaths.resolve(self._data_dir)
         split_users = load_split_file(paths.splits_file)
 
-        logger.info("MultiRocket loading daily_hourly_hf: %s", paths.daily_hourly_hf)
-        ds = hf_ds.load_from_disk(str(paths.daily_hourly_hf))
-        n = len(ds)
-        seg_users = np.asarray(ds["user_id"], dtype=object).astype(str)
-        # daily_hourly_hf stores (19, 24) channel-first, zero-filled. Transpose to
-        # (N, 24, 19) time-first and restore NaN at missing (observed-only stats).
-        values = np.ascontiguousarray(np.asarray(ds["values"], dtype=np.float32).transpose(0, 2, 1))
-        mask = np.ascontiguousarray(np.asarray(ds["mask"], dtype=np.float32).transpose(0, 2, 1))
-        values[mask > 0.5] = np.nan
+        # Whole-history store from the shared loader (one daily_hourly_hf read across the
+        # run); values/mask are already (N, 24, 19) time-first with NaN at missing.
+        values, mask, seg_users = self._loader.segment_store()
+        n = len(seg_users)
 
         train = {str(u) for u in split_users.get("train", [])}
         train_idx = np.where(np.array([u in train for u in seg_users]))[0]

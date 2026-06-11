@@ -1,6 +1,6 @@
 """Prediction engine — ``run_eval(config, model)``.
 
-``run_eval`` sets up the data provider and segment binder, hands them to a
+``run_eval`` sets up the data provider and data loader, hands them to a
 :class:`DownstreamEvaluator`, and attaches run provenance. It supports both an
 external model (wrapped by the openmhc adapter) and the bundled baseline models
 through one engine.
@@ -26,7 +26,7 @@ from __future__ import annotations
 import logging
 
 from downstream_evaluation.config import EvalConfig, TemporalWindowConfig
-from downstream_evaluation.data.binder import SegmentBinder
+from downstream_evaluation.data.loader import DataLoader
 from downstream_evaluation.data.provider import TaskDataProvider, lookup_filename
 from downstream_evaluation.evaluation.evaluator import DownstreamEvaluator
 
@@ -40,7 +40,7 @@ __all__ = ["EvalConfig", "TemporalWindowConfig", "run_eval"]
 def run_eval(config: EvalConfig, model) -> dict[str, dict]:
     """Run the prediction eval for one model (``Encoder`` or ``Predictor``).
 
-    Builds the :class:`TaskDataProvider` (and the :class:`SegmentBinder`, unless the
+    Builds the :class:`TaskDataProvider` (and the :class:`DataLoader`, unless the
     model declares ``needs_segments=False``) at the model's declared granularity,
     runs the :class:`DownstreamEvaluator`, and attaches a ``"config"`` provenance key.
 
@@ -50,9 +50,19 @@ def run_eval(config: EvalConfig, model) -> dict[str, dict]:
     lookup = f"{config.data_dir}/processed/{lookup_filename(grain, config.temporal.is_full_history)}"
     provider = TaskDataProvider(lookup, config.split_users, granularity=grain)
     # Cache-based models (precomputed per-user features/embeddings) declare
-    # needs_segments=False and skip the segment binder entirely.
+    # needs_segments=False and skip the loader's per-cohort binding. Global-fit models
+    # (GRU-D, MultiRocket) also set needs_segments=False but consume the whole segment
+    # store via a set_loader hook. Build the single loader (one daily_hourly_hf read)
+    # whenever either path is needed, and inject it for whole-store consumers.
     needs_segments = getattr(model, "needs_segments", True)
-    binder = SegmentBinder(config.data_dir, granularity=grain) if needs_segments else None
+    wants_loader = hasattr(model, "set_loader")
+    loader = (
+        DataLoader(config.data_dir, granularity=grain)
+        if (needs_segments or wants_loader)
+        else None
+    )
+    if loader is not None and wants_loader:
+        model.set_loader(loader)
 
     # Hand the temporal-window policy to models that build their own windows from raw
     # (Toto/Chronos-2); cohort/lookup models ignore it (their window is baked into the
@@ -67,7 +77,7 @@ def run_eval(config: EvalConfig, model) -> dict[str, dict]:
         pca_n_components=config.pca_n_components,
         predictions_dir=config.predictions_dir,
     )
-    results = evaluator.run(provider, binder, model, config.tasks)
+    results = evaluator.run(provider, loader if needs_segments else None, model, config.tasks)
 
     # Predictions export: alongside the per-(method, task) parquets the evaluator
     # wrote, persist one shared per-user subgroup map (age_group + sex) for the

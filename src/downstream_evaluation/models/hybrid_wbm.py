@@ -99,7 +99,7 @@ class Hybrid:
         # fit on the SSL (weekly) train cohort only.
         wtd = self._weekly_td(self._ctx.task, "train")
         X_ssl = self._wbm.encode_cohort(self._ctx.task, wtd)  # (n_weekly, 256)
-        self._ssl_pca = PCA(n_components=50, whiten=False).fit(X_ssl)
+        self._ssl_pca = PCA(n_components=50, whiten=False, random_state=self.seed).fit(X_ssl)
         X_ssl = self._ssl_pca.transform(X_ssl)
         y_ssl = wtd.labels
         if self._ttype in ("binary", "multiclass", "ordinal"):

@@ -326,6 +326,7 @@ class GRUD:
         self._task_types: dict[str, str] = {}
         self._reg_stats: dict[str, tuple[float, float]] = {}  # task -> (mean, std)
         self._ctx = None  # EvalContext (active task + cohort user_ids), injected per call
+        self._loader = None  # shared DataLoader, injected by run_eval (whole-store access)
 
     def set_context(self, ctx) -> None:
         """Receive the per-(task, split) cohort context; the engine injects it before
@@ -334,25 +335,21 @@ class GRUD:
         from here, which the clean ``Method`` signatures do not carry."""
         self._ctx = ctx
 
+    def set_loader(self, loader) -> None:
+        """Receive the shared :class:`DataLoader`; GRU-D builds its per-user segment
+        store from the loader's whole-history store rather than re-reading the dataset."""
+        self._loader = loader
+
     def _load_segments(self):
         if self._segments is not None:
             return
-        import datasets as hf_ds
-
-        from openmhc._evaluate import _DatasetPaths
-
-        paths = _DatasetPaths.resolve(self._data_dir)
-        logger.info("GRU-D loading daily_hourly_hf: %s", paths.daily_hourly_hf)
-        ds = hf_ds.load_from_disk(str(paths.daily_hourly_hf))
-        users = np.asarray(ds["user_id"], dtype=object).astype(str)
-        # (N, 19, 24) channel-first → (N, 24, 19) time-first, NaN at missing.
-        vals = np.asarray(ds["values"], dtype=np.float32).transpose(0, 2, 1)
-        mask = np.asarray(ds["mask"], dtype=np.float32).transpose(0, 2, 1)
-        vals[mask > 0.5] = np.nan
+        # Whole-history store from the shared loader (one daily_hourly_hf read across the
+        # run); ``values`` are already (N, 24, 19) time-first with NaN at missing.
+        values, _mask, users = self._loader.segment_store()
         by_user: dict[str, list] = {}
         for i, u in enumerate(users):
             by_user.setdefault(u, []).append(i)
-        self._segments = {u: vals[np.asarray(idx)] for u, idx in by_user.items()}
+        self._segments = {u: values[np.asarray(idx)] for u, idx in by_user.items()}
 
     def _provider(self):
         from downstream_evaluation.data.provider import LOOKUP_BY_GRANULARITY, TaskDataProvider
