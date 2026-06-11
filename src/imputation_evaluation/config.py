@@ -155,7 +155,7 @@ class LSM2MethodConfig:
     # 0 = instance normalization; >0 = hybrid
     normalization_prior_count: float = 1.0e12
     stats_max_samples: int | None = 10000  # Max samples for computing normalization stats
-    inference_dropout_removal_ratio: float | None = None  # Override dropout removal at inference (None = use checkpoint value)
+    inference_dropout_removal_ratio: float | None = None  # Override dropout removal at inference (None = inherit wrapper default = 0.0; set explicitly to override)
 
 
 @dataclass

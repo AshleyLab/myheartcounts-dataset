@@ -179,6 +179,55 @@ def test_lsm2_daily_round_trip(tmp_path):
     _assert_round_trip(out, data, target)
 
 
+def test_lsm2_daily_default_is_deterministic(tmp_path):
+    """Default constructor (no explicit ratio override) must be deterministic.
+
+    Regression for the bug where ``inference_dropout_removal_ratio`` defaulted
+    to ``None`` and fell back to the checkpoint's training value (0.5),
+    combining with an unseeded ``torch.rand`` to produce different
+    reconstructions on identical inputs.
+    """
+    from openmhc.imputers import LSM2Imputer
+
+    ckpt = _save_lsm2_daily_ckpt(tmp_path)
+    stats = tmp_path / "stats.json"
+    _identity_stats_json(stats)
+
+    # Sanity: the synthetic checkpoint has a nonzero training-time ratio,
+    # so the previous (None → checkpoint) path would have been nondeterministic.
+    from openmhc.models.lsm2.modules import LSM2Module
+
+    saved_module = LSM2Module.load_from_checkpoint(str(ckpt), map_location="cpu")
+    assert saved_module.model.dropout_removal_ratio > 0.0
+
+    def _build():
+        # No inference_dropout_removal_ratio kwarg — exercises the default.
+        return LSM2Imputer(
+            model_path=ckpt,
+            version="xs",
+            seq_length=N_STEPS,
+            patch_size=PATCH_SIZE,
+            in_channels=N_CHANNELS,
+            embed_dim=16,
+            depth=1,
+            num_heads=1,
+            decoder_embed_dim=16,
+            decoder_depth=1,
+            decoder_num_heads=1,
+            mlp_ratio=2.0,
+            device="cpu",
+            inference_batch_size=2,
+            normalization_stats_path=stats,
+        )
+
+    data, mask = _make_synthetic_batch(3, seed=0)
+    target = _make_target_mask(mask, frac=0.1, seed=1)
+
+    out1 = _build().impute(data, mask, target)
+    out2 = _build().impute(data, mask, target)
+    np.testing.assert_array_equal(out1, out2)
+
+
 def test_lsm2_directory_path_resolution(tmp_path):
     """Passing the directory should resolve to the .ckpt inside."""
     from openmhc.imputers import LSM2Imputer
@@ -241,6 +290,55 @@ def test_lsm2_weekly_sparse_round_trip(tmp_path):
     target = _make_target_mask(mask, frac=0.05, seed=3)
     out = imp.impute(data, mask, target)
     _assert_round_trip(out, data, target)
+
+
+def test_lsm2_weekly_sparse_default_is_deterministic(tmp_path):
+    """Default constructor (no explicit ratio override) must be deterministic.
+
+    Same regression as the daily variant, for ``LSM2WeeklySparseImputer``.
+    """
+    from openmhc.imputers import LSM2WeeklySparseImputer
+
+    num_days = 2
+    ckpt = _save_lsm2_weekly_sparse_ckpt(tmp_path, num_days=num_days)
+
+    # Sanity: synthetic checkpoint has a nonzero training-time ratio.
+    from openmhc.models.lsm2.modules import WeeklySparseLSM2Module
+
+    saved_module = WeeklySparseLSM2Module.load_from_checkpoint(
+        str(ckpt), map_location="cpu"
+    )
+    assert saved_module.model.dropout_removal_ratio > 0.0
+
+    def _build():
+        # No inference_dropout_removal_ratio kwarg — exercises the default.
+        return LSM2WeeklySparseImputer(
+            model_path=ckpt,
+            version="xs",
+            seq_length=N_STEPS,
+            patch_size=PATCH_SIZE,
+            in_channels=N_CHANNELS,
+            embed_dim=16,
+            depth=1,
+            num_heads=1,
+            decoder_embed_dim=16,
+            decoder_depth=2,
+            decoder_num_heads=1,
+            mlp_ratio=2.0,
+            num_days=num_days,
+            window_minutes=24,
+            use_rope_day_embed=False,
+            device="cpu",
+            inference_batch_size=2,
+        )
+
+    weekly_len = num_days * N_STEPS
+    data, mask = _make_synthetic_batch(2, n_steps=weekly_len, seed=2)
+    target = _make_target_mask(mask, frac=0.05, seed=3)
+
+    out1 = _build().impute(data, mask, target)
+    out2 = _build().impute(data, mask, target)
+    np.testing.assert_array_equal(out1, out2)
 
 
 # ---------------------------------------------------------------------------

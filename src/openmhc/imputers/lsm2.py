@@ -72,7 +72,7 @@ class _LSM2ImputerBase(ReleaseLoadableMixin, BaseImputer):
         *,
         device: str = "cuda",
         inference_batch_size: int = 64,
-        inference_dropout_removal_ratio: float | None = None,
+        inference_dropout_removal_ratio: float | None = 0.0,
         normalization_stats_path: str | Path | None = None,
         data_dir: str | Path | None = None,
     ) -> None:
@@ -259,7 +259,10 @@ class LSM2Imputer(_LSM2ImputerBase):
         inference_batch_size: Inner mini-batch size.
         inference_dropout_removal_ratio: Override the checkpoint's
             ``dropout_removal_ratio`` for the prioritized-keep step.
-            ``None`` uses the value from the checkpoint.
+            Defaults to ``0.0`` (no token removal — deterministic
+            inference). Pass ``None`` to fall back to the checkpoint's
+            ``dropout_removal_ratio`` (nondeterministic; uses an
+            unseeded ``torch.rand``).
         normalization_stats_path: Optional sibling JSON with z-score
             stats. Should match the training-time stats.
         data_dir: Override for the openmhc dataset root.
@@ -285,7 +288,7 @@ class LSM2Imputer(_LSM2ImputerBase):
         mask_ratio: float = 0.5,
         device: str = "cuda",
         inference_batch_size: int = 64,
-        inference_dropout_removal_ratio: float | None = None,
+        inference_dropout_removal_ratio: float | None = 0.0,
         normalization_stats_path: str | Path | None = None,
         data_dir: str | Path | None = None,
         **_extra: Any,
@@ -339,18 +342,28 @@ class LSM2Imputer(_LSM2ImputerBase):
             if self._inference_dropout_removal_ratio is not None
             else model.dropout_removal_ratio
         )
-        len_keep = int(N * (1.0 - ratio))
 
-        noise = torch.rand(B, N, device=x.device)
-        priority = total_mask * 100.0 + noise
-        ids_shuffle = torch.argsort(priority, dim=1)
-        ids_restore = torch.argsort(ids_shuffle, dim=1)
-        ids_keep = ids_shuffle[:, :len_keep]
+        if ratio <= 0.0:
+            # Deterministic fast path: keep every token, skip the unseeded
+            # torch.rand + argsort shuffle entirely. Identity permutation.
+            len_keep = N
+            ids_restore = (
+                torch.arange(N, device=x.device).unsqueeze(0).expand(B, N)
+            )
+            x_masked = x_patched
+            kept_mask_status = total_mask
+        else:
+            len_keep = int(N * (1.0 - ratio))
+            noise = torch.rand(B, N, device=x.device)
+            priority = total_mask * 100.0 + noise
+            ids_shuffle = torch.argsort(priority, dim=1)
+            ids_restore = torch.argsort(ids_shuffle, dim=1)
+            ids_keep = ids_shuffle[:, :len_keep]
+            x_masked = torch.gather(
+                x_patched, dim=1, index=ids_keep.unsqueeze(-1).expand(-1, -1, D)
+            )
+            kept_mask_status = torch.gather(total_mask, dim=1, index=ids_keep)
 
-        x_masked = torch.gather(
-            x_patched, dim=1, index=ids_keep.unsqueeze(-1).expand(-1, -1, D)
-        )
-        kept_mask_status = torch.gather(total_mask, dim=1, index=ids_keep)
         attn_mask = torch.zeros(B, 1, 1, len_keep, device=x.device)
         attn_mask.masked_fill_(
             kept_mask_status.unsqueeze(1).unsqueeze(2).bool(), float("-inf")
@@ -410,7 +423,7 @@ class LSM2WeeklySparseImputer(_LSM2ImputerBase):
         mask_ratio: float = 0.5,
         device: str = "cuda",
         inference_batch_size: int = 16,
-        inference_dropout_removal_ratio: float | None = None,
+        inference_dropout_removal_ratio: float | None = 0.0,
         normalization_stats_path: str | Path | None = None,
         data_dir: str | Path | None = None,
         **_extra: Any,
@@ -553,18 +566,28 @@ class LSM2WeeklySparseImputer(_LSM2ImputerBase):
             if self._inference_dropout_removal_ratio is not None
             else model.dropout_removal_ratio
         )
-        len_keep = int(N * (1.0 - ratio))
 
-        noise = torch.rand(BD, N, device=x_tokens.device)
-        priority = total_mask * 100.0 + noise
-        ids_shuffle = torch.argsort(priority, dim=1)
-        ids_restore = torch.argsort(ids_shuffle, dim=1)
-        ids_keep = ids_shuffle[:, :len_keep]
+        if ratio <= 0.0:
+            # Deterministic fast path: keep every token, skip the unseeded
+            # torch.rand + argsort shuffle entirely. Identity permutation.
+            len_keep = N
+            ids_restore = (
+                torch.arange(N, device=x_tokens.device).unsqueeze(0).expand(BD, N)
+            )
+            x_masked = x_tokens
+            kept_mask_status = total_mask
+        else:
+            len_keep = int(N * (1.0 - ratio))
+            noise = torch.rand(BD, N, device=x_tokens.device)
+            priority = total_mask * 100.0 + noise
+            ids_shuffle = torch.argsort(priority, dim=1)
+            ids_restore = torch.argsort(ids_shuffle, dim=1)
+            ids_keep = ids_shuffle[:, :len_keep]
+            x_masked = torch.gather(
+                x_tokens, dim=1, index=ids_keep.unsqueeze(-1).expand(-1, -1, D_emb)
+            )
+            kept_mask_status = torch.gather(total_mask, dim=1, index=ids_keep)
 
-        x_masked = torch.gather(
-            x_tokens, dim=1, index=ids_keep.unsqueeze(-1).expand(-1, -1, D_emb)
-        )
-        kept_mask_status = torch.gather(total_mask, dim=1, index=ids_keep)
         attn_mask = torch.zeros(BD, 1, 1, len_keep, device=x_tokens.device)
         attn_mask.masked_fill_(
             kept_mask_status.unsqueeze(1).unsqueeze(2).bool(), float("-inf")
