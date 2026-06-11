@@ -1,12 +1,13 @@
-"""TSFM (time-series foundation model) shared extraction + Encoder base.
+"""TSFM (time-series foundation model) shared extraction + Method base.
 
 Toto and Chronos-2 are channel-wise last-latent foundation models that share the
 *entire* data path and differ only in (a) how the pretrained model is loaded and
 (b) how a batch of windows is run through it. This module holds the shared,
 numerically-critical extraction — continuous hourly timeline → label-date-aligned
 history window → per-(split, task) HDF5 of ``(N, 19, D)`` last-latent features —
-plus a :class:`TSFMEncoder` base whose ``encode_cohort`` builds those embeddings
-**on a cache miss** (GPU) and channel-mean-pools them to ``(N, D)`` on a hit.
+plus a :class:`TSFMEncoder` ``Method`` base whose ``fit`` / ``predict`` build those
+embeddings **on a cache miss** (GPU), channel-mean-pool to ``(N, D)``, and run the
+uniform PCA-50 probe.
 
 A concrete encoder (Toto, Chronos-2) supplies the two model-specific pieces:
 
@@ -274,17 +275,19 @@ class _TaskWriter:
 # Encoder base (drives extraction on a cache miss, reads + pools on a hit)
 # --------------------------------------------------------------------------- #
 class TSFMEncoder:
-    """Base for cache-based TSFM encoders (Toto, Chronos-2).
+    """Unified ``Method`` base for cache-based TSFM encoders (Toto, Chronos-2).
 
-    ``encode_cohort`` ensures the requested split's per-(split, task) HDF5 exists
-    (build-on-miss extraction over raw ``daily_hourly_hf``, GPU), then reads the
-    task file, mean-pools across the 19 channels, and aligns to ``td.user_ids``.
-    Subclasses override ``_load_model`` and ``_run_batch``.
+    ``fit`` / ``predict`` ensure the requested split's per-(split, task) HDF5 exists
+    (build-on-miss extraction over raw ``daily_hourly_hf``, GPU), read the task file,
+    mean-pool across the 19 channels, align to the cohort ``user_ids``, and run the
+    uniform :class:`openmhc.LinearProbe`. Subclasses override ``_load_model`` and
+    ``_run_batch``.
     """
 
     name = "tsfm"  # overridden
     input_granularity = "daily"  # label-aligned per-(user, task) cohort = daily lookup
     needs_segments = False  # consumes its own build-on-miss HDF5 cache
+    predicts_from_arrays = True  # implements the unified Method contract
     pooling_label = "last_latent"  # overridden (provenance only)
 
     def __init__(self, data_dir: str | None = None, cache_dir: str | None = None,
@@ -301,10 +304,18 @@ class TSFMEncoder:
         self._window_hours: int | None = None
         self._task_cache: dict[tuple[str, str], dict[str, np.ndarray]] = {}
         self._temporal = None  # forward-window policy, injected by run_eval
+        self._ctx = None  # EvalContext (task + split + cohort user_ids), injected per call
+        self._probe = None
 
     def set_temporal_window(self, temporal) -> None:
         """Receive the runner's forward-window policy (``run_eval`` injects this)."""
         self._temporal = temporal
+
+    def set_context(self, ctx) -> None:
+        """Receive the per-(task, split) cohort context; the engine injects it before
+        ``fit`` / ``predict``. The cache is keyed by ``(split, task)`` and aligned to
+        the cohort ``user_ids`` — none carried by the clean ``Method`` signature."""
+        self._ctx = ctx
 
     def _weeks_after(self, task: str) -> int | None:
         """Forward window (weeks) for ``task`` from the injected policy; ``None`` = full history."""
@@ -460,17 +471,29 @@ class TSFMEncoder:
         self._task_cache[key] = out
         return out
 
-    def encode_cohort(self, task: str, td) -> np.ndarray:
-        """Per-user channel-pooled TSFM embedding, aligned to ``td.user_ids``."""
-        self._ensure_split(td.split)
-        by_user = self._load_task(td.split, task)
+    def _encode(self, task: str, split: str, user_ids) -> np.ndarray:
+        """Per-user channel-pooled TSFM embedding, aligned to ``user_ids``."""
+        self._ensure_split(split)
+        by_user = self._load_task(split, task)
         dim = len(next(iter(by_user.values()))) if by_user else 0
-        X = np.zeros((len(td.user_ids), dim), dtype=np.float32)
-        for i, uid in enumerate(td.user_ids):
+        X = np.zeros((len(user_ids), dim), dtype=np.float32)
+        for i, uid in enumerate(user_ids):
             vec = by_user.get(str(uid))
             if vec is not None:
                 X[i] = vec
         return X
+
+    def fit(self, data, labels, task_type) -> None:
+        # ``data`` is unused: TSFM self-serves its build-on-miss embedding cache,
+        # keyed by (split, task) + cohort user_ids from set_context.
+        import openmhc
+
+        X = self._encode(self._ctx.task, self._ctx.split, self._ctx.user_ids)
+        self._probe = openmhc.LinearProbe(task_type, seed=self.seed).fit(X, labels)
+
+    def predict(self, data) -> np.ndarray:
+        X = self._encode(self._ctx.task, self._ctx.split, self._ctx.user_ids)
+        return self._probe.predict(X)
 
 
 def _DatasetPaths_root(data_dir):

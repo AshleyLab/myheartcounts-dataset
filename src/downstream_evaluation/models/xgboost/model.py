@@ -25,8 +25,6 @@ from pathlib import Path
 
 import numpy as np
 
-from downstream_evaluation.data.provider import TaskData
-
 logger = logging.getLogger(__name__)
 
 # 1000 shallow, regularized trees.
@@ -184,7 +182,7 @@ def extract_xgboost_features(
 # Stage 2 — the XGBoost Predictor (build-on-miss internal)
 # --------------------------------------------------------------------------- #
 class XGBoost:
-    """End-to-end ``Predictor``: hand-crafted per-user features + XGBoost trees.
+    """Unified ``Method``: hand-crafted per-user features + XGBoost trees.
 
     Features are built from raw ``daily_hf`` on a cache miss and loaded on a hit
     (``features_dir`` / the default ``results/xgboost_features/from_raw``).
@@ -193,6 +191,7 @@ class XGBoost:
     name = "xgboost"
     input_granularity = "daily"  # cohort comes from the daily lookup
     needs_segments = False  # consumes its own build-on-miss feature cache, not raw segments
+    predicts_from_arrays = True  # implements the unified Method contract
 
     def __init__(
         self,
@@ -220,6 +219,14 @@ class XGBoost:
         self._X: np.ndarray | None = None
         self._clf = None
         self._ttype: str | None = None
+        self._ctx = None  # EvalContext (cohort user_ids), injected per call
+
+    def set_context(self, ctx) -> None:
+        """Receive the per-(task, split) cohort context; the engine injects it before
+        ``fit`` / ``predict``. XGBoost keys its precomputed per-user feature rows by
+        ``user_ids``, which the clean ``fit(data, labels, task_type)`` signature does
+        not carry."""
+        self._ctx = ctx
 
     def _resolve_features_dir(self) -> Path:
         if self._features_dir is not None:
@@ -255,20 +262,20 @@ class XGBoost:
         """Feature rows for ``user_ids`` (cohort users all have a feature row)."""
         return self._X[[self._index[str(u)] for u in user_ids]]
 
-    def fit(self, task_data: TaskData) -> None:
-        from downstream_evaluation.evaluation.metrics import get_task_type
-
+    def fit(self, data, labels, task_type) -> None:
+        # ``data`` is unused: XGBoost self-serves its per-user feature rows from the
+        # cache, keyed by the cohort ``user_ids`` that arrive via ``set_context``.
         self._ensure_features()
-        self._ttype = get_task_type(task_data.task)
-        X = self._matrix(task_data.user_ids)
-        y = task_data.labels
+        self._ttype = task_type
+        X = self._matrix(self._ctx.user_ids)
+        y = labels
         if self._ttype in ("binary", "multiclass", "ordinal"):
             y = y.astype(int)
         self._clf = _build_xgb(self._ttype, self.seed)
         self._clf.fit(X, y)
 
-    def predict(self, task_data: TaskData) -> np.ndarray:
-        X = self._matrix(task_data.user_ids)
+    def predict(self, data) -> np.ndarray:
+        X = self._matrix(self._ctx.user_ids)
         if self._ttype == "binary":
             return self._clf.predict_proba(X)[:, 1]
         return self._clf.predict(X)

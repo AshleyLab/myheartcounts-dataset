@@ -1,9 +1,9 @@
 """Chronos-2 encoder (channel-wise last-latent time-series foundation model).
 
 Twin of :mod:`downstream_evaluation.models.toto`: identical extraction path, only
-the model load and batch forward differ. On a cache miss ``encode_cohort`` extracts
-per-(split, task) ``(N, 19, 768)`` ``predict_last_latent`` features (GPU); the
-engine then channel-mean-pools to 768 and runs PCA-50 + probe.
+the model load and batch forward differ. On a cache miss ``fit`` / ``predict`` extract
+per-(split, task) ``(N, 19, 768)`` ``predict_last_latent`` features (GPU),
+channel-mean-pool to 768, and run the uniform PCA-50 probe.
 
 The pretrained model is an external dependency (a git submodule checkout + a
 fine-tuned LoRA adapter directory), resolved by reference — ``CHRONOS_REPO`` /

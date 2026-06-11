@@ -1,4 +1,4 @@
-"""Multi-task GRU-D — end-to-end supervised baseline (Predictor).
+"""Multi-task GRU-D — end-to-end supervised baseline (unified Method).
 
 One shared GRU-D backbone (PyPOTS ``BackboneGRUD``) encodes each of a user's daily
 ``(24, 19)`` segments to a hidden state; the hidden states are mean-pooled across the
@@ -310,11 +310,12 @@ class _Trainer:
 # each task's head on predict.
 # --------------------------------------------------------------------------- #
 class GRUD:
-    """Multi-task GRU-D Predictor for the engine (trained from raw, GPU)."""
+    """Multi-task GRU-D — unified ``Method`` (trained from raw, GPU)."""
 
     name = "gru_d"
     input_granularity = "daily"  # per-user cohort from the daily lookup
     needs_segments = False  # builds its own per-user segments from raw
+    predicts_from_arrays = True  # implements the unified Method contract
 
     def __init__(self, data_dir=None, tasks=None, seed=42):
         self._data_dir = data_dir
@@ -324,6 +325,14 @@ class GRUD:
         self._segments = None  # {uid: (n_segs, 24, 19)} with NaN at missing
         self._task_types: dict[str, str] = {}
         self._reg_stats: dict[str, tuple[float, float]] = {}  # task -> (mean, std)
+        self._ctx = None  # EvalContext (active task + cohort user_ids), injected per call
+
+    def set_context(self, ctx) -> None:
+        """Receive the per-(task, split) cohort context; the engine injects it before
+        ``fit`` / ``predict``. The shared multi-task model trains once (the per-call
+        args are ignored); ``predict`` reads the active ``task`` and cohort ``user_ids``
+        from here, which the clean ``Method`` signatures do not carry."""
+        self._ctx = ctx
 
     def _load_segments(self):
         if self._segments is not None:
@@ -383,8 +392,12 @@ class GRUD:
         y_by_task = {t: np.asarray(v) for t, v in y_by_task.items()}
         return _UserDataset(X, y_by_task, np.asarray(uids, dtype=object), self._tasks)
 
-    def fit(self, task_data) -> None:
-        """Train the multi-task model once (all tasks) on the first call."""
+    def fit(self, data, labels, task_type) -> None:
+        """Train the shared multi-task model once on the first call.
+
+        The per-call ``data`` / ``labels`` / ``task_type`` are ignored: GRU-D assembles
+        every task's cohort + labels from its own provider and trains all heads jointly.
+        """
         if self._trainer is not None:
             return
         import torch
@@ -434,10 +447,10 @@ class GRUD:
         self._trainer = _Trainer(cls_n, reg_tasks, ord_n, device, seed=self.seed)
         self._trainer.fit(train_ds, val_ds, n_steps=24, n_features=N_SENSOR_CHANNELS)
 
-    def predict(self, task_data) -> np.ndarray:
-        """Per-user predictions for ``task_data.task``, aligned to ``user_ids``."""
-        task = task_data.task
-        users = [str(u) for u in task_data.user_ids if str(u) in self._segments]
+    def predict(self, data) -> np.ndarray:
+        """Per-user predictions for the active task, aligned to the cohort ``user_ids``."""
+        task = self._ctx.task
+        users = [str(u) for u in self._ctx.user_ids if str(u) in self._segments]
         # one-user-per-item dataset, in user_ids order, dummy labels.
         Xs, uids = [], []
         for u in users:
@@ -458,5 +471,5 @@ class GRUD:
             mu, sd = self._reg_stats[task]
             preds = preds * sd + mu  # reverse the train-split z-score
         pred_by_user = dict(zip(ds.user_ids, preds))
-        return np.array([pred_by_user.get(str(u), 0.0) for u in task_data.user_ids], dtype=np.float64)
+        return np.array([pred_by_user.get(str(u), 0.0) for u in self._ctx.user_ids], dtype=np.float64)
 

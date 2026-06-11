@@ -110,11 +110,15 @@ class EvalContext:
         split: the cohort split — ``"train"`` / ``"validation"`` / ``"test"``.
         user_ids: cohort user ids, aligned with the ``data`` / ``labels`` passed to
             ``fit`` / ``predict``.
+        dates: per-user eligible segment dates (daily) / week_starts (weekly), aligned
+            with ``user_ids`` — for cache baselines that pool per-user over the cohort's
+            eligible days (e.g. MAE). ``None`` when not provided.
     """
 
     task: str
     split: str
     user_ids: np.ndarray
+    dates: list | None = None
 
 
 @runtime_checkable

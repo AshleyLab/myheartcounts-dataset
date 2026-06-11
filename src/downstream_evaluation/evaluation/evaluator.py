@@ -73,7 +73,9 @@ def _set_context(model, td) -> None:
     if hasattr(model, "set_context"):
         from openmhc._protocols import EvalContext
 
-        model.set_context(EvalContext(task=td.task, split=td.split, user_ids=td.user_ids))
+        model.set_context(
+            EvalContext(task=td.task, split=td.split, user_ids=td.user_ids, dates=td.dates)
+        )
 
 
 class DownstreamEvaluator:

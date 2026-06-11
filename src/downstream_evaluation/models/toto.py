@@ -2,9 +2,9 @@
 
 Concrete :class:`~downstream_evaluation.models.tsfm.TSFMEncoder`: shares the whole
 extraction path (label-aligned 2048 h history windows from ``daily_hourly_hf``) and
-supplies only the Toto-specific model load + batch forward. On a cache miss the
-``encode_cohort`` call extracts per-(split, task) ``(N, 19, 768)`` last-latent
-features (GPU), then the engine channel-mean-pools to 768 and runs PCA-50 + probe.
+supplies only the Toto-specific model load + batch forward. On a cache miss
+``fit`` / ``predict`` extract per-(split, task) ``(N, 19, 768)`` last-latent
+features (GPU), channel-mean-pool to 768, and run the uniform PCA-50 probe.
 
 The pretrained model is an external dependency (a git submodule checkout + a
 fine-tuned Lightning checkpoint), resolved by reference like any model weight —

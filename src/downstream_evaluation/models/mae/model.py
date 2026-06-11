@@ -8,13 +8,13 @@ Two stages, both run from raw data:
     into one 384-d embedding per (user, day). This regenerates the embeddings from raw
     data rather than loading a prebuilt cache. The ViT forward pass requires a GPU.
 
-  - **Stage 2 (eval):** the ``MAE`` Encoder loads that intermediate and mean-pools
-    each user's eligible daily embeddings (``td.dates``) → 384-d; the engine then runs
-    the uniform PCA-50 + linear probe.
+  - **Stage 2 (eval):** the ``MAE`` ``Method`` loads that intermediate, mean-pools
+    each user's eligible daily embeddings (the cohort's ``dates``) → 384-d, and runs
+    the uniform PCA-50 probe (``openmhc.LinearProbe``) in ``fit`` / ``predict``.
 
 The per-day embedding is small (384-d), so — unlike MultiRocket's per-(task, user)
-pooling — we cache one vector per (user, day) and pool per cohort in ``encode_cohort``,
-exactly mirroring ``wbm.py`` (only the granularity differs: daily here, weekly there).
+pooling — we cache one vector per (user, day) and pool per cohort, exactly mirroring
+``wbm.py`` (only the granularity differs: daily here, weekly there).
 """
 
 from __future__ import annotations
@@ -166,7 +166,7 @@ def extract_mae_embeddings(
     n = len(ds)
 
     # Cohort universe = union of all split users (every per-task cohort ⊆ this set),
-    # so extracting over it covers every user encode_cohort can ask for, no more.
+    # so extracting over it covers every user fit/predict can ask for, no more.
     split_users = load_split_file(paths.splits_file)
     cohort_users: set[str] = set()
     for users in split_users.values():
@@ -243,15 +243,17 @@ def extract_mae_embeddings(
 # Stage 2 — the MAE Encoder (driven by run_eval; build-on-miss is internal)
 # --------------------------------------------------------------------------- #
 class MAE:
-    """MAE daily encoder for the engine. ``encode_cohort`` returns the cohort's
-    per-user 384-d embeddings — built **on a cache miss** by running the dense
-    encoder over raw (GPU), saved, and reused on a hit — all inside the eval flow.
-    The engine then runs the uniform PCA-50 + linear probe.
+    """Unified ``Method``: MAE daily-encoder embeddings + the uniform linear probe.
+
+    Per-user 384-d embeddings are built **on a cache miss** (dense encoder over raw,
+    GPU), saved, and reused on a hit; ``fit`` / ``predict`` mean-pool each cohort
+    participant's eligible day-embeddings and run :class:`openmhc.LinearProbe`.
     """
 
     name = "mae"
     input_granularity = "daily"  # per-user eligible days come from the daily lookup
     needs_segments = False  # consumes its own build-on-miss embedding cache
+    predicts_from_arrays = True  # implements the unified Method contract
 
     def __init__(
         self,
@@ -268,6 +270,14 @@ class MAE:
         self.seed = seed
         self._by_key: dict | None = None
         self._dim = EMBED_DIM
+        self._probe = None
+        self._ctx = None  # EvalContext (cohort user_ids + eligible dates), injected per call
+
+    def set_context(self, ctx) -> None:
+        """Receive the per-(task, split) cohort context; the engine injects it before
+        ``fit`` / ``predict``. MAE pools each user's cached day-embeddings over their
+        eligible ``dates`` — neither carried by the clean ``Method`` signature."""
+        self._ctx = ctx
 
     def _resolve_cache_dir(self) -> Path:
         if self._cache_dir is not None:
@@ -295,15 +305,27 @@ class MAE:
             self._dim = int(emb.shape[1])
         logger.info("MAE embeddings ready: %d day-embeddings, dim=%d", len(emb), self._dim)
 
-    def encode_cohort(self, task: str, td) -> np.ndarray:
-        """Per-user mean-pool of the MAE day-embeddings over each user's eligible days."""
+    def _encode(self, user_ids, dates) -> np.ndarray:
+        """Per-user mean-pool of the cached MAE day-embeddings over each user's eligible days."""
         self._ensure_embeddings()
-        X = np.zeros((len(td.user_ids), self._dim), dtype=np.float32)
-        for i, (uid, dates) in enumerate(zip(td.user_ids, td.dates)):
-            vecs = [self._by_key[k] for d in dates if (k := (str(uid), str(d)[:10])) in self._by_key]
+        X = np.zeros((len(user_ids), self._dim), dtype=np.float32)
+        for i, (uid, ds) in enumerate(zip(user_ids, dates)):
+            vecs = [self._by_key[k] for d in ds if (k := (str(uid), str(d)[:10])) in self._by_key]
             if vecs:
                 X[i] = np.mean(vecs, axis=0)
         return X
+
+    def fit(self, data, labels, task_type) -> None:
+        # ``data`` is unused: MAE self-serves cached day-embeddings, pooled per user
+        # over the cohort's eligible dates from set_context.
+        import openmhc
+
+        X = self._encode(self._ctx.user_ids, self._ctx.dates)
+        self._probe = openmhc.LinearProbe(task_type, seed=self.seed).fit(X, labels)
+
+    def predict(self, data) -> np.ndarray:
+        X = self._encode(self._ctx.user_ids, self._ctx.dates)
+        return self._probe.predict(X)
 
 
 def _main() -> None:
