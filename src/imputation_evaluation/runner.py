@@ -131,6 +131,20 @@ def run_eval(
         if config.data.num_eval_dl_workers is not None
         else config.data.num_workers
     )
+    # Personalized imputers under the lazy per-user state contract need
+    # user-grouped batches to avoid evict-and-reload thrashing inside
+    # impute(). The flag propagates through the imputer adapter via the
+    # ``requires_user_grouped_batches`` attribute on the wrapped imputer.
+    user_grouped_batches = bool(
+        getattr(method, "requires_user_grouped_batches", False)
+        or getattr(getattr(method, "_imputer", None), "requires_user_grouped_batches", False)
+    )
+    if user_grouped_batches:
+        logger.info(
+            "Method %s requires user-grouped eval batches; flipping "
+            "create_eval_loaders into user-grouped mode.",
+            method.name,
+        )
     eval_val_loader, eval_test_loader = data_loader.create_eval_loaders(
         split_indices=loaded_data.split_indices,
         hf_dataset=loaded_data.hf_dataset,
@@ -140,6 +154,7 @@ def run_eval(
         window_descriptors=loaded_data.window_descriptors,
         window_day_offsets=loaded_data.window_day_offsets,
         applicable_indices=applicable_indices,
+        user_grouped_batches=user_grouped_batches,
     )
 
     # 7. Run evaluation. Pair-saving is enabled when either evaluation.save_pairs is
