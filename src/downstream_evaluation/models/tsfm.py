@@ -287,7 +287,6 @@ class TSFMEncoder:
     name = "tsfm"  # overridden
     input_granularity = "daily"  # label-aligned per-(user, task) cohort = daily lookup
     needs_segments = False  # consumes its own build-on-miss HDF5 cache
-    predicts_from_arrays = True  # implements the unified Method contract
     pooling_label = "last_latent"  # overridden (provenance only)
 
     def __init__(self, data_dir: str | None = None, cache_dir: str | None = None,

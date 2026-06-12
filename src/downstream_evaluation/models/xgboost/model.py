@@ -1,6 +1,6 @@
 """XGBoost baseline.
 
-A gradient-boosted-tree ``Predictor`` on hand-crafted per-participant features
+A gradient-boosted-tree ``Method`` on hand-crafted per-participant features
 (timeseries / curve-analysis / day-dynamics summaries). Tree model: features keep
 NaN (XGBoost handles them natively), no scaler, no PCA, no demographics.
 
@@ -11,7 +11,7 @@ Self-contained two-stage from-raw flow:
     checkpoints → curve-analysis) over the raw minute-level ``daily_hf`` Arrow shards,
     under a per-user 1092-day (156-week) future-data cutoff, writing the three per-user
     feature parquets.
-  - **Stage 2 (eval):** the ``XGBoost`` Predictor loads that feature table (built on a
+  - **Stage 2 (eval):** the ``XGBoost`` method loads that feature table (built on a
     cache miss, loaded on a hit) and fits/predicts end-to-end, routed by task type.
 
 To skip the from-raw build, point ``features_dir`` at a prebuilt feature-table
@@ -179,7 +179,7 @@ def extract_xgboost_features(
 
 
 # --------------------------------------------------------------------------- #
-# Stage 2 — the XGBoost Predictor (build-on-miss internal)
+# Stage 2 — the XGBoost method (build-on-miss internal)
 # --------------------------------------------------------------------------- #
 class XGBoost:
     """Unified ``Method``: hand-crafted per-user features + XGBoost trees.
@@ -191,7 +191,6 @@ class XGBoost:
     name = "xgboost"
     input_granularity = "daily"  # cohort comes from the daily lookup
     needs_segments = False  # consumes its own build-on-miss feature cache, not raw segments
-    predicts_from_arrays = True  # implements the unified Method contract
 
     def __init__(
         self,

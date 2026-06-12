@@ -12,84 +12,6 @@ from typing import Protocol, runtime_checkable
 import numpy as np
 
 
-@runtime_checkable
-class Encoder(Protocol):
-    """Protocol for health-prediction encoders — the model contract for external
-    submissions and the bundled baselines alike.
-
-    An encoder maps **one participant's eligible wearable data** — already filtered
-    to the task's cohort and temporal scope by the benchmark (the inclusion criteria,
-    plus any forward window) — to a
-    single fixed-size embedding. The benchmark then fits a *uniform* linear probe
-    on the embeddings and scores it, so a model's result reflects its representation
-    rather than its choice of probe. The same protocol is implemented by external
-    encoders and by the baselines (MAE, SSL, Toto, Chronos-2, ...).
-
-    Set ``input_granularity`` to choose how the benchmark hands you each
-    participant's data. ``"daily"`` is currently wired by the segment binder:
-
-      - ``"daily"``  — eligible daily segments ``(n_segments, 24, 38)``.
-      - ``"series"`` / ``"weekly"`` — planned (hourly series / weekly segments).
-
-    Channels 0-18 are the **raw** sensor values (NaN at missing positions) and 19-37
-    the missingness mask (1 = missing, 0 = observed). Normalization is your model's
-    concern — z-score with your own train-split statistics if you need it (the
-    imputation track hands raw values the same way). The benchmark fits a PCA-50 probe
-    on the embeddings, so return at least 50 dimensions.
-
-    Example:
-        >>> class MyEncoder:
-        ...     input_granularity = "daily"
-        ...     def encode(self, data: np.ndarray) -> np.ndarray:
-        ...         # data: (n_segments, 24, 38) — eligible days; channels 0-18 raw
-        ...         # values (NaN at missing), 19-37 the mask. Return D >= 50.
-        ...         x = np.nan_to_num(data).reshape(-1, 38)
-        ...         return np.concatenate([x.mean(0), x.std(0)])   # -> (76,)
-    """
-
-    def encode(self, data: np.ndarray) -> np.ndarray:
-        """Map one participant's eligible data to a 1-D float32 embedding.
-
-        Args:
-            data: the participant's eligible data at ``input_granularity`` (see the
-                class docstring). Only in-cohort, in-window data is included, so it
-                may be pooled / windowed freely.
-
-        Returns:
-            A 1-D float32 embedding ``(D,)`` of any dimensionality.
-        """
-        ...
-
-
-@runtime_checkable
-class Predictor(Protocol):
-    """Protocol for end-to-end prediction models that own their classifier head.
-
-    Unlike :class:`Encoder` (which returns a representation for the benchmark's
-    uniform probe), a ``Predictor`` fits on the cohort's eligible data + labels and
-    returns one prediction per participant; the benchmark scores those directly.
-    Used by end-to-end models (e.g. GRU-D, MultiRocket). Set ``input_granularity``
-    as for :class:`Encoder` (default ``"series"``).
-
-    This is the *public* contract — plain per-participant arrays in, predictions out.
-    The benchmark adapts it to its internal engine. (Bundled baselines implement the
-    richer internal model interface directly, so they can key by user / task.)
-
-    Example:
-        >>> class MyPredictor:
-        ...     def fit(self, data, labels): ...            # data: list of per-participant arrays
-        ...     def predict(self, data) -> np.ndarray: ...   # (n,) predictions, aligned with data
-    """
-
-    def fit(self, data: list[np.ndarray], labels: np.ndarray) -> None:
-        """Fit on the train cohort: per-participant eligible data + aligned labels."""
-        ...
-
-    def predict(self, data: list[np.ndarray]) -> np.ndarray:
-        """Return one prediction per participant, aligned with ``data``."""
-        ...
-
-
 @dataclass
 class EvalContext:
     """Per-(task, split) context the benchmark hands a bundled baseline.
@@ -123,15 +45,15 @@ class EvalContext:
 
 @runtime_checkable
 class Method(Protocol):
-    """Unified prediction contract — **fit on arrays + labels, return predictions**.
+    """The prediction-track model contract — **fit on arrays + labels, return predictions**.
 
-    Supersedes :class:`Encoder` + :class:`Predictor` with one shape: a method fits on
-    the train cohort's per-participant data and labels, then returns one prediction
-    per participant on a held-out cohort. Representation isolation is preserved by
-    *convention*: an encoder-style method runs its own representation and then the
-    benchmark's uniform head, :class:`openmhc.LinearProbe`, inside ``fit`` /
-    ``predict`` — so its score still reflects the representation, not the choice of
-    classifier — while an end-to-end method owns its head directly.
+    One shape for every model, external submissions and bundled baselines alike: a
+    method fits on the train cohort's per-participant data and labels, then returns
+    one prediction per participant on a held-out cohort. Representation isolation is
+    preserved by *convention*: an encoder-style method runs its own representation
+    and then the benchmark's uniform head, :class:`openmhc.LinearProbe`, inside
+    ``fit`` / ``predict`` — so its score still reflects the representation, not the
+    choice of classifier — while an end-to-end method owns its head directly.
 
     ``data`` is a list with one entry per participant, at ``input_granularity``
     (default ``"daily"`` → each entry ``(n_segments, 24, 38)``: channels 0-18 raw
@@ -139,11 +61,9 @@ class Method(Protocol):
     ``labels`` is a ``(n,)`` array aligned with ``data``. ``task_type`` is one of
     ``"binary"``, ``"multiclass"``, ``"ordinal"``, ``"regression"``.
 
-    Engine opt-in: the benchmark routes a model through this contract when it sets the
-    class attribute ``predicts_from_arrays = True``. A model may also define the
-    optional ``set_context(ctx: EvalContext)`` hook; the engine calls it before
-    ``fit`` and again before ``predict`` (bundled baselines only — see
-    :class:`EvalContext`).
+    A model may also define the optional ``set_context(ctx: EvalContext)`` hook; the
+    engine calls it before ``fit`` and again before ``predict`` (bundled baselines
+    only — see :class:`EvalContext`).
 
     Example (encoder-style, via the uniform probe)::
 
@@ -151,7 +71,6 @@ class Method(Protocol):
 
         class MyMethod:
             input_granularity = "daily"
-            predicts_from_arrays = True
 
             def fit(self, data, labels, task_type):
                 emb = np.stack([self._encode(x) for x in data])

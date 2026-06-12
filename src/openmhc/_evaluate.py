@@ -1,7 +1,7 @@
 """Public evaluation functions for OpenMHC.
 
 These functions provide a simple interface to the benchmark's evaluation
-pipelines. They accept duck-typed Encoder/Imputer objects and return
+pipelines. They accept duck-typed Method/Imputer/Forecaster objects and return
 structured results.
 """
 
@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 if TYPE_CHECKING:
-    from openmhc._protocols import Encoder, Imputer
+    from openmhc._protocols import Imputer, Method
 
 from openmhc._dataset import data_dir as _resolve_default_data_dir
 from openmhc._results import ForecastingResults, ImputationResults, PredictionResults
@@ -112,23 +112,25 @@ def _ensure_labels_env(labels_dir: Path) -> None:
 
 
 def evaluate_prediction(
-    encoder: Encoder,
+    model: Method,
     tasks: str | list[str] = "all",
     data_dir: str | Path | None = None,
     seed: int = 42,
     predictions_dir: str | Path | None = None,
 ) -> PredictionResults:
-    """Run health-prediction evaluation with a custom encoder.
+    """Run health-prediction evaluation with a custom model.
 
-    Encodes weekly sensor tensors via `encoder.encode()` and evaluates the
-    resulting embeddings on up to 33 health prediction tasks using linear
-    probes (logistic regression for binary, ordinal logistic for ordinal,
-    ridge regression for continuous).
+    Fits the model per task on the train cohort's eligible data + labels, scores
+    its test-split predictions, and reports the primary metric per task type.
 
     Args:
-        encoder: Object with an `encode(weekly_tensors) -> embeddings` method.
-            Input shape is (B, 168, 38), output shape is (B, D).
-        tasks: "all" to run all 33 tasks, or a list of task name strings.
+        model: Object implementing the :class:`~openmhc.Method` contract —
+            ``fit(data, labels, task_type)`` / ``predict(data)``, where ``data``
+            is a list with one ``(n_segments, 24, 38)`` array per participant
+            (channels 0-18 raw values with NaN at missing, 19-37 the mask).
+            Encoder-style models run the uniform :class:`~openmhc.LinearProbe`
+            inside ``fit`` / ``predict``; end-to-end models own their head.
+        tasks: "all" to run the 32 benchmark tasks, or a list of task name strings.
         data_dir: Override for the dataset root (the same root that
             ``download_dataset`` writes to). ``None`` uses the default
             (``MHC_DATA_DIR`` env var or ``~/.cache/openmhc/data``). All
@@ -148,10 +150,10 @@ def evaluate_prediction(
     from downstream_evaluation.data.splits import load_split_file
     from downstream_evaluation.evaluation.metrics import get_task_type
     from downstream_evaluation.runner import EvalConfig, run_eval
-    from labels.api import TARGET_NAMES
+    from openmhc._constants import BENCHMARK_TASKS
 
     if tasks == "all":
-        task_list = sorted(TARGET_NAMES)
+        task_list = list(BENCHMARK_TASKS)
     elif isinstance(tasks, str):
         task_list = [tasks]
     else:
@@ -159,11 +161,9 @@ def evaluate_prediction(
 
     split_users = load_split_file(paths.splits_file)
 
-    # Both surfaces run through the one engine (mirrors evaluate_imputation →
-    # run_eval): an external encoder exposes ``encode``; a bundled baseline exposes
-    # ``encode_cohort``/``fit``. run_eval selects the path, applies the uniform
-    # PCA-50 + linear probe, and reports the primary metric per task type. The
-    # cohort and per-task temporal scope come from the lookup the engine selects.
+    # External models and bundled baselines run through the one engine identically
+    # (mirrors evaluate_imputation → run_eval). The cohort and per-task temporal
+    # scope come from the lookup the engine selects.
     cfg = EvalConfig(
         data_dir=str(paths.root),
         split_users=split_users,
@@ -171,14 +171,6 @@ def evaluate_prediction(
         seed=seed,
         predictions_dir=str(predictions_dir) if predictions_dir is not None else None,
     )
-    # A pure external encoder implements only the public ``encode(data)`` contract, so
-    # wrap it to translate the engine's per-participant ``ParticipantSegments`` into the
-    # documented ``(n_segments, 24, 38)`` array (mirrors ``_ImputerMethodAdapter`` /
-    # ``_ForecasterAdapter``). Bundled baselines speak the internal interface
-    # (``encode_cohort`` / ``fit``) and pass through untouched.
-    model = encoder
-    if hasattr(encoder, "encode") and not hasattr(encoder, "encode_cohort"):
-        model = _EncoderMethodAdapter(encoder)
     results = run_eval(cfg, model)
 
     # Flatten the engine's ``{task: {metric: value, n_test}}`` into long-format
@@ -207,38 +199,6 @@ def evaluate_prediction(
                 "n_test": n_test,
             })
     return PredictionResults(records=records)
-
-
-class _EncoderMethodAdapter:
-    """Adapt a user's :class:`~openmhc.Encoder` to the internal engine interface.
-
-    The internal evaluator hands a model one ``ParticipantSegments`` per participant —
-    raw ``.values`` and ``.mask``, each ``(n_segments, 24, 19)``. The public
-    ``Encoder.encode`` contract is a single ``(n_segments, 24, 38)`` array (channels
-    0-18 raw sensor values with NaN at missing positions, 19-37 the missingness mask).
-    This adapter performs that translation and forwards to the user's ``encode``,
-    mirroring ``_ImputerMethodAdapter`` / ``_ForecasterAdapter`` so all three tracks
-    expose the same clean-array public contract.
-    """
-
-    def __init__(self, encoder: Encoder) -> None:
-        """Wrap ``encoder`` and inherit its declared input granularity."""
-        self._encoder = encoder
-        # Respect the encoder's declared granularity so the engine binds the matching
-        # segments (the binder currently materializes daily segments).
-        self.input_granularity = getattr(encoder, "input_granularity", "daily")
-
-    @property
-    def name(self) -> str:
-        """Method name for run provenance."""
-        return getattr(self._encoder, "name", "custom_encoder")
-
-    def encode(self, segments) -> np.ndarray:
-        """Translate one participant's ``ParticipantSegments`` to the public array."""
-        values = np.asarray(segments.values, dtype=np.float32)  # (n, 24, 19) raw, NaN at missing
-        mask = np.asarray(segments.mask, dtype=np.float32)  # (n, 24, 19)
-        data = np.concatenate([values, mask], axis=-1)  # (n, 24, 38)
-        return np.asarray(self._encoder.encode(data), dtype=np.float32)
 
 
 # ---------------------------------------------------------------------------

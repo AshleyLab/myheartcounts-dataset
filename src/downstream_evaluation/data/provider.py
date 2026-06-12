@@ -60,12 +60,11 @@ def lookup_filename(granularity: str, full_history: bool = False) -> str:
 class TaskData:
     """Eligible data + labels for one ``(task, split)``, handed to a model.
 
-    ``user_ids`` / ``labels`` define the cohort and targets. ``eligible_indices``
-    gives, per user, the lookup **row positions** of that user's non-sentinel cells.
-    Because the lookup is row-aligned with the segment data (daily lookup ↔
-    daily_hourly_hf, weekly lookup ↔ window_index), those positions index the sensor
-    data directly. ``inputs`` holds the per-user eligible data once bound by the data
-    layer (one entry per user); it is ``None`` until then.
+    ``user_ids`` / ``labels`` define the cohort and targets. ``dates`` gives, per
+    user, the dates of that user's non-sentinel lookup cells — the eligible segments
+    the :class:`~downstream_evaluation.data.loader.DataLoader` selects by
+    ``(user_id, date)``. ``inputs`` holds the per-user eligible data once bound by
+    the data layer (one entry per user); it is ``None`` until then.
     """
 
     task: str
@@ -73,7 +72,6 @@ class TaskData:
     granularity: str
     user_ids: np.ndarray
     labels: np.ndarray
-    eligible_indices: list[np.ndarray]
     dates: list | None = None  # per-user eligible segment dates (daily) / week_starts (weekly)
     inputs: list | None = None
 
@@ -109,13 +107,13 @@ class TaskDataProvider:
         return list(self._tasks)
 
     def _task_index(self, task: str) -> dict[str, tuple]:
-        """``{user_id: (label, row_positions)}`` from non-sentinel cells.
+        """``{user_id: (label, dates)}`` from non-sentinel cells.
 
         A user appears iff they have ≥1 non-sentinel cell for ``task`` (passing the
-        inclusion criteria); the row positions are the lookup rows where the cell is
-        non-sentinel (within the lookup's temporal scope) —
-        which index the row-aligned segment data directly; the label is the
-        constant non-sentinel value (true for the cross-sectional tasks).
+        inclusion criteria); the dates are those of the lookup rows where the cell is
+        non-sentinel (within the lookup's temporal scope) — the user's eligible
+        segments; the label is the constant non-sentinel value (true for the
+        cross-sectional tasks).
         """
         if task in self._index_cache:
             return self._index_cache[task]
@@ -129,14 +127,12 @@ class TaskDataProvider:
         else:
             valid = col != _MISSING_INT
 
-        # loc preserves the lookup's RangeIndex, so grp.index gives the original
-        # row positions (== indices into the row-aligned segment data).
         sub = self._lookup.loc[valid, ["user_id", self._date_col, task]]
         index: dict[str, tuple] = {}
         for uid, grp in sub.groupby("user_id", sort=False):
             raw = grp[task].iloc[0]
             label = float(raw) if is_float else int(raw)
-            index[str(uid)] = (label, grp.index.to_numpy(), grp[self._date_col].to_numpy())
+            index[str(uid)] = (label, grp[self._date_col].to_numpy())
         self._index_cache[task] = index
         return index
 
@@ -149,24 +145,22 @@ class TaskDataProvider:
         }
 
     def task_data(self, task: str, split: str) -> TaskData:
-        """Cohort + labels + eligible row indices for ``(task, split)``.
+        """Cohort + labels + eligible dates for ``(task, split)``.
 
         ``inputs`` is left ``None`` here; the data layer binds each user's eligible
-        sensor data (at ``self.granularity``) by selecting ``eligible_indices`` from
-        the row-aligned segment data.
+        sensor data (at ``self.granularity``) by selecting their ``dates`` from the
+        segment source.
         """
         index = self._task_index(task)
         split_key = "validation" if split in ("val", "validation") else split
         users = sorted(u for u in self._split_users.get(split_key, set()) if u in index)
         labels = np.array([index[u][0] for u in users])
-        eligible = [index[u][1] for u in users]
-        dates = [index[u][2] for u in users]
+        dates = [index[u][1] for u in users]
         return TaskData(
             task=task,
             split=split_key,
             granularity=self.granularity,
             user_ids=np.array(users, dtype=object),
             labels=labels,
-            eligible_indices=eligible,
             dates=dates,
         )

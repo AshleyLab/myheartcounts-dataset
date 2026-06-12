@@ -19,12 +19,6 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 _DEMO_COVARIATES = ["age", "BiologicalSex", "BMI_values"]
-_PROBE_BY_TASKTYPE = {
-    "binary": "logistic_regression",
-    "multiclass": "logistic_regression",
-    "ordinal": "logreg_ordinal",
-    "regression": "linear_regression",
-}
 
 
 def _pool_mean_std(values: np.ndarray) -> np.ndarray:
@@ -53,7 +47,6 @@ class Linear:
 
     name = "linear"
     input_granularity = "daily"
-    predicts_from_arrays = True  # implements the unified Method contract
 
     def __init__(self, data_dir: str | None = None, seed: int = 42) -> None:
         """Args:
@@ -105,7 +98,7 @@ class Linear:
         return np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
 
     def fit(self, data, labels, task_type) -> None:
-        from downstream_evaluation.config import ClassifierConfig
+        from downstream_evaluation.config import PROBE_BY_TASK_TYPE, ClassifierConfig
         from downstream_evaluation.models.registry import create_model
 
         self._ttype = task_type
@@ -114,7 +107,7 @@ class Linear:
         if self._ttype in ("binary", "multiclass", "ordinal"):
             y = y.astype(int)
         cfg = ClassifierConfig(
-            type=_PROBE_BY_TASKTYPE[self._ttype], use_scaler=True, pca_n_components=None
+            type=PROBE_BY_TASK_TYPE[self._ttype], use_scaler=True, pca_n_components=None
         )
         self._clf = create_model(cfg, random_state=self.seed, task_type=self._ttype)
         self._clf.fit(X, y)

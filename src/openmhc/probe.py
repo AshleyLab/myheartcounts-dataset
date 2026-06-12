@@ -22,13 +22,9 @@ from __future__ import annotations
 
 import numpy as np
 
-# Task type → the fixed linear head used for it.
-_HEAD_BY_TASK_TYPE: dict[str, str] = {
-    "binary": "logistic_regression",
-    "multiclass": "logistic_regression",
-    "ordinal": "logreg_ordinal",
-    "regression": "linear_regression",
-}
+# Task type → the fixed linear head used for it (shared by every probe; config.py
+# is dataclasses-only, so this import keeps module load cheap).
+from downstream_evaluation.config import PROBE_BY_TASK_TYPE
 
 
 class LinearProbe:
@@ -45,9 +41,9 @@ class LinearProbe:
             seed: random_state pinning PCA's randomized SVD solver and the
                 classifier, so the probe is reproducible.
         """
-        if task_type not in _HEAD_BY_TASK_TYPE:
+        if task_type not in PROBE_BY_TASK_TYPE:
             raise ValueError(
-                f"task_type must be one of {sorted(_HEAD_BY_TASK_TYPE)}, got {task_type!r}"
+                f"task_type must be one of {sorted(PROBE_BY_TASK_TYPE)}, got {task_type!r}"
             )
         # Imported lazily so importing the class stays cheap (sklearn/xgboost load
         # only when a probe is actually built).
@@ -56,7 +52,7 @@ class LinearProbe:
 
         self.task_type = task_type
         config = ClassifierConfig(
-            type=_HEAD_BY_TASK_TYPE[task_type],
+            type=PROBE_BY_TASK_TYPE[task_type],
             use_scaler=False,  # encoders are probed on PCA features only; no scaler
             pca_n_components=n_components,
         )

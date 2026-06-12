@@ -9,7 +9,7 @@ Quick start:
     >>> results = openmhc.evaluate_imputation(my_imputer)
     >>> results.summary()
 
-    >>> openmhc.list_tasks()              # 33 prediction tasks
+    >>> openmhc.list_tasks()              # the 32 benchmark prediction tasks
     >>> openmhc.list_masking_scenarios()   # 6 masking scenarios
     >>> openmhc.SENSOR_CHANNELS           # 19 channel names
 """
@@ -17,12 +17,10 @@ Quick start:
 from openmhc._constants import MASKING_SCENARIOS, SENSOR_CHANNELS
 from openmhc._dataset import data_dir, download_dataset
 from openmhc._protocols import (
-    Encoder,
     EvalContext,
     Forecaster,
     Imputer,
     Method,
-    Predictor,
 )
 from openmhc._results import (
     ForecastingResults,
@@ -35,8 +33,6 @@ __all__ = [
     # Protocols
     "Method",
     "EvalContext",
-    "Encoder",
-    "Predictor",
     "Imputer",
     "Forecaster",
     # Standard probe (turns embeddings into predictions)
@@ -60,17 +56,20 @@ __all__ = [
 
 
 def evaluate_prediction(
-    encoder: Encoder,
+    model: Method,
     tasks: str | list[str] = "all",
     data_dir: str | None = None,
     seed: int = 42,
     predictions_dir: str | None = None,
 ) -> PredictionResults:
-    """Run health-prediction evaluation with a custom encoder.
+    """Run health-prediction evaluation with a custom model.
 
     Args:
-        encoder: Object implementing the Encoder protocol.
-        tasks: "all" to run all 33 tasks, or a list of task names.
+        model: Object implementing the :class:`Method` protocol —
+            ``fit(data, labels, task_type)`` / ``predict(data)`` on per-participant
+            arrays. Encoder-style models run :class:`LinearProbe` inside
+            ``fit`` / ``predict``.
+        tasks: "all" to run the 32 benchmark tasks, or a list of task names.
         data_dir: Path to the `daily_hourly_hf` dataset directory.
             None uses the default location.
         seed: Random seed for classifiers and splits.
@@ -83,7 +82,7 @@ def evaluate_prediction(
     from openmhc._evaluate import evaluate_prediction as _eval
 
     return _eval(
-        encoder, tasks=tasks, data_dir=data_dir, seed=seed, predictions_dir=predictions_dir
+        model, tasks=tasks, data_dir=data_dir, seed=seed, predictions_dir=predictions_dir
     )
 
 
@@ -143,14 +142,14 @@ def evaluate_forecasting(
 
 
 def list_tasks() -> list[str]:
-    """Return all 33 available prediction task names.
+    """Return the 32 benchmark prediction task names.
 
     Returns:
-        Sorted list of task name strings.
+        List of task name strings (the same set ``evaluate_prediction(tasks="all")`` runs).
     """
-    from labels.api import TARGET_NAMES
+    from openmhc._constants import BENCHMARK_TASKS
 
-    return sorted(TARGET_NAMES)
+    return list(BENCHMARK_TASKS)
 
 
 def list_masking_scenarios() -> list[str]:

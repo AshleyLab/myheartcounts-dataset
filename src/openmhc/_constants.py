@@ -32,3 +32,14 @@ MASKING_SCENARIOS: list[str] = [
     "intensity_failure",
 ]
 """All 6 imputation masking scenario names."""
+
+BENCHMARK_TASKS: list[str] = [
+    "Atrial fibrillation (Afib)", "BMI_categories", "BMI_values", "BiologicalSex", "CAD",
+    "Cerebrovascular Disease", "Congenital Heart", "Diabetes", "GoSleepTime_categories", "Hdl",
+    "Heart Failure or CHF", "Hypertension", "Ldl", "PH", "Peripheral/Systemic Vascular Disease",
+    "SystolicBloodPressure", "TotalCholesterol", "WakeUpTime_categories", "WeightKilograms", "age",
+    "blood_pressure_categories", "cardiovascular_disease", "feel_worthwhile1", "feel_worthwhile2",
+    "feel_worthwhile3", "feel_worthwhile4", "framingham_risk", "satisfiedwith_life",
+    "sleep_diagnosis1", "sleep_time_categories", "vigorous_act", "work",
+]
+"""The 32 benchmark prediction tasks (``evaluate_prediction(tasks="all")`` runs these)."""

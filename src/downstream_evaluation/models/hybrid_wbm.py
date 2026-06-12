@@ -11,7 +11,7 @@ ordinal Spearman) each branch's predictions are percentile-ranked to [0, 1]
 independently before being combined, so the two independently-trained probes sit
 on a common scale; regression is left raw (Pearson r is scale-invariant).
 
-Unified ``Method`` (``predicts_from_arrays=True``): the engine scores ``predict``
+Unified ``Method``: the engine scores ``predict``
 directly — Hybrid owns both branch probes, so no uniform probe is applied.
 """
 
@@ -27,21 +27,13 @@ from downstream_evaluation.models.wbm import DEFAULT_CHECKPOINT, WBM
 
 logger = logging.getLogger(__name__)
 
-_PROBE_BY_TASKTYPE = {
-    "binary": "logistic_regression",
-    "multiclass": "logistic_regression",
-    "ordinal": "logreg_ordinal",
-    "regression": "linear_regression",
-}
-
 
 class Hybrid:
     """WBM-primary + Linear-fallback, per-user routed, full-cohort."""
 
     name = "wbm"  # the reported WBM model is this hybrid
     input_granularity = "daily"  # full cohort + Linear fallback come from the daily lookup
-    needs_segments = True  # the Linear branch needs the daily binder
-    predicts_from_arrays = True  # implements the unified Method contract
+    needs_segments = True  # the Linear branch pools raw daily segments
 
     def __init__(
         self, data_dir: str | None = None, checkpoint: str = DEFAULT_CHECKPOINT, seed: int = 42
@@ -84,7 +76,7 @@ class Hybrid:
     def fit(self, data, labels, task_type) -> None:
         from sklearn.decomposition import PCA
 
-        from downstream_evaluation.config import ClassifierConfig
+        from downstream_evaluation.config import PROBE_BY_TASK_TYPE, ClassifierConfig
         from downstream_evaluation.models.registry import create_model
 
         self._ttype = task_type
@@ -104,7 +96,7 @@ class Hybrid:
         y_ssl = wtd.labels
         if self._ttype in ("binary", "multiclass", "ordinal"):
             y_ssl = y_ssl.astype(int)
-        cfg = ClassifierConfig(type=_PROBE_BY_TASKTYPE[self._ttype], use_scaler=False, pca_n_components=None)
+        cfg = ClassifierConfig(type=PROBE_BY_TASK_TYPE[self._ttype], use_scaler=False, pca_n_components=None)
         self._ssl_clf = create_model(cfg, random_state=self.seed, task_type=self._ttype)
         self._ssl_clf.fit(X_ssl, y_ssl)
 

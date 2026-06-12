@@ -253,7 +253,6 @@ class MAE:
     name = "mae"
     input_granularity = "daily"  # per-user eligible days come from the daily lookup
     needs_segments = False  # consumes its own build-on-miss embedding cache
-    predicts_from_arrays = True  # implements the unified Method contract
 
     def __init__(
         self,

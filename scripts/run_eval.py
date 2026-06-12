@@ -2,23 +2,15 @@
 
 Picks a bundled model by ``METHOD`` and runs it through the public API
 ``openmhc.evaluate_prediction(model)`` — the *same* call an external submitter
-makes with their own encoder (which wraps the one ``run_eval`` engine). No bespoke
-per-method orchestration; this replaces the old ``run_*_eval.py`` drivers.
+makes with their own model. No bespoke per-method orchestration; this replaces
+the old ``run_*_eval.py`` drivers.
 
     METHOD=toto MHC_DATA_DIR=/path sbatch jobs/imperial/slurm/run_eval.slurm
 """
 
 import os
 
-HEADLINE_TASKS = [
-    "Atrial fibrillation (Afib)", "BMI_categories", "BMI_values", "BiologicalSex", "CAD",
-    "Cerebrovascular Disease", "Congenital Heart", "Diabetes", "GoSleepTime_categories", "Hdl",
-    "Heart Failure or CHF", "Hypertension", "Ldl", "PH", "Peripheral/Systemic Vascular Disease",
-    "SystolicBloodPressure", "TotalCholesterol", "WakeUpTime_categories", "WeightKilograms", "age",
-    "blood_pressure_categories", "cardiovascular_disease", "feel_worthwhile1", "feel_worthwhile2",
-    "feel_worthwhile3", "feel_worthwhile4", "framingham_risk", "satisfiedwith_life",
-    "sleep_diagnosis1", "sleep_time_categories", "vigorous_act", "work",
-]
+from openmhc._constants import BENCHMARK_TASKS
 
 
 def build_model(method: str, data_dir: str):
@@ -40,7 +32,7 @@ def build_model(method: str, data_dir: str):
         return Chronos2(data_dir=data_dir)
     if method == "multirocket":
         from downstream_evaluation.models.multirocket import MultiRocket
-        return MultiRocket(data_dir=data_dir, tasks=HEADLINE_TASKS)
+        return MultiRocket(data_dir=data_dir, tasks=BENCHMARK_TASKS)
     if method == "mae":
         from downstream_evaluation.models.mae import MAE
         # MAE_CHECKPOINT overrides the default registry ref with a local .ckpt path
@@ -52,7 +44,7 @@ def build_model(method: str, data_dir: str):
         return XGBoost(data_dir=data_dir)
     if method == "gru_d":
         from downstream_evaluation.models.grud import GRUD
-        return GRUD(data_dir=data_dir, tasks=HEADLINE_TASKS)
+        return GRUD(data_dir=data_dir, tasks=BENCHMARK_TASKS)
     raise SystemExit(f"unknown METHOD={method!r}")
 
 
@@ -68,7 +60,7 @@ def main() -> None:
     # _subgroups.json for the paper-metrics bootstrap (skill / rank / fairness CIs).
     results = openmhc.evaluate_prediction(
         model,
-        tasks=HEADLINE_TASKS,
+        tasks=BENCHMARK_TASKS,
         data_dir=str(paths.root),
         predictions_dir=os.environ.get("PREDICTIONS_DIR"),
     )

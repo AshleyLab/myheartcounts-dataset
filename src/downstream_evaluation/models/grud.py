@@ -315,7 +315,6 @@ class GRUD:
     name = "gru_d"
     input_granularity = "daily"  # per-user cohort from the daily lookup
     needs_segments = False  # builds its own per-user segments from raw
-    predicts_from_arrays = True  # implements the unified Method contract
 
     def __init__(self, data_dir=None, tasks=None, seed=42):
         self._data_dir = data_dir

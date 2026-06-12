@@ -69,7 +69,6 @@ class MultiRocket:
     name = "multirocket"
     input_granularity = "daily"  # per-user cohort from the daily lookup
     needs_segments = False  # self-loads all segments; pools per user on the fly (no disk cache)
-    predicts_from_arrays = True  # implements the unified Method contract
 
     def __init__(self, data_dir=None, tasks=None, seed=42):
         """``tasks`` is accepted for build-signature parity; pooling is task-independent."""

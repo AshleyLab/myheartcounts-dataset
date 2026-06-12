@@ -17,7 +17,7 @@ error reduction, and negative means worse than the baseline.
 
 Aggregation convention: the ``overall`` skill score (and overall average rank)
 is **domain-balanced** — the arithmetic mean of per-domain skill scores —
-so that domains with more tasks (e.g. Medical conditions, 12/33) do not
+so that domains with more tasks (e.g. Medical conditions) do not
 dominate the headline number. A task-flat (micro) aggregate is intentionally
 not provided.
 """
@@ -326,7 +326,7 @@ def compute_downstream_skill_scores(
 
     # Overall: domain-balanced (macro) — arithmetic mean of per-domain skill
     # scores. Each domain counts equally regardless of task count, so domains
-    # with more tasks (e.g. Medical conditions 12/33) do not dominate.
+    # with more tasks (e.g. Medical conditions) do not dominate.
     if domain_scores:
         overall = float(np.mean(list(domain_scores.values())))
     else:

@@ -63,8 +63,8 @@ class EvalConfig:
         data_dir: dataset root (its ``processed/`` holds the lookups + sensor data).
         split_users: ``{"train"/"validation"/"test": [user_id, ...]}``.
         tasks: tasks to evaluate.
-        seed: random_state for the probe / model.
-        pca_n_components: PCA dim for the encoder probe (``None`` to disable).
+        seed: recorded in run provenance (models own their seeds; the uniform
+            probe runs inside each method via ``openmhc.LinearProbe``).
         temporal: the per-task forward-window policy (handed to from-raw models).
         predictions_dir: when set, the evaluator writes per-(method, task) test
             predictions + a shared ``_subgroups.json`` here (input to the
@@ -75,7 +75,6 @@ class EvalConfig:
     split_users: dict
     tasks: list[str] = field(default_factory=list)
     seed: int = 42
-    pca_n_components: int | None = 50
     temporal: TemporalWindowConfig = field(default_factory=TemporalWindowConfig)
     predictions_dir: str | None = None
 
@@ -83,6 +82,14 @@ class EvalConfig:
 # --------------------------------------------------------------------------- #
 # Probe hyperparameters (composed by ClassifierConfig, read by create_model)
 # --------------------------------------------------------------------------- #
+# Task type → the linear head used for it — the one mapping every probe shares
+# (openmhc.LinearProbe and the model-internal probes alike).
+PROBE_BY_TASK_TYPE: dict[str, str] = {
+    "binary": "logistic_regression",
+    "multiclass": "logistic_regression",
+    "ordinal": "logreg_ordinal",
+    "regression": "linear_regression",
+}
 @dataclass
 class LogRegConfig:
     """LogisticRegression hyperparameters."""
