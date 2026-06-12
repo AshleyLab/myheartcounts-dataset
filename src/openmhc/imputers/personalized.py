@@ -86,14 +86,25 @@ class PersonalizedMeanImputer(PersonalizedImputerBase):
 
 
 class PersonalizedModeImputer(PersonalizedImputerBase):
-    """Per-user, per-channel mode imputation with leave-one-sample-out fill.
+    """Per-user, per-channel mode-of-per-sample-modes with LOSO fill.
 
-    Each user's most frequent observed value (after rounding to
-    ``decimal_precision`` places) per channel fills their masked
-    positions. The mode is computed leave-one-sample-out across the
-    user's samples in the eval split, so the held-out cells cannot
-    inform their own fill. Channels with no remaining observations for
-    a user fall back to the global channel mode from training.
+    Each sample contributes its own per-channel mode — the most-frequent
+    rounded value within that sample's observed cells. The user's fill at
+    each channel is the mode across the user's per-sample modes (i.e.
+    "mode of daily modes"), with the sample being scored excluded under
+    LOSO. Channels with no defined per-sample mode for any of the user's
+    remaining samples fall back to the global channel mode from training.
+
+    Math change vs. the historical contract (which counted every observed
+    rounded value across all of a user's samples): within-day frequency is
+    collapsed to a single per-day vote per channel before the user-level
+    aggregation. For binary channels this is nearly identical because the
+    per-day mode equals the majority class anyway; for continuous channels
+    the per-day vote is coarser but still well-defined, and the per-sample
+    state shrinks from a list of ``Counter`` objects (up to MB per sample)
+    to a ``(C,) float32`` array (≈76 B per sample), making the LOSO
+    bookkeeping cheap. With a single-sample user, the LOSO exclusion
+    empties the pool and the fill falls back to ``global_fallback``.
     """
 
     name = "personalized_mode"
@@ -108,7 +119,10 @@ class PersonalizedModeImputer(PersonalizedImputerBase):
         super().__init__(version=version, data_dir=data_dir)
 
     def _compute_global_fallback(self) -> np.ndarray:
-        # Reuse the same Counter-based computation as ModeImputer.
+        # Train-split per-channel mode of all rounded observed values.
+        # (This stays cell-pooled because train-split global stats don't
+        # leak into eval-split LOSO; the per-user fill is the only place
+        # the macro-of-per-sample-modes contract applies.)
         counters: list[Counter] = [Counter() for _ in range(self.n_channels)]
         for data, mask in self.iter_train_batches():
             valid = (mask > 0.5) & np.isfinite(data)
@@ -125,59 +139,88 @@ class PersonalizedModeImputer(PersonalizedImputerBase):
                 modes[ch] = counter.most_common(1)[0][0]
         return modes
 
-    def _init_user_accumulator(self) -> list[Counter]:
-        return [Counter() for _ in range(self.n_channels)]
+    def _compute_sample_mode(
+        self, sample_data: np.ndarray, sample_mask: np.ndarray
+    ) -> np.ndarray:
+        """Per-channel mode of this sample's rounded observed values.
 
-    def _update_user_accumulator(
-        self,
-        acc: list[Counter],
-        sample_data: np.ndarray,
-        sample_mask: np.ndarray,
-    ) -> None:
+        Returns ``(n_channels,) float32``; NaN at channels where the
+        sample has no observed cells.
+        """
         valid = (sample_mask > 0.5) & np.isfinite(sample_data)
+        out = np.full(self.n_channels, np.nan, dtype=np.float32)
         for ch in range(self.n_channels):
             ch_valid = valid[ch, :]
             if not ch_valid.any():
                 continue
             vals = sample_data[ch, :][ch_valid]
-            rounded = np.round(vals, self.decimal_precision)
-            acc[ch].update(rounded.tolist())
+            rounded = np.round(vals, self.decimal_precision).astype(np.float32)
+            # np.unique is sorted ascending; np.argmax on ties returns the
+            # first (smallest) value — deterministic tie-break.
+            unique, counts = np.unique(rounded, return_counts=True)
+            out[ch] = float(unique[int(np.argmax(counts))])
+        return out
+
+    def _init_user_accumulator(self) -> list[np.ndarray]:
+        # One ``(n_channels,) float32`` per sample, appended in order.
+        return []
+
+    def _update_user_accumulator(
+        self,
+        acc: list[np.ndarray],
+        sample_data: np.ndarray,
+        sample_mask: np.ndarray,
+    ) -> None:
+        acc.append(self._compute_sample_mode(sample_data, sample_mask))
 
     def _init_sample_contribution(
         self,
         sample_data: np.ndarray,
         sample_mask: np.ndarray,
-    ) -> list[Counter]:
-        # Per-channel Counter mirroring this sample's addends in
-        # `_update_user_accumulator`.
-        contrib: list[Counter] = [Counter() for _ in range(self.n_channels)]
-        valid = (sample_mask > 0.5) & np.isfinite(sample_data)
-        for ch in range(self.n_channels):
-            ch_valid = valid[ch, :]
-            if not ch_valid.any():
-                continue
-            vals = sample_data[ch, :][ch_valid]
-            rounded = np.round(vals, self.decimal_precision)
-            contrib[ch].update(rounded.tolist())
-        return contrib
+    ) -> np.ndarray:
+        # Same content as the row appended to ``acc``; equality matched in
+        # ``_finalize_user_fill_values`` for LOSO.
+        return self._compute_sample_mode(sample_data, sample_mask)
 
     def _finalize_user_fill_values(
         self,
-        acc: list[Counter],
-        sample_contrib: list[Counter] | None,
+        acc: list[np.ndarray],
+        sample_contrib: np.ndarray | None,
         global_fallback: np.ndarray,
     ) -> np.ndarray:
-        user_modes = global_fallback.copy()
+        if sample_contrib is None:
+            rows = acc
+        else:
+            # Drop one row matching sample_contrib by value (NaN-aware).
+            # If no row matches (shouldn't happen under normal use), keep
+            # the full set — better to over-include than spuriously drop.
+            rows = []
+            excluded = False
+            for row in acc:
+                if (
+                    not excluded
+                    and np.array_equal(row, sample_contrib, equal_nan=True)
+                ):
+                    excluded = True
+                    continue
+                rows.append(row)
+            if not excluded:
+                rows = acc
+
+        if not rows:
+            # Single-sample user under LOSO → no rows remain; fall back.
+            return global_fallback.astype(np.float32, copy=True)
+
+        stacked = np.stack(rows, axis=0)  # (N_remaining, n_channels)
+        user_modes = global_fallback.astype(np.float32, copy=True)
         for ch in range(self.n_channels):
-            counter = acc[ch]
-            if sample_contrib is not None:
-                # Counter subtraction (`-`) drops non-positive counts, which
-                # is the desired behavior: cells unique to the held-out
-                # sample disappear from the user's running mode.
-                counter = counter - sample_contrib[ch]
-            if counter:
-                user_modes[ch] = counter.most_common(1)[0][0]
-        return user_modes.astype(np.float32)
+            col = stacked[:, ch]
+            col = col[np.isfinite(col)]
+            if col.size == 0:
+                continue
+            unique, counts = np.unique(col, return_counts=True)
+            user_modes[ch] = float(unique[int(np.argmax(counts))])
+        return user_modes
 
     def _apply_fill(
         self,

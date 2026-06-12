@@ -239,9 +239,10 @@ class TestPersonalizedModeLOO:
         imp = PersonalizedModeImputer(version="xs")
 
         # User 0 sample 0 has all values = 10.0, sample 1 has all values = 11.0.
-        # Without LOSO, the user's mode is a tie between 10.0 and 11.0 —
-        # Counter.most_common breaks ties by insertion order (10.0 first).
-        # With LOSO for sample 0, the only remaining value is 11.0.
+        # Under macro-of-per-sample-modes: sample 0's mode is 10.0, sample 1's
+        # mode is 11.0. Without LOSO, the per-user pool is [10.0, 11.0] —
+        # np.unique sorted ascending + np.argmax tie-break picks 10.0. With
+        # LOSO for sample 0, only [11.0] remains; mode is 11.0.
         data = np.full((1, N_CHANNELS, SEQ_LEN), np.nan, dtype=np.float32)
         observed = np.ones_like(data)
         target = _make_target(sample_idx=0)
@@ -263,3 +264,129 @@ class TestPersonalizedModeLOO:
             sample_indices=np.array([1], dtype=np.int64),
         )
         np.testing.assert_allclose(out2[0, 0][t], 10.0, rtol=1e-5)
+
+
+# ---------------------------------------------------------------------------
+# Single-sample-user LOSO edge case (review M6)
+#
+# A user with exactly one sample, under LOSO, has nothing left to compute
+# a per-user statistic from. Each imputer must fall through to the global
+# fallback rather than dividing by zero / producing NaN.
+# ---------------------------------------------------------------------------
+
+
+class TestSingleSampleUserLOO:
+    def _data_mask_target(self):
+        """Tiny inputs for a single-sample impute call."""
+        data = np.full((1, N_CHANNELS, SEQ_LEN), np.nan, dtype=np.float32)
+        mask = np.ones_like(data)
+        target = _make_target(sample_idx=0)
+        return data, mask, target
+
+    def test_mean_falls_back_to_global_on_single_sample(self):
+        """Per-user mean with one sample, LOSO-excluded → global fallback."""
+        from openmhc.imputers import PersonalizedMeanImputer
+
+        with _stub_single_sample_split() as imp_cls_args:
+            imp = PersonalizedMeanImputer(*imp_cls_args[0], **imp_cls_args[1])
+            data, observed, target = self._data_mask_target()
+            out = imp.impute(
+                data,
+                observed,
+                target,
+                user_ids=["lone_user"],
+                sample_indices=np.array([0], dtype=np.int64),
+            )
+            t = target[0, 0] > 0.5
+            # Train batch is all zeros → global channel mean is 0.
+            np.testing.assert_allclose(out[0, 0][t], imp._global_fallback[0], rtol=1e-5)
+
+    def test_temporal_mean_falls_back_to_global_on_single_sample(self):
+        """Per-user temporal mean with one sample, LOSO-excluded → global."""
+        from openmhc.imputers import PersonalizedTemporalMeanImputer
+
+        with _stub_single_sample_split() as imp_cls_args:
+            imp = PersonalizedTemporalMeanImputer(*imp_cls_args[0], **imp_cls_args[1])
+            data, observed, target = self._data_mask_target()
+            out = imp.impute(
+                data,
+                observed,
+                target,
+                user_ids=["lone_user"],
+                sample_indices=np.array([0], dtype=np.int64),
+            )
+            t = target[0, 0] > 0.5
+            # Global temporal mean for the all-zero train batch is 0 at every minute.
+            np.testing.assert_allclose(
+                out[0, 0][t], imp._global_fallback[0, :5], rtol=1e-5
+            )
+
+    def test_mode_falls_back_to_global_on_single_sample(self):
+        """Per-user mode with one sample, LOSO-excluded → global fallback."""
+        from openmhc.imputers import PersonalizedModeImputer
+
+        with _stub_single_sample_split() as imp_cls_args:
+            imp = PersonalizedModeImputer(*imp_cls_args[0], **imp_cls_args[1])
+            data, observed, target = self._data_mask_target()
+            out = imp.impute(
+                data,
+                observed,
+                target,
+                user_ids=["lone_user"],
+                sample_indices=np.array([0], dtype=np.int64),
+            )
+            t = target[0, 0] > 0.5
+            np.testing.assert_allclose(out[0, 0][t], imp._global_fallback[0], rtol=1e-5)
+
+
+# Helper for the single-sample-user tests: stubs iter_split_data and
+# load_sample_metadata so val has exactly one user with exactly one sample.
+
+import contextlib  # noqa: E402
+
+
+@contextlib.contextmanager
+def _stub_single_sample_split():
+    """Yield (args, kwargs) for instantiating an imputer with the stubs active."""
+    from unittest.mock import patch
+
+    def _fake_iter_split_data(
+        split, version=None, data_dir=None, batch_size=5000, num_workers=4, seed=42
+    ):
+        if split == "train":
+            yield (
+                np.zeros((2, N_CHANNELS, SEQ_LEN), dtype=np.float32),
+                np.ones((2, N_CHANNELS, SEQ_LEN), dtype=np.float32),
+            )
+        elif split == "val":
+            # One user, one sample, all values = 7.0.
+            data = np.full((1, N_CHANNELS, SEQ_LEN), 7.0, dtype=np.float32)
+            mask = np.ones_like(data)
+            yield data, mask
+        elif split == "test":
+            yield (
+                np.zeros((0, N_CHANNELS, SEQ_LEN), dtype=np.float32),
+                np.zeros((0, N_CHANNELS, SEQ_LEN), dtype=np.float32),
+            )
+
+    def _fake_load_sample_metadata(split, version=None, data_dir=None, seed=42):
+        if split == "train":
+            return [
+                {"sample_idx": i, "user_id": f"train_user_{i}", "date": "2023-01-01"}
+                for i in range(2)
+            ]
+        if split == "val":
+            return [{"sample_idx": 0, "user_id": "lone_user", "date": "2024-01-01"}]
+        return []
+
+    import openmhc._data_utils as _du
+    import openmhc.imputers._base as _base
+    import openmhc.imputers._personalized_base as _pbase
+
+    with patch.object(_du, "iter_split_data", _fake_iter_split_data), \
+         patch.object(_du, "iter_train_data", lambda **kw: _fake_iter_split_data("train", **kw)), \
+         patch.object(_du, "load_sample_metadata", _fake_load_sample_metadata), \
+         patch.object(_base, "iter_train_data", lambda **kw: _fake_iter_split_data("train", **kw)), \
+         patch.object(_base, "load_sample_metadata", _fake_load_sample_metadata), \
+         patch.object(_pbase, "iter_split_data", _fake_iter_split_data):
+        yield ((), {"version": "xs"})
