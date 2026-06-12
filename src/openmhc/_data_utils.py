@@ -16,8 +16,9 @@ metadata without depending on the internal evaluation harness.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Iterator, Literal
+from typing import TYPE_CHECKING, Any, Iterator, Literal
 
 import numpy as np
 
@@ -181,3 +182,146 @@ def load_sample_metadata(
         }
         for split_local_idx, hf_idx in enumerate(indices)
     ]
+
+
+# ---------------------------------------------------------------------------
+# Per-user lazy-read context for personalized imputers
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class EvalUserContext:
+    """Per-user lazy-read handle for personalized imputers.
+
+    Holds the memory-mapped HF dataset reference plus the per-user row
+    index built once at imputer ``__init__``. Designed for the
+    eval-time lazy state pattern: each ``impute()`` call streams the
+    current user's samples on demand via :meth:`iter_user_samples`
+    instead of holding all val+test samples' contributions eagerly.
+
+    Memory-mapped HF datasets are fork-safe (read-only Arrow files), so
+    forked workers inherit the dataset reference cheaply. The per-user
+    index dicts are also fork-safe — small Python objects copied
+    on-write but rarely written after init.
+
+    Attributes:
+        hf_dataset: The filtered HuggingFace dataset (memory-mapped).
+            Typed as ``Any`` to avoid eagerly importing ``datasets`` at
+            module load time.
+        user_to_hf_indices: ``{user_id: np.ndarray[int]}`` mapping each
+            val/test user to their HF row indices, sorted ascending.
+        user_to_split: ``{user_id: "val" | "test"}`` telling which split
+            a known user came from (mutually exclusive under the
+            canonical user-level split file).
+        split_hf_indices: ``{split: np.ndarray[int]}`` for val and test
+            — the split-wide HF row indices in canonical order. Used to
+            recover the split-local ``sample_idx`` for each row when
+            keying per-sample contributions for LOSO.
+        transform: The ``ZeroToNaNTransform`` instance used by the eval
+            data loader (``None`` if ``zero_to_nan`` is disabled).
+            Applied lazily inside :meth:`iter_user_samples`.
+    """
+
+    hf_dataset: Any
+    user_to_hf_indices: dict[str, np.ndarray]
+    user_to_split: dict[str, str]
+    split_hf_indices: dict[str, np.ndarray]
+    transform: Any
+
+    def iter_user_samples(
+        self, user_id: str
+    ) -> Iterator[tuple[np.ndarray, np.ndarray]]:
+        """Yield ``(data, mask)`` per sample for one user, in dataset order.
+
+        Each yielded tuple is shape ``((19, 1440), (19, 1440))`` float32 —
+        matches what :func:`iter_split_data` yields per batch item. NaN
+        at naturally missing positions in ``data``; ``mask`` is ``1.0``
+        where observed and ``0.0`` where missing.
+
+        If ``user_id`` is unknown (not in val/test), yields nothing.
+        """
+        hf_indices = self.user_to_hf_indices.get(user_id)
+        if hf_indices is None:
+            return
+        transform = self.transform
+        for hf_idx in hf_indices:
+            row = self.hf_dataset[int(hf_idx)]
+            if transform is not None:
+                # Transform expects a torch tensor.
+                import torch
+
+                values = transform(
+                    torch.as_tensor(row["values"], dtype=torch.float32)
+                ).numpy()
+            else:
+                values = np.asarray(row["values"], dtype=np.float32)
+            mask = np.isfinite(values).astype(np.float32)
+            yield values, mask
+
+
+def open_eval_user_context(
+    version: Version,
+    data_dir: str | Path | None = None,
+    seed: int = 42,
+) -> EvalUserContext:
+    """Open the HF dataset for one-shot per-user lazy reads.
+
+    Used by personalized imputers' ``__init__`` to set up the eval-time
+    per-user reading context. Performs the same QA-filter + user-level
+    split as the harness, then builds a per-user reverse index so that
+    ``EvalUserContext.iter_user_samples(user_id)`` can stream just one
+    user's rows.
+
+    The returned ``EvalUserContext`` holds an HF Arrow dataset reference
+    — memory-mapped, fork-safe, ~zero copy across forked workers.
+    """
+    from imputation_evaluation.data.data_loader import ImputationDataLoader
+
+    cfg = _make_data_config(
+        data_dir, version, batch_size=5000, num_workers=0, seed=seed
+    )
+    loader = ImputationDataLoader(cfg)
+    # Reuse the existing public helper; it loads + filters the dataset
+    # once and surfaces the split indices and per-row metadata we need.
+    split_indices, all_user_ids, _all_dates = loader.load_split_indices()
+
+    # Re-open + re-filter to obtain a dataset handle. ``load_split_indices``
+    # discards it; the re-open uses memory-mapped IO so the second open is
+    # nearly free (no second filter pass either, since QA filters are
+    # deterministic and idempotent).
+    import datasets as hf_ds
+
+    from imputation_evaluation.data.filters import apply_filters
+
+    ds = hf_ds.load_from_disk(cfg.daily_hf_dir)
+    filters = loader._build_filters()
+    if filters:
+        ds = apply_filters(ds, filters)
+
+    user_to_hf: dict[str, list[int]] = {}
+    user_to_split: dict[str, str] = {}
+    for split_name in ("val", "test"):
+        for hf_idx in split_indices[split_name]:
+            uid = all_user_ids[hf_idx]
+            user_to_hf.setdefault(uid, []).append(int(hf_idx))
+            # The canonical user-level split file makes users mutually
+            # exclusive across val/test; if the invariant ever breaks we'd
+            # rather see the second split win (latest wins on the
+            # reassignment) — harmless because contributions stack.
+            user_to_split[uid] = split_name
+
+    user_to_hf_arr = {
+        u: np.asarray(sorted(idxs), dtype=np.int64) for u, idxs in user_to_hf.items()
+    }
+    split_hf_indices_arr = {
+        split_name: np.asarray(split_indices[split_name], dtype=np.int64)
+        for split_name in ("val", "test")
+    }
+
+    return EvalUserContext(
+        hf_dataset=ds,
+        user_to_hf_indices=user_to_hf_arr,
+        user_to_split=user_to_split,
+        split_hf_indices=split_hf_indices_arr,
+        transform=loader._zero_to_nan_transform,
+    )

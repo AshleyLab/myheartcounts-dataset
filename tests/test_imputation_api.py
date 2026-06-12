@@ -66,9 +66,67 @@ def stub_iter_train_data(monkeypatch):
 
     monkeypatch.setattr(_base, "iter_train_data", lambda **kw: _fake_iter_split_data("train", **kw))
 
+    # Personalized imputers no longer eagerly scan val/test; they open an
+    # ``EvalUserContext`` via ``open_eval_user_context`` and read per-user
+    # rows lazily. Stub that with a synthetic context backed by the same
+    # synthetic batches the rest of this fixture produces.
+    val_batch = _make_synthetic_batch(20, seed=20)
+    test_batch = _make_synthetic_batch(20, seed=30)
+
+    class _FakeHFDataset:
+        def __init__(self, rows: list[np.ndarray]):
+            self._rows = rows
+
+        def __getitem__(self, idx: int) -> dict:
+            return {"values": self._rows[idx]}
+
+        def __len__(self) -> int:
+            return len(self._rows)
+
+    # Lay out HF rows as [val..., test...] so split_hf_indices map cleanly.
+    val_rows = [val_batch[0][i].copy() for i in range(val_batch[0].shape[0])]
+    test_rows = [test_batch[0][i].copy() for i in range(test_batch[0].shape[0])]
+    # NaN where the synthetic mask says missing, so iter_user_samples
+    # recovers the right binary mask via np.isfinite.
+    for i, row in enumerate(val_rows):
+        row[val_batch[1][i] < 0.5] = np.nan
+    for i, row in enumerate(test_rows):
+        row[test_batch[1][i] < 0.5] = np.nan
+
+    rows = val_rows + test_rows
+    n_val = len(val_rows)
+    val_hf = np.arange(0, n_val, dtype=np.int64)
+    test_hf = np.arange(n_val, n_val + len(test_rows), dtype=np.int64)
+
+    # Five distinct users per split — keep them mutually exclusive across
+    # val and test as the canonical user-level split requires. Adapter
+    # tests can use user_0..user_4 (val) and user_5..user_9 (test).
+    user_to_hf: dict[str, list[int]] = {}
+    user_to_split: dict[str, str] = {}
+    for split_local, hf_idx in enumerate(val_hf):
+        uid = f"user_{split_local % 5}"
+        user_to_hf.setdefault(uid, []).append(int(hf_idx))
+        user_to_split[uid] = "val"
+    for split_local, hf_idx in enumerate(test_hf):
+        uid = f"user_{5 + (split_local % 5)}"
+        user_to_hf.setdefault(uid, []).append(int(hf_idx))
+        user_to_split[uid] = "test"
+
+    from openmhc._data_utils import EvalUserContext
+
+    _fake_ctx = EvalUserContext(
+        hf_dataset=_FakeHFDataset(rows),
+        user_to_hf_indices={u: np.asarray(idxs, dtype=np.int64) for u, idxs in user_to_hf.items()},
+        user_to_split=user_to_split,
+        split_hf_indices={"val": val_hf, "test": test_hf},
+        transform=None,
+    )
+
+    monkeypatch.setattr(_du, "open_eval_user_context", lambda **kw: _fake_ctx)
+
     import openmhc.imputers._personalized_base as _pbase
 
-    monkeypatch.setattr(_pbase, "iter_split_data", _fake_iter_split_data)
+    monkeypatch.setattr(_pbase, "open_eval_user_context", lambda **kw: _fake_ctx)
 
 
 @pytest.fixture

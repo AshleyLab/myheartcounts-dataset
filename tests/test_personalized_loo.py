@@ -70,9 +70,55 @@ def _make_val_metadata():
     return meta
 
 
+class _FakeHFDataset:
+    """Minimal HF-dataset stand-in for the lazy-state EvalUserContext."""
+
+    def __init__(self, rows: list[np.ndarray]):
+        self._rows = rows
+
+    def __getitem__(self, idx: int) -> dict:
+        return {"values": self._rows[idx]}
+
+    def __len__(self) -> int:
+        return len(self._rows)
+
+
+def _build_synthetic_user_context():
+    """Return an EvalUserContext for the 3-user/2-sample val split fixture."""
+    from openmhc._data_utils import EvalUserContext
+
+    val_data, val_mask = _make_val_batch()
+    # ZeroToNaN transform is None in the fake context, so iter_user_samples
+    # computes mask via np.isfinite. Inject NaN where the synthetic mask
+    # says missing (none in this fixture, but kept for correctness).
+    rows: list[np.ndarray] = []
+    for i in range(val_data.shape[0]):
+        v = val_data[i].copy()
+        v[val_mask[i] < 0.5] = np.nan
+        rows.append(v.astype(np.float32))
+
+    user_to_hf: dict[str, np.ndarray] = {}
+    user_to_split: dict[str, str] = {}
+    for meta in _make_val_metadata():
+        user_to_hf.setdefault(meta["user_id"], []).append(meta["sample_idx"])
+        user_to_split[meta["user_id"]] = "val"
+    user_to_hf_arr = {u: np.asarray(idxs, dtype=np.int64) for u, idxs in user_to_hf.items()}
+
+    return EvalUserContext(
+        hf_dataset=_FakeHFDataset(rows),
+        user_to_hf_indices=user_to_hf_arr,
+        user_to_split=user_to_split,
+        split_hf_indices={
+            "val": np.arange(len(rows), dtype=np.int64),
+            "test": np.array([], dtype=np.int64),
+        },
+        transform=None,
+    )
+
+
 @pytest.fixture
 def stub_personalized_streams(monkeypatch):
-    """Patch the streams the personalized imputer reads in ``__init__``."""
+    """Patch the data accessors the personalized imputer uses in ``__init__``."""
 
     def _fake_iter_split_data(
         split, version=None, data_dir=None, batch_size=5000, num_workers=4, seed=42
@@ -104,6 +150,8 @@ def stub_personalized_streams(monkeypatch):
             return []
         raise ValueError(split)
 
+    _fake_ctx = _build_synthetic_user_context()
+
     import openmhc._data_utils as _du
     import openmhc.imputers._base as _base
     import openmhc.imputers._personalized_base as _pbase
@@ -111,11 +159,15 @@ def stub_personalized_streams(monkeypatch):
     monkeypatch.setattr(_du, "iter_split_data", _fake_iter_split_data)
     monkeypatch.setattr(_du, "iter_train_data", lambda **kw: _fake_iter_split_data("train", **kw))
     monkeypatch.setattr(_du, "load_sample_metadata", _fake_load_sample_metadata)
+    # Lazy state path uses open_eval_user_context to set up the HF handle.
+    monkeypatch.setattr(_du, "open_eval_user_context", lambda **kw: _fake_ctx)
 
     monkeypatch.setattr(_base, "iter_train_data", lambda **kw: _fake_iter_split_data("train", **kw))
     monkeypatch.setattr(_base, "load_sample_metadata", _fake_load_sample_metadata)
 
-    monkeypatch.setattr(_pbase, "iter_split_data", _fake_iter_split_data)
+    # _personalized_base reads open_eval_user_context from openmhc._data_utils;
+    # patch the binding the module captured at import time too.
+    monkeypatch.setattr(_pbase, "open_eval_user_context", lambda **kw: _fake_ctx)
 
 
 # ---------------------------------------------------------------------------
@@ -379,6 +431,21 @@ def _stub_single_sample_split():
             return [{"sample_idx": 0, "user_id": "lone_user", "date": "2024-01-01"}]
         return []
 
+    # Single-sample-user EvalUserContext: one user, one sample, value 7.0.
+    from openmhc._data_utils import EvalUserContext
+
+    single_row = np.full((N_CHANNELS, SEQ_LEN), 7.0, dtype=np.float32)
+    fake_ctx = EvalUserContext(
+        hf_dataset=_FakeHFDataset([single_row]),
+        user_to_hf_indices={"lone_user": np.array([0], dtype=np.int64)},
+        user_to_split={"lone_user": "val"},
+        split_hf_indices={
+            "val": np.array([0], dtype=np.int64),
+            "test": np.array([], dtype=np.int64),
+        },
+        transform=None,
+    )
+
     import openmhc._data_utils as _du
     import openmhc.imputers._base as _base
     import openmhc.imputers._personalized_base as _pbase
@@ -386,7 +453,8 @@ def _stub_single_sample_split():
     with patch.object(_du, "iter_split_data", _fake_iter_split_data), \
          patch.object(_du, "iter_train_data", lambda **kw: _fake_iter_split_data("train", **kw)), \
          patch.object(_du, "load_sample_metadata", _fake_load_sample_metadata), \
+         patch.object(_du, "open_eval_user_context", lambda **kw: fake_ctx), \
          patch.object(_base, "iter_train_data", lambda **kw: _fake_iter_split_data("train", **kw)), \
          patch.object(_base, "load_sample_metadata", _fake_load_sample_metadata), \
-         patch.object(_pbase, "iter_split_data", _fake_iter_split_data):
+         patch.object(_pbase, "open_eval_user_context", lambda **kw: fake_ctx):
         yield ((), {"version": "xs"})
