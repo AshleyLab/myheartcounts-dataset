@@ -824,8 +824,8 @@ class ImputationEvaluator:
 
     def run(
         self,
-        val_loader: DataLoader,
-        test_loader: DataLoader,
+        val_loader: DataLoader | None,
+        test_loader: DataLoader | None,
         mask_cache: MaskCache,
         method: ImputationMethod,
         channel_stds: np.ndarray,
@@ -840,8 +840,10 @@ class ImputationEvaluator:
         """Run the imputation evaluation on val and test splits.
 
         Args:
-            val_loader: DataLoader for validation split.
-            test_loader: DataLoader for test split.
+            val_loader: DataLoader for validation split, or ``None`` to skip.
+            test_loader: DataLoader for test split, or ``None`` to skip.
+                Pass ``None`` from the runner when ``evaluation.eval_splits``
+                excludes a split.
             mask_cache: Pre-generated masks for all scenarios and splits.
             method: Fitted imputation method.
             channel_stds: Per-channel standard deviations for metric normalization.
@@ -896,7 +898,14 @@ class ImputationEvaluator:
 
         results = {"scenarios": {}}
 
+        # Filter out splits whose loader is None — ``runner.py`` sets them to
+        # None when ``evaluation.eval_splits`` excludes that split, so we can
+        # skip the entire split block (prepare_split, worker init, batch
+        # iteration) and never spawn the DataLoader's prefetch workers.
         for split_name, loader in [("val", val_loader), ("test", test_loader)]:
+            if loader is None:
+                logger.info("Skipping %s split (loader is None — see evaluation.eval_splits)", split_name)
+                continue
             logger.info(f"\n{'=' * 60}")
             logger.info(f"Evaluating {split_name} split...")
             logger.info(f"{'=' * 60}")

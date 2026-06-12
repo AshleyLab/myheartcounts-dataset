@@ -75,13 +75,25 @@ def run_eval(
     logger.info("Created %d mask generators: %s", len(generators), scenario_names)
 
     # 3. Load pre-computed masks or generate fresh ones.
+    # ``evaluation.eval_splits`` lets a focused rerun skip val (default
+    # ``["val", "test"]`` preserves historical behavior). Skipping val
+    # shrinks the in-memory mask cache and halves the parallel-worker
+    # fork-CoW cost when memory is tight.
+    eval_splits = list(config.evaluation.eval_splits)
+    if not eval_splits:
+        raise ValueError("evaluation.eval_splits must contain at least one of {'val','test'}")
+    for s in eval_splits:
+        if s not in ("val", "test"):
+            raise ValueError(f"evaluation.eval_splits got {s!r}; only 'val' and 'test' are supported")
+    if eval_splits != ["val", "test"]:
+        logger.info("evaluation.eval_splits=%s (default is ['val','test'])", eval_splits)
     if config.masking.masks_file:
         masks_path = Path(config.masking.masks_file)
         logger.info("Loading pre-computed masks from %s...", masks_path)
         mask_cache = MaskCache.load(
             masks_dir=masks_path,
             scenarios=scenario_names,
-            splits=["val", "test"],
+            splits=eval_splits,
         )
     else:
         logger.info("Generating masks...")
@@ -92,10 +104,7 @@ def run_eval(
             batch_size=config.data.batch_size,
         )
         mask_cache = mask_generator.generate(
-            split_indices={
-                "val": loaded_data.split_indices["val"],
-                "test": loaded_data.split_indices["test"],
-            },
+            split_indices={s: loaded_data.split_indices[s] for s in eval_splits},
             generators=generators,
             base_seed=config.masking.mask_seed,
         )
@@ -118,7 +127,7 @@ def run_eval(
     applicable_indices = None
     if mask_cache is not None:
         applicable_indices = {}
-        for split_name in ("val", "test"):
+        for split_name in eval_splits:
             indices = mask_cache.get_applicable_indices(split_name)
             if indices:
                 applicable_indices[split_name] = indices
@@ -156,6 +165,13 @@ def run_eval(
         applicable_indices=applicable_indices,
         user_grouped_batches=user_grouped_batches,
     )
+    # Drop loaders for splits we're not evaluating so the unused DataLoader's
+    # prefetch workers (and their batches) are never spawned and the
+    # evaluator skips that split entirely.
+    if "val" not in eval_splits:
+        eval_val_loader = None
+    if "test" not in eval_splits:
+        eval_test_loader = None
 
     # 7. Run evaluation. Pair-saving is enabled when either evaluation.save_pairs is
     # set in the config (e.g. for the paper pipeline) or when bootstrap is enabled

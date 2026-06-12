@@ -245,6 +245,14 @@ class EvalConfig:
 
     compute_metrics: bool = True  # If False, only save pairs (no MetricAccumulator)
     save_pairs: bool = True  # Save raw (gt, pred) pairs to Parquet
+    # Which splits to evaluate. Default ``["val", "test"]`` preserves the
+    # historical behavior; for leaderboard-only reruns (paper pipeline reads
+    # ``--splits test`` exclusively) pass ``[test]`` to skip val. Skipping
+    # val shrinks the in-memory mask cache (~30% reduction on the full
+    # split) and halves the fork-CoW amplification cost when
+    # ``num_eval_workers > 1`` — meaningful headroom on memory-tight
+    # allocations.
+    eval_splits: list[str] = field(default_factory=lambda: ["val", "test"])
 
 
 @dataclass
