@@ -63,6 +63,30 @@ def _day(d) -> str:
     return s[:10]
 
 
+class _RawDailyRows:
+    """Row-position view of the store in the raw on-disk form.
+
+    Each row is ``{"values": (24, 19) zero-filled, "mask": (24, 19)}`` — the
+    ``daily_hourly_ds`` shape window-index consumers expect
+    (:class:`~data.datasets.indexed_week_dataset.IndexedWeekDataset`). Row order
+    matches the source dataset, so window-index row positions apply directly.
+    """
+
+    def __init__(self, values: np.ndarray, mask: np.ndarray) -> None:
+        self._values = values
+        self._mask = mask
+
+    def __len__(self) -> int:
+        return len(self._values)
+
+    def __getitem__(self, idx: int) -> dict:
+        return {
+            # NaN-at-masked → the stored zero-filled form (masked hours are 0.0 on disk).
+            "values": np.nan_to_num(self._values[int(idx)], nan=0.0),
+            "mask": self._mask[int(idx)],
+        }
+
+
 def prepare_daily_hourly_hf(ds) -> "hf_ds.Dataset":
     """Convert a daily_hourly_hf dataset to the downstream-pipeline format.
 
@@ -138,24 +162,38 @@ def prepare_daily_hourly_hf(ds) -> "hf_ds.Dataset":
 
 
 class DataLoader:
-    """Load the segment source once; materialize per-participant segments by date."""
+    """Load the segment source once (lazily); materialize per-participant segments by date."""
 
     def __init__(self, data_dir: str | None, granularity: str = "daily") -> None:
         """Args:
         data_dir: dataset root (``MHC_DATA_DIR`` / openmhc cache if ``None``).
         granularity: only ``"daily"`` is supported (hourly daily segments).
+
+        Construction is cheap; the segment source is read + indexed on first access
+        (so a cache-based model that never touches raw data pays nothing).
         """
         if granularity != "daily":
             raise NotImplementedError(
                 f"DataLoader supports 'daily' granularity for now, got {granularity!r}"
             )
         self.granularity = granularity
+        self._data_dir = data_dir
+        self._values: np.ndarray | None = None  # (N, 24, 19) float32, NaN at missing
+        self._mask: np.ndarray | None = None  # (N, 24, 19) float32
+        self._users: np.ndarray | None = None  # per-row user_id
+        self._dates: np.ndarray | None = None  # per-row YYYY-MM-DD
+        self._row_by_key: dict[tuple[str, str], int] | None = None
+        self._rows_by_user: dict[str, list[int]] | None = None
 
+    def _ensure_loaded(self) -> None:
+        """Read + index the segment source on first access (one read per run)."""
+        if self._values is not None:
+            return
         import datasets as hf_ds
 
         from openmhc._evaluate import _DatasetPaths
 
-        paths = _DatasetPaths.resolve(data_dir)
+        paths = _DatasetPaths.resolve(self._data_dir)
         ds = hf_ds.load_from_disk(str(paths.daily_hourly_hf))
         if isinstance(ds, hf_ds.DatasetDict):
             ds = hf_ds.concatenate_datasets(list(ds.values()))
@@ -165,19 +203,19 @@ class DataLoader:
         self._values = np.asarray(ds["values"], dtype=np.float32)  # (N, 24, 19)
         self._mask = np.asarray(ds["mask"], dtype=np.float32)  # (N, 24, 19)
         self._users = np.asarray(ds["user_id"], dtype=object).astype(str)  # per-row user_id
-        dates = np.asarray(ds["date"], dtype=object)
+        self._dates = np.asarray([_day(d) for d in ds["date"]], dtype=object)
 
-        # (user_id, date) -> row, and user_id -> sorted row list (for whole-history
-        # consumers). Built once; reused across all tasks/splits.
-        self._row_by_key: dict[tuple[str, str], int] = {}
-        self._rows_by_user: dict[str, list[int]] = {}
-        for i, (u, d) in enumerate(zip(self._users, dates)):
-            key = (u, _day(d))
-            self._row_by_key[key] = i
+        # (user_id, date) -> row, and user_id -> row list in store order. Built once;
+        # reused across all tasks/splits.
+        self._row_by_key = {}
+        self._rows_by_user = {}
+        for i, (u, d) in enumerate(zip(self._users, self._dates)):
+            self._row_by_key[(u, d)] = i
             self._rows_by_user.setdefault(u, []).append(i)
 
     def participant(self, user_id, dates) -> ParticipantSegments:
         """One participant's eligible segments, selected by ``dates`` (date-ascending)."""
+        self._ensure_loaded()
         u = str(user_id)
         rows = sorted(
             self._row_by_key[(u, k)] for d in dates if (u, k := _day(d)) in self._row_by_key
@@ -194,8 +232,22 @@ class DataLoader:
     # ----- whole-history access (for global-fit consumers: gru_d, multirocket) -----
     def user_segments(self, user_id) -> np.ndarray:
         """All of a participant's segments ``(n, 24, 19)`` (raw, NaN at missing)."""
+        self._ensure_loaded()
         idx = np.asarray(sorted(self._rows_by_user.get(str(user_id), [])), dtype=np.int64)
         return self._values[idx]
+
+    def user_days(self, user_id) -> tuple[np.ndarray, list[str]]:
+        """All of a participant's days, date-ascending: ``(values (n, 24, 19), dates)``.
+
+        ``values`` carry NaN at masked positions; ``dates`` are ``YYYY-MM-DD`` strings.
+        For consumers that assemble their own per-user timeline from dated days
+        (the TSFM encoders' gap-aware hourly series).
+        """
+        self._ensure_loaded()
+        rows = self._rows_by_user.get(str(user_id), [])
+        order = sorted(rows, key=lambda i: self._dates[i])
+        idx = np.asarray(order, dtype=np.int64)
+        return self._values[idx], [self._dates[i] for i in order]
 
     def segment_store(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """The raw row-aligned store: ``(values, mask, users)`` — ``values`` / ``mask``
@@ -204,4 +256,11 @@ class DataLoader:
         For consumers that fit on the global train split or transform every segment
         (GRU-D, MultiRocket) and need the whole store, not just a cohort.
         """
+        self._ensure_loaded()
         return self._values, self._mask, self._users
+
+    def as_daily_rows(self) -> _RawDailyRows:
+        """Row-position view in the raw stored form (zero-filled values + mask) for
+        window-index consumers (WBM weekly extraction)."""
+        self._ensure_loaded()
+        return _RawDailyRows(self._values, self._mask)

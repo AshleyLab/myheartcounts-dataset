@@ -55,6 +55,12 @@ class Hybrid:
         ``fit(data, labels, task_type)`` signature, so they arrive here."""
         self._ctx = ctx
 
+    def set_loader(self, loader) -> None:
+        """Forward the shared :class:`DataLoader` to the SSL branch: on an embedding
+        cache miss its weekly windows are assembled from the same one-read store that
+        serves the Linear branch's daily segments."""
+        self._wbm.set_loader(loader)
+
     def _weekly_td(self, task: str, split: str) -> TaskData:
         """Weekly cohort + eligible week_starts for ``task`` (for the SSL branch)."""
         if self._weekly_provider is None:

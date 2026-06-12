@@ -13,7 +13,7 @@ the per-domain JSON field names :data:`DOMAIN_FIELD`, and the leaderboard seed.
 
 Usage::
 
-    python scripts/paper_results/build_leaderboard_json.py \
+    python scripts/downstream_paper_results/build_leaderboard_json.py \
         --current   /tmp/leaderboard.json \
         --paper-dir results/paper \
         --output    /tmp/leaderboard_updated.json

@@ -27,20 +27,32 @@ openmhc.download_dataset(version="tiny")
 
 Then evaluate a model. Models implement one of three duck-typed protocols — no inheritance required.
 
-### Track 1 — outcome prediction (`Encoder`)
+### Track 1 — outcome prediction (`Method`)
 
 ```python
 import numpy as np
 import openmhc
 
-class MeanPoolEncoder:
-    def encode(self, weekly_tensors: np.ndarray) -> np.ndarray:
-        # weekly_tensors: (B, 168, 38). Return (B, D) embeddings.
-        return weekly_tensors[:, :, :19].mean(axis=1).astype(np.float32)
+class MeanPoolMethod:
+    def _encode(self, data: np.ndarray) -> np.ndarray:
+        # data: (n_days, 24, 38) — one participant's eligible days
+        # (channels 0-18 raw values with NaN at missing, 19-37 the mask).
+        x = np.nan_to_num(data).reshape(-1, 38)
+        return np.concatenate([x.mean(0), x.std(0)])
 
-results = openmhc.evaluate_prediction(MeanPoolEncoder())
+    def fit(self, data, labels, task_type):
+        emb = np.stack([self._encode(x) for x in data])
+        self._probe = openmhc.LinearProbe(task_type).fit(emb, labels)
+
+    def predict(self, data):
+        return self._probe.predict(np.stack([self._encode(x) for x in data]))
+
+results = openmhc.evaluate_prediction(MeanPoolMethod())
 print(results.summary())
 ```
+
+The full Track-1 guide (data contract, baselines, paper reproduction) is in
+[`src/downstream_evaluation/README.md`](src/downstream_evaluation/README.md).
 
 ### Track 2 — imputation (`Imputer`)
 
@@ -95,7 +107,7 @@ print(body)
 
 `to_submission_yaml` returns a paste-ready body matching the textareas in the [submission issue template](../../issues/new?template=submission.yml). For Track 2 imputation, skill scores and per-category subgroup scores are computed locally against the frozen LOCF baseline; for Tracks 1 and 3, those fields are filled in by the maintainers from `raw_metrics` during ingestion (Linear + Seasonal Naive baseline files aren't shipped yet). The HuggingFace Space ingests merged submissions and the public leaderboard rebuilds automatically.
 
-Submissions must follow the standard evaluation protocol — same split file, masking config, and label-validity criterion as the paper. The submission template enforces required fields.
+Submissions must follow the standard evaluation protocol — same split file, masking config, and benchmark task list as the paper. The submission template enforces required fields.
 
 ## Repo layout
 

@@ -14,17 +14,18 @@ A concrete encoder (Toto, Chronos-2) supplies the two model-specific pieces:
   - ``_load_model(device) -> (handle, window_hours)``
   - ``_run_batch(handle, examples, window_hours) -> (B, 19, D) float32``
 
-Both stages run from raw data: the per-(split, task) HDF5 is regenerated from
-``daily_hourly_hf`` on each cold run rather than from a prebuilt cache. The
-window is anchored to the label date at extraction time (2048 h of strictly-prior
-history), so the eval's temporal-window knob does not apply — features are aligned
-to the per-task cohort as produced.
+Both stages run from raw data: on a cold run the per-(split, task) HDF5 is
+regenerated from the shared :class:`~downstream_evaluation.data.loader.DataLoader`
+(one ``daily_hourly_hf`` read per run, injected by ``run_eval`` via ``set_loader``)
+rather than from a prebuilt cache. The window is anchored to the label date at
+extraction time, so the eval's temporal-window knob does not apply — features are
+aligned to the per-task cohort as produced.
 """
 
 from __future__ import annotations
 
 import logging
-from collections import Counter, defaultdict
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import quote
@@ -75,33 +76,37 @@ class UserTimeline:
     observed_hours: np.ndarray  # (n_hours,) bool
 
 
-def build_user_timeline(ds, indices: list[int], n_channels: int):
-    """Build a continuous hourly timeline for one user's filtered daily rows."""
+def build_user_timeline(values: np.ndarray, dates: list[str], n_channels: int):
+    """Build a continuous hourly timeline from one user's day rows (date-ascending).
+
+    ``values`` / ``dates`` are the loader's per-user days (``DataLoader.user_days``):
+    ``(n_days, 24, 19)`` time-first with NaN at masked positions. The model's
+    missing-data heuristics (``ZeroToNaNTransform``: per-channel rules for HR,
+    all-zero wear channels, short sleep) are defined on the **raw zero-filled form**
+    the dataset stores, so each day is zero-filled back before the transform —
+    byte-identical input to reading the raw rows directly.
+    """
     import pandas as pd
     import torch
 
     from data.transforms.nan_transforms import ZeroToNaNTransform
 
-    if not indices:
+    if len(dates) == 0:
         return None
     zero_to_nan = ZeroToNaNTransform()
 
-    rows = [ds[int(i)] for i in indices]
-    rows.sort(key=lambda row: row["date"])
-    first_date = pd.Timestamp(str(rows[0]["date"])[:10])
-    last_date = pd.Timestamp(str(rows[-1]["date"])[:10])
+    first_date = pd.Timestamp(dates[0])
+    last_date = pd.Timestamp(dates[-1])
     n_days = int((last_date - first_date).days) + 1
     timeline = np.full((n_days * HOURS_PER_DAY, n_channels), np.nan, dtype=np.float32)
 
-    for row in rows:
-        day = pd.Timestamp(str(row["date"])[:10])
-        day_offset = int((day - first_date).days)
+    for day_values, day in zip(values, dates):
+        day_offset = int((pd.Timestamp(day) - first_date).days)
         start = day_offset * HOURS_PER_DAY
-        values = np.asarray(row["values"], dtype=np.float32)
-        if values.shape != (n_channels, HOURS_PER_DAY):
-            raise ValueError(f"Unexpected values shape {values.shape} for date={row['date']}")
-        values = zero_to_nan(torch.from_numpy(values)).numpy()
-        timeline[start : start + HOURS_PER_DAY, :] = values.T
+        # (24, 19) NaN-at-masked → (19, 24) zero-filled, exactly as stored on disk.
+        raw = np.ascontiguousarray(np.nan_to_num(day_values, nan=0.0).T)
+        day_cf = zero_to_nan(torch.from_numpy(raw)).numpy()
+        timeline[start : start + HOURS_PER_DAY, :] = day_cf.T
 
     observed_hours = ~np.isnan(timeline).all(axis=1)
     return UserTimeline(start_date=first_date, values=timeline, observed_hours=observed_hours)
@@ -167,39 +172,6 @@ def build_window(timeline: UserTimeline, user_id, task, label_date, window_hours
 # --------------------------------------------------------------------------- #
 # Cohort / label helpers
 # --------------------------------------------------------------------------- #
-def _has_quality_columns(ds) -> bool:
-    return {"total_nonwear_minutes", "channel_variance"}.issubset(set(ds.column_names))
-
-
-def _quality_mask(ds) -> np.ndarray:
-    from data.processing.hf_config import DEFAULT_VARIANCE_THRESHOLDS
-
-    nonwear = np.asarray(ds["total_nonwear_minutes"], dtype=np.float64)
-    keep = nonwear <= 720.0
-    variances = np.asarray(ds["channel_variance"], dtype=np.float64)
-    for ch, threshold in DEFAULT_VARIANCE_THRESHOLDS.items():
-        ch_var = variances[:, ch]
-        keep &= np.isnan(ch_var) | (ch_var >= threshold)
-    return keep
-
-
-def _group_indices(ds, user_to_split: dict[str, str]):
-    """Group eligible HF row indices by split and user (fresh; no index-cache)."""
-    user_ids = np.asarray(ds["user_id"], dtype=object)
-    keep = np.array([uid in user_to_split for uid in user_ids], dtype=bool)
-    assumed_prefiltered = not _has_quality_columns(ds)
-    if assumed_prefiltered:
-        logger.info("daily_hourly_hf has no quality columns; assuming pre-filtered rows.")
-    else:
-        logger.info("Applying day-level wear-time + variance filters from dataset columns.")
-        keep &= _quality_mask(ds)
-    grouped: dict[str, dict[str, list[int]]] = defaultdict(lambda: defaultdict(list))
-    for idx in np.where(keep)[0]:
-        uid = str(user_ids[idx])
-        grouped[user_to_split[uid]][uid].append(int(idx))
-    return {split: dict(users) for split, users in grouped.items()}, assumed_prefiltered
-
-
 def _label_timestamp(user_id, task, reference_ts):
     from labels.api import LabelTypeError, LabelValueError, get_labels
 
@@ -297,8 +269,8 @@ class TSFMEncoder:
         self._batch_size = batch_size
         self.seed = seed
         self._built: set[str] = set()  # splits whose HDF5s are present
-        self._ds = None  # cached daily_hourly_hf
-        self._grouped = None  # {split: {user: [row idx]}}
+        self._loader = None  # shared DataLoader, injected by run_eval (raw days on miss)
+        self._grouped = None  # {split: [user_id, ...]} (sorted)
         self._handle = None  # loaded model
         self._window_hours: int | None = None
         self._task_cache: dict[tuple[str, str], dict[str, np.ndarray]] = {}
@@ -309,6 +281,11 @@ class TSFMEncoder:
     def set_temporal_window(self, temporal) -> None:
         """Receive the runner's forward-window policy (``run_eval`` injects this)."""
         self._temporal = temporal
+
+    def set_loader(self, loader) -> None:
+        """Receive the shared :class:`DataLoader`; cache-miss extraction reads each
+        user's raw days from it (``run_eval`` injects it; standalone use builds one)."""
+        self._loader = loader
 
     def set_context(self, ctx) -> None:
         """Receive the per-(task, split) cohort context; the engine injects it before
@@ -354,21 +331,25 @@ class TSFMEncoder:
 
     # ----- stage 1: build-on-miss extraction (GPU) --------------------------
     def _ensure_loaded(self):
-        """Lazily load daily_hourly_hf + the model (shared across splits)."""
-        if self._ds is not None:
+        """Lazily ready the shared loader, the split map, and the model."""
+        if self._handle is not None:
             return
-        import datasets as hf_ds
         import torch
 
         from downstream_evaluation.data.splits import load_split_file
         from openmhc._evaluate import _DatasetPaths
 
         paths = _DatasetPaths.resolve(self._data_dir)
-        logger.info("loading daily_hourly_hf: %s", paths.daily_hourly_hf)
-        self._ds = hf_ds.load_from_disk(str(paths.daily_hourly_hf))
+        if self._loader is None:
+            # Standalone use without the runner (which injects the shared loader).
+            from downstream_evaluation.data.loader import DataLoader
+
+            self._loader = DataLoader(self._data_dir, granularity="daily")
         split_users = load_split_file(paths.splits_file)
-        user_to_split = {str(u): s for s, us in split_users.items() for u in us}
-        self._grouped, _ = _group_indices(self._ds, user_to_split)
+        # Users per split; their day rows come from the loader at build time. The
+        # shipped daily_hourly_hf is pre-filtered (the wear/variance gate lives
+        # upstream), so eligibility is simply "has retained days".
+        self._grouped = {s: sorted(str(u) for u in us) for s, us in split_users.items()}
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         logger.info("%s extraction device=%s", self.name, device)
@@ -385,7 +366,7 @@ class TSFMEncoder:
 
         n_channels = N_CHANNELS
         reference_ts = pd.Timestamp(LABEL_REFERENCE_DATE)
-        user_indices = self._grouped.get(split, {})
+        user_list = self._grouped.get(split, [])
 
         pending = [t for t in tasks if not self._task_file(split, t).exists()]
         if not pending:
@@ -417,8 +398,9 @@ class TSFMEncoder:
             batches[task] = []
 
         try:
-            for user_id in tqdm(sorted(user_indices), desc=f"{self.name}:{split}", unit="user"):
-                timeline = build_user_timeline(self._ds, user_indices[user_id], n_channels)
+            for user_id in tqdm(user_list, desc=f"{self.name}:{split}", unit="user"):
+                day_values, day_dates = self._loader.user_days(user_id)
+                timeline = build_user_timeline(day_values, day_dates, n_channels)
                 if timeline is None:
                     continue
                 for task in pending:

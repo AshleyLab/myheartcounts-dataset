@@ -20,7 +20,7 @@ pairing is preserved; summary statistics aggregate across draws.
 
 Usage::
 
-    PYTHONPATH=src python scripts/paper_results/aggregate_fairness_skill_score.py \
+    PYTHONPATH=src python scripts/downstream_paper_results/aggregate_fairness_skill_score.py \
         --draws results/paper/bootstrap_draws.parquet \
         --output results/paper/fairness_skill_score_bootstrap.csv \
         --baseline-method linear

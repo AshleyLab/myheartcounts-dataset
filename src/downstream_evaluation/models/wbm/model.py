@@ -119,25 +119,35 @@ def extract_wbm_embeddings(
     data_dir: str | None = None,
     batch_size: int = 64,
     seed: int = 42,
+    loader=None,
 ) -> None:
     """Regenerate the WBM embedding intermediate from raw (GPU).
 
-    Writes ``embeddings.npy`` / ``user_ids.npy`` / ``week_starts.npy`` under ``output_dir``.
+    Weekly ``(168, 19)`` windows are assembled by :class:`IndexedWeekDataset` from the
+    shared :class:`~downstream_evaluation.data.loader.DataLoader`'s daily rows + the
+    window index — one ``daily_hourly_hf`` read per run (a loader is built here when
+    none is injected). Writes ``embeddings.npy`` / ``user_ids.npy`` / ``week_starts.npy``
+    under ``output_dir``.
     """
     import torch
     from tqdm import tqdm
 
-    from data.datasets.indexed_week_dataset import load_indexed_week_dataset
+    from data.datasets.indexed_week_dataset import IndexedWeekDataset
+    from data.processing.build_window_index import load_window_index
     from openmhc._evaluate import _DatasetPaths
+
+    from downstream_evaluation.data.loader import DataLoader
 
     torch.manual_seed(seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logger.info("WBM extraction device=%s", device)
 
     paths = _DatasetPaths.resolve(data_dir)
-    ds = load_indexed_week_dataset(
-        daily_hourly_hf_dir=str(paths.daily_hourly_hf),
-        window_index_path=str(paths.window_index),
+    if loader is None:
+        loader = DataLoader(data_dir, granularity="daily")
+    ds = IndexedWeekDataset(
+        daily_hourly_ds=loader.as_daily_rows(),
+        window_index=load_window_index(str(paths.window_index)),
         window_size=7,
     )
     logger.info("loaded IndexedWeekDataset: %d windows", len(ds))
@@ -197,6 +207,12 @@ class WBM:
         self.seed = seed
         self._by_key: dict | None = None
         self._dim = 0
+        self._loader = None  # shared DataLoader (cache-miss extraction), injected
+
+    def set_loader(self, loader) -> None:
+        """Receive the shared :class:`DataLoader`; cache-miss extraction assembles its
+        weekly windows from it instead of opening the dataset itself."""
+        self._loader = loader
 
     def _resolve_cache_dir(self) -> Path:
         if self._cache_dir is not None:
@@ -214,6 +230,7 @@ class WBM:
                 checkpoint=self._checkpoint,
                 data_dir=self._data_dir,
                 seed=self.seed,
+                loader=self._loader,
             )
         emb = np.load(cache / "embeddings.npy")
         uids = np.load(cache / "user_ids.npy", allow_pickle=True)

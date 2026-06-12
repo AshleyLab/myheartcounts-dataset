@@ -14,7 +14,7 @@ does not run the eval itself.
 
 Usage::
 
-    PYTHONPATH=src python scripts/paper_results/run_paper_pipeline.py \
+    PYTHONPATH=src python scripts/downstream_paper_results/run_paper_pipeline.py \
         --predictions_dir results/eval/final/predictions \
         --csvs_dir results/eval/final \
         --output-dir results/paper \

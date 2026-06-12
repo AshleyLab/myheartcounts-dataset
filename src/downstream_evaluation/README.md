@@ -1,11 +1,103 @@
 # Downstream Prediction Evaluation
 
-Evaluate any wearable-sensor model on the MyHeart Counts health-prediction tasks.
-One contract for every model: `fit(data, labels, task_type)` / `predict(data)` on
-per-participant arrays. An encoder-style model runs the benchmark's **uniform linear
-probe** (`openmhc.LinearProbe`) on its embeddings inside `fit` / `predict` — so its
-results reflect the *representation*, not a choice of classifier — while an
-end-to-end model owns its head.
+Evaluate any wearable-sensor model on the 32 MyHeart Counts health-prediction
+tasks. One contract for every model — bundled baseline and external submission
+alike: `fit(data, labels, task_type)` / `predict(data)` on per-participant arrays.
+
+- [How it works](#how-it-works)
+- [Reproduce the paper results](#reproduce-the-paper-results)
+- [Evaluate your own model](#evaluate-your-own-model)
+
+## How it works
+
+One engine evaluates every model on identical cohorts:
+
+```
+openmhc.evaluate_prediction(model, tasks)
+  └─ per task:
+       TaskDataProvider   who & what — cohort user_ids, labels, eligible days
+       DataLoader         the bytes — raw segments, one dataset read per run
+       model.fit(train data, labels, task_type)
+       model.predict(test data)  →  scored on the held-out cohort
+```
+
+**Data layer** (`src/downstream_evaluation/data/`):
+
+- **`provider.py` — who and what.** `TaskDataProvider` reads the labels lookup
+  (one parquet per granularity) and derives, per `(task, split)`: the cohort,
+  their labels, and the dates of each user's eligible days.
+- **`loader.py` — the bytes.** `DataLoader` reads `daily_hourly_hf` once per run
+  (lazily, on first access), indexes it by `(user_id, date)`, and serves every
+  access pattern: `bind()` (a task cohort's eligible segments), `segment_store()`
+  (the whole store, for global-fit models), `user_days()` (date-ascending days,
+  for timeline builders), `as_daily_rows()` (raw-form rows, for window-index
+  consumers).
+- **`splits.py`** reads the frozen train/validation/test user split.
+
+Quality gating happens once, upstream, when `daily_hourly_hf` is built;
+eligibility is whatever the lookup names. The loader selects those
+`(user, date)` rows and never re-filters — no model decides its own cohort.
+(The minute-level feature extraction for `mae`/`xgboost` is the one documented
+exception still being migrated onto the loader.)
+
+**Scoring.** For each task the benchmark fits your model on the train cohort and
+scores its predictions on the held-out test cohort. Encoder-style models all run
+the *same* probe (`openmhc.LinearProbe`: PCA-50 + a linear head) inside
+`fit`/`predict`, so the comparison isolates representation quality; end-to-end
+models own their head. Primary metric per task type:
+
+| Task type  | Metric     | Example tasks                          |
+|------------|------------|----------------------------------------|
+| Binary     | AUPRC      | Diabetes, Hypertension, BiologicalSex  |
+| Ordinal    | Spearman ρ | BMI_categories, feel_worthwhile1-4     |
+| Regression | Pearson r  | age, BMI_values, WeightKilograms       |
+
+## Reproduce the paper results
+
+Three steps: data, baselines, paper pipeline.
+
+**1. Get the dataset** (see `DATASET.md`) and point `MHC_DATA_DIR` at its root.
+
+**2. Run the eight baselines.** One driver for every method; predictions are the
+paper pipeline's input, so set `PREDICTIONS_DIR`:
+
+```bash
+for M in linear multirocket gru_d xgboost mae toto chronos2 wbm; do
+  METHOD=$M MHC_DATA_DIR=path/to/mhc-data \
+  PREDICTIONS_DIR=results/eval/final/predictions \
+  OUT_CSV=results/eval/final/eval_$M.csv \
+  sbatch jobs/imperial/slurm/run_eval.slurm        # add --gres=gpu:1 for toto/chronos2/wbm/mae/gru_d
+done
+```
+
+| METHOD          | Model                                          | Notes                          |
+|-----------------|------------------------------------------------|--------------------------------|
+| linear          | per-channel mean/std (+ demographics)          | CPU                            |
+| multirocket     | random convolutional kernels                   | CPU                            |
+| gru_d           | end-to-end GRU-D (trains per run)              | GPU; see reproducibility below |
+| xgboost         | gradient-boosted trees on minute-level features| CPU; needs `daily_hf`          |
+| mae             | masked-autoencoder embeddings                  | GPU on cache miss; `daily_hf`  |
+| toto / chronos2 | time-series foundation-model embeddings        | GPU on cache miss              |
+| wbm             | self-supervised weekly encoder + Linear hybrid | GPU on cache miss              |
+
+**3. Run the paper pipeline** (bootstrap CIs, skill/rank/fairness aggregates):
+
+```bash
+PYTHONPATH=src python scripts/downstream_paper_results/run_paper_pipeline.py \
+    --predictions_dir results/eval/final/predictions \
+    --csvs_dir results/eval/final \
+    --output-dir results/paper \
+    --methods linear multirocket mae toto chronos2 xgboost wbm gru_d \
+    --baseline linear --n-bootstrap 1000
+```
+
+**What agreement to expect.** In the documented environment the deterministic
+methods (everything except `gru_d`) reproduce **bit-identically**. Across
+machines/BLAS builds, expect primary-metric drift ≤ 1e-4 — two orders of
+magnitude below the reported bootstrap SEs, so every conclusion is unaffected.
+`gru_d` trains from scratch on GPU and is reproducible to within training
+variance (every task within 2 SE across runs); it is bit-exact on CPU given the
+seed (`scripts/validate_grud_determinism.py`).
 
 ## Evaluate your own model
 
@@ -40,76 +132,25 @@ print(results.summary())             # wide table: one row per task, one column 
 results.to_csv("my_results.csv")     # full long-format results
 ```
 
+The contract, in full:
+
+- `fit(data, labels, task_type)` — `data` is a list with one `(n_days, 24, 38)`
+  array per participant; `labels` aligns with it; `task_type` is one of
+  `"binary"`, `"multiclass"`, `"ordinal"`, `"regression"`.
+- `predict(data)` — return one prediction per participant, aligned with `data`.
+- Encoder-style models should run `openmhc.LinearProbe` inside `fit`/`predict`
+  (as above) to stay comparable with the paper's encoders; end-to-end models
+  return their own predictions directly.
+- Cohorts, eligibility, and time windows are the benchmark's job — your model
+  only ever sees eligible data, and cannot get the cohort wrong.
+
 `evaluate_prediction(model, tasks="all", data_dir=None, seed=42)` returns a
-`PredictionResults` with `.summary()`, `.to_csv()`, `.to_json()`, and `.to_dataframe()`.
-Set `data_dir` to the dataset root (or the `MHC_DATA_DIR` env var). List the tasks with
-`openmhc.list_tasks()`.
-
-## How scoring works
-
-For each task the benchmark:
-
-1. selects each eligible participant's data (cohort + time window are handled for you),
-2. calls your `fit` on the train cohort's data + labels,
-3. scores your `predict` on the held-out test cohort.
-
-Encoder-style models all run the *same* probe (`openmhc.LinearProbe`: PCA-50 + a
-linear head), so the comparison isolates representation quality. Primary metric per
-task type:
-
-| Task type  | Metric     | Example tasks                          |
-|------------|------------|----------------------------------------|
-| Binary     | AUPRC      | Diabetes, Hypertension, BiologicalSex  |
-| Ordinal    | Spearman ρ | BMI_categories, feel_worthwhile1-4     |
-| Regression | Pearson r  | age, BMI_values, WeightKilograms       |
-
-## Data layer
-
-Three small modules in `src/downstream_evaluation/data/` feed every evaluation:
-
-- **`provider.py` — who and what.** `TaskDataProvider` reads the labels lookup (one
-  parquet per granularity, built by `scripts/labels/build_labels_lookup.py`) and
-  derives, per `(task, split)`: the cohort (`user_ids`), their `labels`, and the
-  `dates` of each user's eligible days (the days passing the inclusion criteria).
-- **`loader.py` — the bytes.** `DataLoader` reads `daily_hourly_hf` **once per run**,
-  indexes it by `(user_id, date)`, and materializes per-participant segments:
-  `bind(task_data)` fills a task cohort's eligible segments, and `segment_store()`
-  exposes the whole store for global-fit models (GRU-D, MultiRocket).
-- **`splits.py`** reads the frozen train/validation/test user split.
-
-The loader is deliberately dumb about data quality: the wear-time gate is applied
-once upstream when `daily_hourly_hf` is built, and eligibility is whatever the
-lookup names — the loader selects those `(user, date)` rows and never re-filters.
-
-## Run the bundled baselines
-
-The shipped baselines run through the *same* `evaluate_prediction` call, selected by
-`METHOD`. One driver for every method:
-
-```bash
-# CPU methods
-METHOD=linear      MHC_DATA_DIR=path/to/mhc-data sbatch              jobs/imperial/slurm/run_eval.slurm
-METHOD=multirocket MHC_DATA_DIR=path/to/mhc-data sbatch              jobs/imperial/slurm/run_eval.slurm
-METHOD=gru_d       MHC_DATA_DIR=path/to/mhc-data sbatch              jobs/imperial/slurm/run_eval.slurm
-
-# GPU methods (the first run extracts embeddings from raw)
-METHOD=toto        MHC_DATA_DIR=path/to/mhc-data sbatch --gres=gpu:1 jobs/imperial/slurm/run_eval.slurm
-METHOD=chronos2    MHC_DATA_DIR=path/to/mhc-data sbatch --gres=gpu:1 jobs/imperial/slurm/run_eval.slurm
-METHOD=wbm         MHC_DATA_DIR=path/to/mhc-data sbatch --gres=gpu:1 jobs/imperial/slurm/run_eval.slurm
-```
-
-| METHOD          | Model                                          |
-|-----------------|------------------------------------------------|
-| linear          | per-channel mean/std (+ demographics)          |
-| multirocket     | random convolutional kernels                   |
-| toto / chronos2 | time-series foundation-model embeddings        |
-| wbm             | self-supervised wearable encoder (hybrid)      |
-| gru_d           | end-to-end GRU-D (trains a model per run)      |
-
-Results are written to `eval_<METHOD>.csv` (override with `OUT_CSV=`). `gru_d` owns its
-own classifier and is scored end-to-end; the rest are encoders scored with the probe above.
+`PredictionResults` with `.summary()`, `.to_csv()`, `.to_json()`, and
+`.to_dataframe()`. `tasks="all"` runs the 32 benchmark tasks
+(`openmhc.list_tasks()`); `data_dir` defaults to the `MHC_DATA_DIR` env var.
 
 ## Requirements
 
 `numpy`, `scikit-learn`, `pandas`, `datasets`. The foundation-model baselines
-(`toto`, `chronos2`, `wbm`) additionally need `torch` and a GPU.
+(`toto`, `chronos2`, `wbm`, `mae`) additionally need `torch` and a GPU for
+embedding extraction (cached after the first run).
