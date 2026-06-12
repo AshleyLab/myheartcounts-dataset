@@ -384,58 +384,113 @@ def _seed_for_split(seed: int, split: str) -> int:
     return int.from_bytes(digest[:4], "big") & 0x7FFFFFFF
 
 
+def _per_user_auc_from_cell_stats(
+    cell_stats: CellStats, n_channels: int
+) -> np.ndarray:
+    """Precompute per-(user, channel) AUC for binary channels (user-macro path).
+
+    Returns shape ``(n_users, n_channels)`` float64; NaN at channels that are
+    continuous, at (user, channel) pairs with zero data, and at (user, channel)
+    pairs where the user has only one class present (AUC undefined).
+
+    Cached upfront because per-user AUC is **invariant across bootstrap draws** —
+    each draw merely resamples user rows (with replacement). Replacing
+    ``_bootstrap_auc_from_arrays``'s per-draw Mann–Whitney recomputation with
+    a single precompute + ``nanmean(per_user_auc[boot_idx], axis=1)`` brings
+    the per-draw binary work from O(draws × Mann-Whitney) to O(draws × users).
+    """
+    from sklearn.metrics import roc_auc_score
+
+    n_users = cell_stats.n.shape[0]
+    out = np.full((n_users, n_channels), np.nan, dtype=np.float64)
+    for ch in range(n_channels):
+        if ch in CONTINUOUS_CHANNEL_INDICES:
+            continue
+        if not cell_stats.has_data[ch]:
+            continue
+        br = cell_stats.binary_rows.get(ch)
+        if br is None or br.gt.size == 0:
+            continue
+        u_rows = br.u_rows
+        gt_arr = br.gt
+        pred_arr = br.pred
+        for u in np.unique(u_rows):
+            mask = u_rows == u
+            user_gt = gt_arr[mask]
+            if user_gt.size == 0 or user_gt.all() or not user_gt.any():
+                continue  # single-class user → AUC undefined → NaN
+            try:
+                out[u, ch] = float(roc_auc_score(user_gt, pred_arr[mask]))
+            except Exception:
+                pass  # leave NaN on sklearn edge cases
+    return out
+
+
 def _per_method_cell_errors(
     cell_stats: CellStats,
     boot_idx: np.ndarray,
     channel_stds: np.ndarray,
     include_auc: bool,
 ) -> np.ndarray:
-    """Compute (n_boot, n_channels) per-draw error E.
+    """Compute (n_boot, n_channels) per-draw error E under **user-macro** aggregation.
 
-    Continuous channels: ``E = nRMSE`` (matches the point flow's default
-    metric in ``paper_metrics_core.extract_errors``).
-    Binary channels: ``E = 1 − AUC`` (matches the point flow's E for binary).
-    Channels with no data are NaN.
+    Per-channel task error is the arithmetic macroaverage **over users** of the
+    per-(user, channel) error. The bootstrap draws are over users (cluster
+    bootstrap), so per-user errors are invariant across draws — precompute
+    once, then take ``nanmean`` over the resampled user rows per draw. This is
+    both correct (matches the "users-then-channels" framing) and substantially
+    faster than the prior cell-micro path's per-draw Mann–Whitney AUC
+    recomputation.
+
+    Continuous channels: ``E = RMSE`` (per-user macro mean of per-user RMSE).
+    nRMSE was the previous default, but per-channel
+    ``RMSE_method / RMSE_baseline = nRMSE_method / nRMSE_baseline`` exactly
+    (``channel_std`` cancels in the per-task ratio), so the skill score is
+    numerically identical and reporting RMSE keeps the leaderboard columns
+    in their natural units. ``channel_stds`` is retained on the signature
+    for backward compatibility but no longer affects the returned E.
+
+    Binary channels: ``E = 1 − AUC`` where AUC is the per-user AUC macro
+    mean. Per-(user, channel) AUC requires both classes within that user;
+    single-class users contribute NaN and drop from the per-task mean.
+
+    Channels with no data anywhere (``cell_stats.has_data[ch] == False``) are
+    NaN columns.
     """
     n_channels = cell_stats.n.shape[1]
     n_boot = boot_idx.shape[0]
     E = np.full((n_boot, n_channels), np.nan, dtype=np.float64)
 
-    # Continuous via additive sums
-    bytes_per_elem = 8
-    n_users = cell_stats.n.shape[0]
-    target_mem = 2 * 1024**3
-    chunk = max(1, target_mem // (n_users * n_channels * bytes_per_elem))
-    chunk = min(chunk, n_boot)
-    for b0 in range(0, n_boot, chunk):
-        b1 = min(b0 + chunk, n_boot)
-        idx = boot_idx[b0:b1]
-        N_b = cell_stats.n[idx].sum(axis=1)
-        SSE_b = cell_stats.sse[idx].sum(axis=1)
-        SAE_b = cell_stats.sae[idx].sum(axis=1)
-        cont = _continuous_metrics_from_sums(N_b, SSE_b, SAE_b, channel_stds)
-        for ch in CONTINUOUS_CHANNEL_INDICES:
-            if cell_stats.has_data[ch]:
-                E[b0:b1, ch] = cont["nrmse"][:, ch]
+    # --- Continuous: per-(user, channel) RMSE, then per-draw user-macro -----
+    n_u_ch = cell_stats.n  # (U, C) int64
+    sse_u_ch = cell_stats.sse  # (U, C) float64
+    with np.errstate(divide="ignore", invalid="ignore"):
+        per_user_mse = np.where(n_u_ch > 0, sse_u_ch / np.maximum(n_u_ch, 1), np.nan)
+    per_user_rmse = np.sqrt(per_user_mse)  # (U, C); NaN where N==0
 
-    # Binary via AUC bootstrap on subgroup-filtered raw rows
-    if include_auc:
-        for ch in range(n_channels):
-            if ch in CONTINUOUS_CHANNEL_INDICES:
-                continue
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)  # silence all-NaN slice warnings
+        for ch in CONTINUOUS_CHANNEL_INDICES:
             if not cell_stats.has_data[ch]:
                 continue
-            br = cell_stats.binary_rows.get(ch)
-            if br is None or br.gt.size == 0:
-                continue
-            auc_b = _bootstrap_auc_from_arrays(
-                br.gt,
-                br.pred,
-                br.u_rows,
-                n_users,
-                boot_idx,
-            )
-            E[:, ch] = 1.0 - auc_b
+            # boot_idx: (n_boot, n_users_per_draw). Fancy-index user axis.
+            per_draw_rows = per_user_rmse[boot_idx, ch]  # (n_boot, n_users_per_draw)
+            E[:, ch] = np.nanmean(per_draw_rows, axis=1)
+
+    # --- Binary: per-(user, channel) AUC, then per-draw user-macro ---------
+    if include_auc:
+        per_user_auc = _per_user_auc_from_cell_stats(cell_stats, n_channels)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            for ch in range(n_channels):
+                if ch in CONTINUOUS_CHANNEL_INDICES:
+                    continue
+                if not cell_stats.has_data[ch]:
+                    continue
+                per_draw_rows = per_user_auc[boot_idx, ch]
+                mean_auc = np.nanmean(per_draw_rows, axis=1)
+                E[:, ch] = 1.0 - mean_auc
+
     return E
 
 

@@ -206,9 +206,12 @@ def _per_channel_to_rows(
             "channel_type": _channel_type(ch),
             "subgroup_attr": subgroup_attr,
             "subgroup_value": subgroup_value,
-            # extract_errors() reads nRMSE for continuous channels and roc_auc
-            # for binary ones (E = 1 - AUC), so we surface both with NaN
-            # fallback for channels that had no masked positions.
+            # extract_errors() defaults to RMSE (skill-input metric); nRMSE
+            # is preserved alongside for cross-channel-comparable
+            # absolute-value reporting in human-read tables (raw RMSE has
+            # heterogeneous units — bpm vs steps — and isn't comparable
+            # across channels). roc_auc drives E = 1 - AUC for binary tasks.
+            "RMSE": float(m.get("rmse", np.nan)),
             "nRMSE": float(m.get("normalized_rmse", np.nan)),
             "roc_auc": float(m.get("roc_auc", np.nan)),
         })

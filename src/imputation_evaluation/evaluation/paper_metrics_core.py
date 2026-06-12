@@ -70,11 +70,19 @@ def extract_errors(
     split: str,
     subgroup_attr: str = "all",
     subgroup_value: str = "all",
-    continuous_metric: str = "nRMSE",
+    continuous_metric: str = "RMSE",
 ) -> pd.DataFrame:
     """Extract per-task error E for each method from a registry-shaped DF.
 
     Returns columns ``[method, scenario, channel, channel_type, E]``.
+
+    ``continuous_metric`` defaults to ``"RMSE"`` (changed from ``"nRMSE"`` in
+    the user-macro refactor). At per-channel scope the per-task skill ratio
+    ``E_method / E_baseline`` is identical under RMSE and nRMSE — the
+    ``channel_std`` factor cancels exactly — so the skill score is unchanged.
+    Switching to RMSE keeps the leaderboard absolute-value columns in their
+    natural units. Callers may still pass ``continuous_metric="nRMSE"`` to
+    read the legacy column if their registry DataFrame carries both.
     """
     mask = (
         (df["split"] == split)
