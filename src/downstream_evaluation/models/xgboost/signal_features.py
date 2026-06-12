@@ -61,6 +61,7 @@ ARIMA_PARAM_NAMES = ["ar.L1", "ar.L2", "sigma2"]
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+
 def _short_name(metric: str) -> str:
     """Strip 'daily_' prefix for compact feature naming."""
     return metric.removeprefix("daily_")
@@ -69,6 +70,7 @@ def _short_name(metric: str) -> str:
 # ══════════════════════════════════════════════════════════════════════════════
 # Phase 1: Statistical features — pure Polars expressions
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 def build_stat_expressions(metrics: list[str] | None = None) -> list[pl.Expr]:
     """Build Polars aggregation expressions for 10 statistical features per metric.
@@ -94,43 +96,38 @@ def build_stat_expressions(metrics: list[str] | None = None) -> list[pl.Expr]:
         # fill_nan(None) converts NaN → null so aggregations ignore them.
         col = pl.col(m).fill_nan(None)
 
-        exprs.extend([
-            col.drop_nulls().count().alias(f"sp_stat_N_{s}"),
-            # RMS = sqrt(mean(x^2))
-            col.pow(2).mean().sqrt().alias(f"sp_stat_RMS_{s}"),
-            # VAR (population)
-            col.var(ddof=0).alias(f"sp_stat_VAR_{s}"),
-            # STD (population)
-            col.std(ddof=0).alias(f"sp_stat_STD_{s}"),
-            # POWER = mean(x^2)
-            col.pow(2).mean().alias(f"sp_stat_POWER_{s}"),
-            # PEAK = max(|x|)
-            col.abs().max().alias(f"sp_stat_PEAK_{s}"),
-            # P2P = max - min
-            (col.max() - col.min()).alias(f"sp_stat_P2P_{s}"),
-            # CREST_FACTOR = peak / rms, guard div-by-zero
-            pl.when(col.pow(2).mean().sqrt() > 0)
-            .then(col.abs().max() / col.pow(2).mean().sqrt())
-            .otherwise(None)
-            .alias(f"sp_stat_CREST_FACTOR_{s}"),
-            # SKEW = E[(x - mean)^3] / std^3, guard zero std
-            pl.when(col.std(ddof=0) > 0)
-            .then(
-                ((col - col.mean()).pow(3)).mean()
-                / col.std(ddof=0).pow(3)
-            )
-            .otherwise(None)
-            .alias(f"sp_stat_SKEW_{s}"),
-            # KURTOSIS = E[(x - mean)^4] / var^2 - 3, guard zero var
-            pl.when(col.var(ddof=0) > 0)
-            .then(
-                ((col - col.mean()).pow(4)).mean()
-                / col.var(ddof=0).pow(2)
-                - 3
-            )
-            .otherwise(None)
-            .alias(f"sp_stat_KURTOSIS_{s}"),
-        ])
+        exprs.extend(
+            [
+                col.drop_nulls().count().alias(f"sp_stat_N_{s}"),
+                # RMS = sqrt(mean(x^2))
+                col.pow(2).mean().sqrt().alias(f"sp_stat_RMS_{s}"),
+                # VAR (population)
+                col.var(ddof=0).alias(f"sp_stat_VAR_{s}"),
+                # STD (population)
+                col.std(ddof=0).alias(f"sp_stat_STD_{s}"),
+                # POWER = mean(x^2)
+                col.pow(2).mean().alias(f"sp_stat_POWER_{s}"),
+                # PEAK = max(|x|)
+                col.abs().max().alias(f"sp_stat_PEAK_{s}"),
+                # P2P = max - min
+                (col.max() - col.min()).alias(f"sp_stat_P2P_{s}"),
+                # CREST_FACTOR = peak / rms, guard div-by-zero
+                pl.when(col.pow(2).mean().sqrt() > 0)
+                .then(col.abs().max() / col.pow(2).mean().sqrt())
+                .otherwise(None)
+                .alias(f"sp_stat_CREST_FACTOR_{s}"),
+                # SKEW = E[(x - mean)^3] / std^3, guard zero std
+                pl.when(col.std(ddof=0) > 0)
+                .then(((col - col.mean()).pow(3)).mean() / col.std(ddof=0).pow(3))
+                .otherwise(None)
+                .alias(f"sp_stat_SKEW_{s}"),
+                # KURTOSIS = E[(x - mean)^4] / var^2 - 3, guard zero var
+                pl.when(col.var(ddof=0) > 0)
+                .then(((col - col.mean()).pow(4)).mean() / col.var(ddof=0).pow(2) - 3)
+                .otherwise(None)
+                .alias(f"sp_stat_KURTOSIS_{s}"),
+            ]
+        )
 
     return exprs
 
@@ -138,6 +135,7 @@ def build_stat_expressions(metrics: list[str] | None = None) -> list[pl.Expr]:
 # ══════════════════════════════════════════════════════════════════════════════
 # Phase 2: ARIMA + CC — Python functions (numpy/statsmodels)
 # ══════════════════════════════════════════════════════════════════════════════
+
 
 def arima_feature_extraction(
     x: np.ndarray, order: tuple[int, int, int] = (2, 1, 0)
@@ -153,6 +151,7 @@ def arima_feature_extraction(
     result = {p: None for p in ARIMA_PARAM_NAMES}
     try:
         from statsmodels.tsa.arima.model import ARIMA
+
         model = ARIMA(x, order=order)
         fit = model.fit(method_kwargs={"warn_convergence": False})
         for name, val in zip(fit.param_names, fit.params):
@@ -163,9 +162,7 @@ def arima_feature_extraction(
     return result
 
 
-def cc_feature_extraction(
-    series_dict: dict[str, np.ndarray], lags: int = 3
-) -> dict[str, float]:
+def cc_feature_extraction(series_dict: dict[str, np.ndarray], lags: int = 3) -> dict[str, float]:
     """Cross-correlation features for all pairs of metrics.
 
     - For each pair (a, b) in combinations(metrics, 2): compute ccf at lags 0..2
@@ -256,9 +253,5 @@ def extract_arima_cc_for_user(user_df: pl.DataFrame) -> pl.DataFrame:
     # insufficient data in a narrow date window every value is None and Polars
     # infers the column as Null type.  map_groups then fails with SchemaError
     # when concatenating Null-typed columns with Float64 from other groups.
-    df = df.cast({
-        c: pl.Float64
-        for c in df.columns
-        if c != "user_id" and df[c].dtype == pl.Null
-    })
+    df = df.cast({c: pl.Float64 for c in df.columns if c != "user_id" and df[c].dtype == pl.Null})
     return df

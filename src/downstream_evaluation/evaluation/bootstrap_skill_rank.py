@@ -15,8 +15,8 @@ Two-phase, mirroring the imputation paper-metrics pipeline:
   Overall + per-domain), and the **fairness** tables (per-subgroup skill, disparity,
   fairness-adjusted skill).
 
-The runnable CLIs are ``scripts/paper_results/bootstrap_downstream_draws.py`` (phase
-1) and ``scripts/paper_results/aggregate_downstream_paper_metrics.py`` (phase 2).
+The runnable CLIs are ``scripts/downstream_paper_results/bootstrap_downstream_draws.py`` (phase
+1) and ``scripts/downstream_paper_results/aggregate_downstream_paper_metrics.py`` (phase 2).
 Fairness rows require ``predictions_dir/_subgroups.json`` (per-user {age_group, sex});
 without it only the global (``subgroup_attr="all"``) rows are produced.
 """

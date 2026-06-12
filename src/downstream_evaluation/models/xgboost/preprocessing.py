@@ -50,11 +50,11 @@ _SHORT_SLEEP_THRESHOLD: float = 180.0  # minutes (3 hours)
 # Matches ZeroToNaNTransform.__init__ defaults. Flights (ch 2) excluded
 # because ~55% of samples are legitimately all-zero.
 _ALL_ZERO_NAN_CHANNELS: tuple[int, ...] = (
-    IPHONE_STEPS,     # 0
+    IPHONE_STEPS,  # 0
     IPHONE_DISTANCE,  # 1
-    WATCH_STEPS,      # 3
-    WATCH_DISTANCE,   # 4
-    WATCH_ENERGY,     # 6
+    WATCH_STEPS,  # 3
+    WATCH_DISTANCE,  # 4
+    WATCH_ENERGY,  # 6
 )
 
 _MINUTES_PER_DAY = 1440
@@ -111,9 +111,7 @@ def apply_zero_to_nan(df: pl.DataFrame) -> pl.DataFrame:
         arr = arrays[ch]
         total_sleep = np.nansum(arr, axis=1)  # sum ignoring NaN, per row
         short = (total_sleep > 0) & (total_sleep < _SHORT_SLEEP_THRESHOLD)
-        arr[np.ix_(short, np.arange(T))] = np.where(
-            arr[short] == 0, np.nan, arr[short]
-        )
+        arr[np.ix_(short, np.arange(T))] = np.where(arr[short] == 0, np.nan, arr[short])
 
     # Reconstruct Array(List(Float32), 19) via PyArrow.
     stacked = np.empty((n, N_CHANNELS, T), dtype=np.float32)
@@ -177,16 +175,12 @@ def apply_variance_filter(
 
 
 def build_cutoff_dates(max_future_days: int = 365) -> dict[str, str]:
-    """Compute per-user data cutoff dates from the Labels API.
+    """Compute per-user data cutoff dates from label measurement dates.
 
-    For each user, finds the **latest valid** label measurement date across
-    all target labels, then adds *max_future_days* to get the cutoff date.
-    Daily data after this cutoff should be excluded from feature extraction
-    to prevent models from using wearable data far in the future of any
-    label measurement.
-
-    Only considers measurements marked as valid by the Labels API validity
-    system (i.e. measurements with nearby wearable data).
+    For each user, finds the latest label measurement date across all target
+    labels, then adds *max_future_days* to get the cutoff date.  Daily data
+    after this cutoff is excluded from feature extraction to prevent models
+    from using wearable data far in the future of any label measurement.
 
     Args:
         max_future_days: Maximum days of data to allow after the user's
@@ -204,9 +198,6 @@ def build_cutoff_dates(max_future_days: int = 365) -> dict[str, str]:
 
     _log = logging.getLogger(__name__)
 
-    # Ensure validity masks are loaded before accessing series.valid
-    STORE._ensure_validity_loaded()  # noqa: SLF001
-
     raw_index = STORE.labels_index._index  # noqa: SLF001
     user_latest: dict[str, dt.date] = {}
 
@@ -215,19 +206,12 @@ def build_cutoff_dates(max_future_days: int = 365) -> dict[str, str]:
         for uid, series in per_label.items():
             if not series.timestamps_ns:
                 continue
-            valid_mask = series.valid if series.valid is not None else [True] * len(
-                series.timestamps_ns
-            )
-            for ts_ns, is_valid in zip(series.timestamps_ns, valid_mask):
-                if not is_valid:
-                    continue
+            for ts_ns in series.timestamps_ns:
                 label_date = pd.Timestamp(ts_ns).date()
                 if uid not in user_latest or label_date > user_latest[uid]:
                     user_latest[uid] = label_date
 
     delta = dt.timedelta(days=max_future_days)
     cutoffs = {uid: (d + delta).isoformat() for uid, d in user_latest.items()}
-    _log.info(
-        "Built cutoff dates: %d users, max_future_days=%d", len(cutoffs), max_future_days
-    )
+    _log.info("Built cutoff dates: %d users, max_future_days=%d", len(cutoffs), max_future_days)
     return cutoffs

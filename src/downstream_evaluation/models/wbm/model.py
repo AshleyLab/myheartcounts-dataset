@@ -75,11 +75,10 @@ def _load_wbm_encoder(checkpoint: str, device):
     """Load + freeze the Mamba2 week encoder from a Lightning checkpoint."""
     import torch
 
-    from utils.checkpoints import resolve_checkpoint_path
-
     from downstream_evaluation.models.wbm.week_encoders_mamba2 import (
         Mamba2WeekEncoder,
     )
+    from utils.checkpoints import resolve_checkpoint_path
 
     ckpt_path = str(resolve_checkpoint_path(checkpoint))
     logger.info("loading WBM checkpoint: %s", ckpt_path)
@@ -121,15 +120,15 @@ def extract_wbm_embeddings(
     batch_size: int = 64,
     seed: int = 42,
 ) -> None:
-    """Regenerate the WBM embedding intermediate from raw (GPU). Writes
-    ``embeddings.npy`` / ``user_ids.npy`` / ``week_starts.npy`` under ``output_dir``.
+    """Regenerate the WBM embedding intermediate from raw (GPU).
+
+    Writes ``embeddings.npy`` / ``user_ids.npy`` / ``week_starts.npy`` under ``output_dir``.
     """
     import torch
     from tqdm import tqdm
 
-    from openmhc._evaluate import _DatasetPaths
-
     from data.datasets.indexed_week_dataset import load_indexed_week_dataset
+    from openmhc._evaluate import _DatasetPaths
 
     torch.manual_seed(seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -173,9 +172,11 @@ def extract_wbm_embeddings(
 # Stage 2 — the WBM Encoder (driven by run_eval; build-on-miss is internal)
 # --------------------------------------------------------------------------- #
 class WBM:
-    """WBM encoder for the engine. ``encode_cohort`` returns the cohort's per-user
-    256-d embeddings; the embeddings are produced **on a cache miss** by running the
-    encoder over raw (GPU), saved, and reused on a hit — all inside the eval flow.
+    """WBM encoder for the engine.
+
+    ``encode_cohort`` returns the cohort's per-user 256-d embeddings; the embeddings
+    are produced **on a cache miss** by running the encoder over raw (GPU), saved, and
+    reused on a hit — all inside the eval flow.
     """
 
     name = "wbm"
@@ -189,6 +190,7 @@ class WBM:
         cache_dir: str | None = None,
         seed: int = 42,
     ):
+        """Store the checkpoint, cache dir, and seed; embeddings load lazily on first use."""
         self._data_dir = data_dir
         self._checkpoint = checkpoint
         self._cache_dir = cache_dir

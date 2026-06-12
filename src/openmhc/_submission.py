@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 # 19-channel sensor layout — categories used for subgroup skill scores
-# (see paper Section 4.4 and `scripts/paper_results/compute_imputation_paper_metrics.py`).
+# (see paper Section 4.4 and `scripts/downstream_paper_results/compute_imputation_paper_metrics.py`).
 _CHANNEL_CATEGORIES: dict[str, set[str]] = {
     "activity": {"ch_0", "ch_1", "ch_2", "ch_3", "ch_4"},
     "physiology": {"ch_5", "ch_6"},

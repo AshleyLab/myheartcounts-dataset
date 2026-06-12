@@ -84,9 +84,10 @@ class XGBOrdinalWrapper(BaseEstimator, ClassifierMixin):
         return probs
 
     def predict(self, X):
-        """Predict ordinal class labels by argmax over the class probabilities
-        reconstructed from threshold outputs via differencing, as in
-        Frank & Hall (2001).
+        """Predict ordinal class labels by argmax over the class probabilities.
+
+        The probabilities are reconstructed from threshold outputs via
+        differencing, as in Frank & Hall (2001).
         """
         return self.predict_proba(X).argmax(axis=1).astype(int)
 

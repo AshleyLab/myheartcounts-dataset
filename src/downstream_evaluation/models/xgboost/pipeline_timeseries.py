@@ -52,9 +52,7 @@ def _detect_and_normalize(df: pl.DataFrame) -> pl.DataFrame:
     # MHC-B daily_hf stores values as variable-size List; XGB uses fixed-size Array
     data_dtype = df["data"].dtype
     if data_dtype != pl.Array and str(data_dtype).startswith("List"):
-        df = df.with_columns(
-            pl.col("data").cast(pl.Array(pl.List(pl.Float32), 19))
-        )
+        df = df.with_columns(pl.col("data").cast(pl.Array(pl.List(pl.Float32), 19)))
 
     # Synthesize nonwear_vector if missing
     if "nonwear_vector" not in df.columns:
@@ -62,9 +60,7 @@ def _detect_and_normalize(df: pl.DataFrame) -> pl.DataFrame:
         # The only extractor that reads nonwear_vector is _extract_sedentary_bouts_daily,
         # which subtracts wake-hour non-wear.  With an all-zero vector the subtraction
         # is a no-op — equivalent to "no non-wear correction".
-        df = df.with_columns(
-            pl.lit([0] * 1440).alias("nonwear_vector")
-        )
+        df = df.with_columns(pl.lit([0] * 1440).alias("nonwear_vector"))
 
     # Convert sensor zeros to NaN before feature extraction.
     # HR=0 → NaN; all-zero activity channels → all-NaN.
@@ -249,7 +245,9 @@ def build_user_features_chunked(
     if done > 0:
         logger.info(
             "Resuming: %d/%d chunks already done, %d remaining",
-            done, len(arrow_files), len(todo),
+            done,
+            len(arrow_files),
+            len(todo),
         )
     else:
         logger.info("Processing %d Arrow files (chunked)...", len(arrow_files))
@@ -264,8 +262,16 @@ def build_user_features_chunked(
             df = pl.from_arrow(table)
             del table  # free PyArrow memory before cast
             # Drop columns not needed for feature extraction
-            keep = {"user_id", "date", "data", "values", "nonwear_vector",
-                    "total_nonwear_minutes", "timestamp", "channel_variance"}
+            keep = {
+                "user_id",
+                "date",
+                "data",
+                "values",
+                "nonwear_vector",
+                "total_nonwear_minutes",
+                "timestamp",
+                "channel_variance",
+            }
             df = df.select([c for c in df.columns if c in keep])
             df = _detect_and_normalize(df)
         before = len(df)
@@ -278,21 +284,29 @@ def build_user_features_chunked(
         if after_all == 0:
             logger.warning(
                 "  SKIP %s: all %d rows filtered (nonwear: -%d, variance: -%d)",
-                arrow_file.name, before, before - after_nonwear, after_nonwear - after_all,
+                arrow_file.name,
+                before,
+                before - after_nonwear,
+                after_nonwear - after_all,
             )
             continue
         if after_all < before:
             logger.info(
                 "  %s: filtered %d/%d rows (nonwear: -%d, variance: -%d)",
-                arrow_file.name, before - after_all, before,
-                before - after_nonwear, after_nonwear - after_all,
+                arrow_file.name,
+                before - after_all,
+                before,
+                before - after_nonwear,
+                after_nonwear - after_all,
             )
         # Drop channel_variance before feature extraction (not needed downstream)
         if "channel_variance" in df.columns:
             df = df.drop("channel_variance")
         n_rows = len(df)
         df_daily = df.lazy().with_columns(daily_extractors).collect()
-        cols_to_keep = [c for c in df_daily.columns if c not in ("data", "nonwear_vector", "timestamp")]
+        cols_to_keep = [
+            c for c in df_daily.columns if c not in ("data", "nonwear_vector", "timestamp")
+        ]
         df_daily = df_daily.select(cols_to_keep)
         df_daily.write_parquet(out_path)
         del df, df_daily
@@ -304,7 +318,12 @@ def build_user_features_chunked(
         eta = remaining / rate if rate > 0 else 0
         logger.info(
             "  [%d/%d] %s: %d rows (%.0fs elapsed, ~%.0fs remaining)",
-            done_now, len(arrow_files), arrow_file.name, n_rows, elapsed, eta,
+            done_now,
+            len(arrow_files),
+            arrow_file.name,
+            n_rows,
+            elapsed,
+            eta,
         )
 
     # Concatenate all checkpoint files
@@ -320,16 +339,23 @@ def build_user_features_chunked(
         after_cutoff = all_daily.shape[0]
         logger.info(
             "Cutoff filter: %d -> %d rows (-%d, %.1f%% removed)",
-            before_cutoff, after_cutoff, before_cutoff - after_cutoff,
+            before_cutoff,
+            after_cutoff,
+            before_cutoff - after_cutoff,
             (before_cutoff - after_cutoff) / before_cutoff * 100 if before_cutoff > 0 else 0,
         )
 
     # Aggregate to user level
     logger.info("Aggregating to user level...")
-    user_features = all_daily.lazy().group_by("user_id").agg(
-        pl.len().alias("total_days"),
-        *get_all_user_aggregators(),
-    ).collect()
+    user_features = (
+        all_daily.lazy()
+        .group_by("user_id")
+        .agg(
+            pl.len().alias("total_days"),
+            *get_all_user_aggregators(),
+        )
+        .collect()
+    )
     del all_daily
 
     if output_path is not None:
@@ -338,7 +364,9 @@ def build_user_features_chunked(
         user_features.write_parquet(output_path)
         logger.info(
             "Wrote %d users x %d features to %s",
-            user_features.shape[0], user_features.shape[1], output_path,
+            user_features.shape[0],
+            user_features.shape[1],
+            output_path,
         )
 
     return user_features
@@ -394,7 +422,9 @@ def build_user_features(
         result.write_parquet(output_path)
         logger.info(
             "Wrote %d users x %d features to %s",
-            result.shape[0], result.shape[1], output_path,
+            result.shape[0],
+            result.shape[1],
+            output_path,
         )
 
     return result
@@ -445,7 +475,9 @@ def extract_daily_features(
         result.write_parquet(output_path)
         logger.info(
             "Wrote %d day-records x %d features to %s",
-            result.shape[0], result.shape[1], output_path,
+            result.shape[0],
+            result.shape[1],
+            output_path,
         )
 
     return result
