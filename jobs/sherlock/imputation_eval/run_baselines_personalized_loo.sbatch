@@ -16,7 +16,7 @@
 #SBATCH --partition=normal
 #SBATCH --time=12:00:00
 #SBATCH --cpus-per-task=12
-#SBATCH --mem=64G
+#SBATCH --mem=96G
 #SBATCH --output=/scratch/users/%u/logs/openmhc/personalized_loo_%j.out
 #SBATCH --error=/scratch/users/%u/logs/openmhc/personalized_loo_%j.err
 
