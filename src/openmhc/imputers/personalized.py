@@ -13,11 +13,13 @@ from openmhc.imputers._personalized_base import PersonalizedImputerBase
 
 
 class PersonalizedMeanImputer(PersonalizedImputerBase):
-    """Per-user, per-channel mean imputation.
+    """Per-user, per-channel mean imputation with leave-one-sample-out fill.
 
-    Each user's own per-channel mean (computed from their observed data
-    in the eval splits) fills their masked positions. Channels with
-    zero observations for a user fall back to the global channel mean
+    Each user's own per-channel mean fills their masked positions. The
+    mean is computed leave-one-sample-out across the user's samples in
+    the eval split, so the held-out cells of the sample being scored
+    cannot inform their own fill. Channels with zero observations for a
+    user (after LOSO subtraction) fall back to the global channel mean
     from training.
     """
 
@@ -40,13 +42,34 @@ class PersonalizedMeanImputer(PersonalizedImputerBase):
         acc["sums"] += data_masked.sum(axis=1)
         acc["counts"] += valid.sum(axis=1)
 
+    def _init_sample_contribution(
+        self, sample_data: np.ndarray, sample_mask: np.ndarray
+    ) -> dict:
+        # Mirror the per-sample addends in `_update_user_accumulator` so the
+        # finalize step can subtract them exactly.
+        valid = (sample_mask > 0.5) & np.isfinite(sample_data)
+        data_masked = np.where(valid, sample_data, 0.0)
+        return {
+            "sums": data_masked.sum(axis=1).astype(np.float64),
+            "counts": valid.sum(axis=1).astype(np.float64),
+        }
+
     def _finalize_user_fill_values(
-        self, acc: dict, global_fallback: np.ndarray
+        self,
+        acc: dict,
+        sample_contrib: dict | None,
+        global_fallback: np.ndarray,
     ) -> np.ndarray:
-        has_obs = acc["counts"] > 0
+        if sample_contrib is None:
+            sums = acc["sums"]
+            counts = acc["counts"]
+        else:
+            sums = acc["sums"] - sample_contrib["sums"]
+            counts = acc["counts"] - sample_contrib["counts"]
+        has_obs = counts > 0
         return np.where(
             has_obs,
-            acc["sums"] / np.maximum(acc["counts"], 1),
+            sums / np.maximum(counts, 1),
             global_fallback,
         ).astype(np.float32)
 
@@ -63,12 +86,14 @@ class PersonalizedMeanImputer(PersonalizedImputerBase):
 
 
 class PersonalizedModeImputer(PersonalizedImputerBase):
-    """Per-user, per-channel mode imputation.
+    """Per-user, per-channel mode imputation with leave-one-sample-out fill.
 
     Each user's most frequent observed value (after rounding to
     ``decimal_precision`` places) per channel fills their masked
-    positions. Channels with zero observations for a user fall back to
-    the global channel mode from training.
+    positions. The mode is computed leave-one-sample-out across the
+    user's samples in the eval split, so the held-out cells cannot
+    inform their own fill. Channels with no remaining observations for
+    a user fall back to the global channel mode from training.
     """
 
     name = "personalized_mode"
@@ -118,13 +143,40 @@ class PersonalizedModeImputer(PersonalizedImputerBase):
             rounded = np.round(vals, self.decimal_precision)
             acc[ch].update(rounded.tolist())
 
+    def _init_sample_contribution(
+        self,
+        sample_data: np.ndarray,
+        sample_mask: np.ndarray,
+    ) -> list[Counter]:
+        # Per-channel Counter mirroring this sample's addends in
+        # `_update_user_accumulator`.
+        contrib: list[Counter] = [Counter() for _ in range(self.n_channels)]
+        valid = (sample_mask > 0.5) & np.isfinite(sample_data)
+        for ch in range(self.n_channels):
+            ch_valid = valid[ch, :]
+            if not ch_valid.any():
+                continue
+            vals = sample_data[ch, :][ch_valid]
+            rounded = np.round(vals, self.decimal_precision)
+            contrib[ch].update(rounded.tolist())
+        return contrib
+
     def _finalize_user_fill_values(
-        self, acc: list[Counter], global_fallback: np.ndarray
+        self,
+        acc: list[Counter],
+        sample_contrib: list[Counter] | None,
+        global_fallback: np.ndarray,
     ) -> np.ndarray:
         user_modes = global_fallback.copy()
         for ch in range(self.n_channels):
-            if acc[ch]:
-                user_modes[ch] = acc[ch].most_common(1)[0][0]
+            counter = acc[ch]
+            if sample_contrib is not None:
+                # Counter subtraction (`-`) drops non-positive counts, which
+                # is the desired behavior: cells unique to the held-out
+                # sample disappear from the user's running mode.
+                counter = counter - sample_contrib[ch]
+            if counter:
+                user_modes[ch] = counter.most_common(1)[0][0]
         return user_modes.astype(np.float32)
 
     def _apply_fill(
@@ -140,10 +192,18 @@ class PersonalizedModeImputer(PersonalizedImputerBase):
 
 
 class PersonalizedTemporalMeanImputer(PersonalizedImputerBase):
-    """Per-user, per-channel, per-minute mean imputation.
+    """Per-user, per-channel, per-minute mean imputation with LOSO fill.
 
     Fallback chain: per-user (channel, minute) mean → user's overall
-    channel mean → global per-(channel, minute) mean from training.
+    channel mean → global per-(channel, minute) mean from training. All
+    per-user means are computed leave-one-sample-out across the user's
+    samples in the eval split.
+
+    Memory note: this imputer stores a per-sample (channel, minute)
+    contribution (`~C * T * 4` bytes per sample, ≈110 KB at C=19,
+    T=1440 float32, plus a same-shape uint8 count mask) for every
+    val/test sample. For ``version="full"`` this can total a few GB —
+    acceptable for a CPU baseline.
     """
 
     name = "personalized_temporal_mean"
@@ -174,19 +234,53 @@ class PersonalizedTemporalMeanImputer(PersonalizedImputerBase):
             acc["minute_sums"] += data_masked[:, s : s + T]
             acc["minute_counts"] += valid[:, s : s + T]
 
+    def _init_sample_contribution(
+        self, sample_data: np.ndarray, sample_mask: np.ndarray
+    ) -> dict:
+        # Mirror the per-sample addends folded by `_update_user_accumulator`.
+        T = self.seq_len
+        valid = (sample_mask > 0.5) & np.isfinite(sample_data)
+        data_masked = np.where(valid, sample_data, 0.0)
+        full_T = sample_data.shape[1]
+        minute_sums = np.zeros((self.n_channels, T), dtype=np.float32)
+        minute_counts = np.zeros((self.n_channels, T), dtype=np.uint8)
+        for k in range(full_T // T):
+            s = k * T
+            minute_sums += data_masked[:, s : s + T].astype(np.float32)
+            minute_counts += valid[:, s : s + T].astype(np.uint8)
+        return {
+            "minute_sums": minute_sums,
+            "minute_counts": minute_counts,
+            "ch_sums": data_masked.sum(axis=1).astype(np.float64),
+            "ch_counts": valid.sum(axis=1).astype(np.float64),
+        }
+
     def _finalize_user_fill_values(
-        self, acc: dict, global_fallback: np.ndarray
+        self,
+        acc: dict,
+        sample_contrib: dict | None,
+        global_fallback: np.ndarray,
     ) -> np.ndarray:
-        has_channel_obs = acc["ch_counts"] > 0
+        if sample_contrib is None:
+            minute_sums = acc["minute_sums"]
+            minute_counts = acc["minute_counts"]
+            ch_sums = acc["ch_sums"]
+            ch_counts = acc["ch_counts"]
+        else:
+            minute_sums = acc["minute_sums"] - sample_contrib["minute_sums"]
+            minute_counts = acc["minute_counts"] - sample_contrib["minute_counts"]
+            ch_sums = acc["ch_sums"] - sample_contrib["ch_sums"]
+            ch_counts = acc["ch_counts"] - sample_contrib["ch_counts"]
+        has_channel_obs = ch_counts > 0
         user_channel_means = np.where(
             has_channel_obs,
-            acc["ch_sums"] / np.maximum(acc["ch_counts"], 1),
+            ch_sums / np.maximum(ch_counts, 1),
             0.0,
         )
-        has_minute_obs = acc["minute_counts"] > 0
+        has_minute_obs = minute_counts > 0
         user_temporal = np.where(
             has_minute_obs,
-            acc["minute_sums"] / np.maximum(acc["minute_counts"], 1),
+            minute_sums / np.maximum(minute_counts, 1),
             user_channel_means[:, None],
         )
         for ch in range(self.n_channels):
