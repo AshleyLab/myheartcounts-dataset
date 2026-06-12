@@ -101,14 +101,24 @@ seed (`scripts/validate_grud_determinism.py`).
 
 ## Evaluate your own model
 
-Implement `fit` / `predict` and hand the model to the benchmark.
-No base class, no config files:
+Implement `fit` / `predict` and hand the model to the benchmark — no base class,
+no config files. The one contract supports two styles; pick by **who owns the
+classification head**:
+
+- **Encoder-style** — your model produces a representation; the benchmark's
+  uniform head (`openmhc.LinearProbe`) turns it into predictions. Your score
+  reflects the *representation* and is directly comparable with the paper's
+  encoder rows (mae, toto, chronos2, multirocket).
+- **End-to-end** — your model owns its head and returns predictions directly,
+  scored as-is. Comparable with the paper's end-to-end rows (gru_d, xgboost).
+
+**Encoder-style** (uniform probe inside `fit`/`predict`):
 
 ```python
 import numpy as np
 import openmhc
 
-class MyMethod:
+class MyEncoderMethod:
     input_granularity = "daily"          # the benchmark hands you daily segments
 
     def _encode(self, data: np.ndarray) -> np.ndarray:
@@ -126,10 +136,34 @@ class MyMethod:
     def predict(self, data):
         return self._probe.predict(np.stack([self._encode(x) for x in data]))
 
-results = openmhc.evaluate_prediction(MyMethod(), tasks="all", data_dir="path/to/mhc-data")
+results = openmhc.evaluate_prediction(MyEncoderMethod(), tasks="all", data_dir="path/to/mhc-data")
 
 print(results.summary())             # wide table: one row per task, one column per metric
 results.to_csv("my_results.csv")     # full long-format results
+```
+
+**End-to-end** (your own head — here a random forest, routed by task type):
+
+```python
+import numpy as np
+from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+
+class MyEndToEndMethod:
+    input_granularity = "daily"
+
+    def _features(self, data):
+        return np.stack([np.nan_to_num(x).reshape(-1, 38).mean(0) for x in data])
+
+    def fit(self, data, labels, task_type):
+        cls = RandomForestRegressor if task_type == "regression" else RandomForestClassifier
+        self._model = cls(n_estimators=300, random_state=42).fit(self._features(data), labels)
+        self._task_type = task_type
+
+    def predict(self, data):
+        X = self._features(data)
+        if self._task_type == "binary":
+            return self._model.predict_proba(X)[:, 1]   # scores, not hard labels (AUPRC)
+        return self._model.predict(X)                    # ordinal/multiclass: levels; regression: values
 ```
 
 The contract, in full:
@@ -138,9 +172,11 @@ The contract, in full:
   array per participant; `labels` aligns with it; `task_type` is one of
   `"binary"`, `"multiclass"`, `"ordinal"`, `"regression"`.
 - `predict(data)` — return one prediction per participant, aligned with `data`.
-- Encoder-style models should run `openmhc.LinearProbe` inside `fit`/`predict`
-  (as above) to stay comparable with the paper's encoders; end-to-end models
-  return their own predictions directly.
+  For **binary** tasks return a continuous score / probability of the positive
+  class (AUPRC needs a ranking, not hard labels); for ordinal/multiclass return
+  class levels; for regression, values.
+- Both styles may train, pretrain, or be training-free — the style choice is
+  only about the head, and it decides which paper rows you are comparable with.
 - Cohorts, eligibility, and time windows are the benchmark's job — your model
   only ever sees eligible data, and cannot get the cohort wrong.
 
