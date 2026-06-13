@@ -8,9 +8,10 @@ Self-contained two-stage from-raw flow:
 
   - **Stage 1 (build-on-miss, CPU):** ``extract_xgboost_features`` runs the three
     feature pipelines (timeseries → day-dynamics, which reads the timeseries daily
-    checkpoints → curve-analysis) over the raw minute-level ``daily_hf`` Arrow shards,
-    under a per-user 1092-day (156-week) future-data cutoff, writing the three per-user
-    feature parquets.
+    checkpoints → curve-analysis) over the raw minute-level ``daily_hf`` Arrow shards
+    and writes the three per-user feature parquets. By default no forward-window
+    cutoff applies (the benchmark's full-history scope); a positive ``max_future_days``
+    selects the forward-windowed ablation instead.
   - **Stage 2 (eval):** the ``XGBoost`` method loads that feature table (built on a
     cache miss, loaded on a hit) and fits/predicts end-to-end, routed by task type.
 
@@ -75,9 +76,12 @@ _PARQUET_NAMES = [
 # Diagnostic/metadata columns to drop (they would leak coverage info).
 _METADATA_PREFIXES = ("n_", "total_")
 
-# Per user, keep daily data up to (latest valid label date + 1092 days = 156 weeks)
-# and days with <=720 nonwear minutes (50% of 1440).
-DEFAULT_MAX_FUTURE_DAYS = 1092
+# Benchmark default: no forward-window cutoff — each participant's full history is
+# eligible (subject to the <=720-nonwear-minute data-quality gate, 50% of 1440). This
+# matches the framework-wide full-history default (TemporalWindowConfig.is_full_history)
+# and the *_full_history label lookup. A positive value is the forward-windowed
+# ablation (e.g. 1092 days = 156 weeks): keep data up to latest valid label + N days.
+DEFAULT_MAX_FUTURE_DAYS = 0
 DEFAULT_MAX_NONWEAR_MINUTES = 720
 
 
@@ -185,7 +189,8 @@ class XGBoost:
     """Unified ``Method``: hand-crafted per-user features + XGBoost trees.
 
     Features are built from raw ``daily_hf`` on a cache miss and loaded on a hit
-    (``features_dir`` / the default ``results/xgboost_features/from_raw``).
+    (``features_dir`` / the default full-history cache
+    ``results/xgboost_features/from_raw_full_history``).
     """
 
     name = "xgboost"
@@ -204,10 +209,13 @@ class XGBoost:
         data_dir: dataset root (``daily_hf`` + labels live under it); ``MHC_DATA_DIR`` if None.
         seed: random_state for the trees.
         features_dir: explicit feature-table dir to load/build into. Defaults to the
-            build-on-miss cache ``results/xgboost_features/from_raw`` (point this at a
-            prebuilt feature-table directory to load it instead of building).
-        max_future_days / max_nonwear_minutes: from-raw build parameters (future-data
-            cutoff, max non-wear minutes per day).
+            build-on-miss cache (``results/xgboost_features/from_raw_full_history`` for
+            the full-history default, ``.../from_raw`` for a windowed build); point this
+            at a prebuilt feature-table directory to load it instead of building.
+        max_future_days / max_nonwear_minutes: from-raw build parameters. The default
+            ``max_future_days=0`` applies no forward-window cutoff (full history); a
+            positive value selects the forward-windowed ablation. ``max_nonwear_minutes``
+            is the per-day data-quality gate.
         """
         self.seed = seed
         self._data_dir = data_dir
@@ -230,7 +238,11 @@ class XGBoost:
     def _resolve_features_dir(self) -> Path:
         if self._features_dir is not None:
             return Path(self._features_dir)
-        return Path("results") / "xgboost_features" / "from_raw"
+        # The cutoff is baked into the features at build time, so a forward-windowed
+        # cache must never be silently reused for a full-history run (or vice versa).
+        # Full history gets its own directory — mirrors the tsfm from-raw convention.
+        variant = "from_raw_full_history" if self._max_future_days == 0 else "from_raw"
+        return Path("results") / "xgboost_features" / variant
 
     def _load_features_from(self, features_dir) -> None:
         """Load the joined per-user feature table from ``features_dir`` into
