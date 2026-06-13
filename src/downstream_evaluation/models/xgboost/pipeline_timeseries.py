@@ -177,6 +177,7 @@ def build_user_features_chunked(
     max_nonwear_minutes: int | None = None,
     variance_filter: bool = True,
     cutoff_dates: dict[str, str] | None = None,
+    eligible_keys: set[tuple[str, str]] | None = None,
 ) -> pl.DataFrame:
     """Build user-level features from Arrow files using chunked loading.
 
@@ -201,6 +202,11 @@ def build_user_features_chunked(
                       Rows with ``date > cutoff_dates[user_id]`` are dropped before
                       feature extraction.  Used to cap future data relative to
                       label measurement dates.
+        eligible_keys: Optional ``{(user_id, "YYYY-MM-DD")}`` set of eligible days from
+                       the provider's lookup. When given, a row is kept iff its
+                       ``(user_id, date)`` is in this set — the single eligibility source —
+                       and ``max_nonwear_minutes`` / ``variance_filter`` / ``cutoff_dates``
+                       are ignored (they re-derive the same set; see selection-equality gate).
 
     Returns:
         DataFrame with one row per user and feature columns
@@ -254,6 +260,12 @@ def build_user_features_chunked(
 
     t0 = time.time()
     daily_extractors = get_all_daily_extractors()
+    # Provider eligibility (single source): combined "user_id\tdate" keys, built once.
+    elig_series = (
+        pl.Series("_elig", [f"{u}\t{d}" for (u, d) in eligible_keys])
+        if eligible_keys is not None
+        else None
+    )
 
     for idx, arrow_file in todo:
         out_path = chunk_path(arrow_file)
@@ -275,12 +287,19 @@ def build_user_features_chunked(
             df = df.select([c for c in df.columns if c in keep])
             df = _detect_and_normalize(df)
         before = len(df)
-        if max_nonwear_minutes is not None and "total_nonwear_minutes" in df.columns:
-            df = df.filter(pl.col("total_nonwear_minutes") <= max_nonwear_minutes)
-        after_nonwear = len(df)
-        if variance_filter:
-            df = apply_variance_filter(df)
-        after_all = len(df)
+        if eligible_keys is not None:
+            # Keep only rows whose (user_id, date) is eligible per the provider's lookup
+            # (order-preserving filter). Replaces the wear/variance re-derivation.
+            _k = pl.col("user_id").cast(pl.Utf8) + "\t" + pl.col("date").cast(pl.Utf8).str.slice(0, 10)
+            df = df.filter(_k.is_in(elig_series))
+            after_nonwear = after_all = len(df)
+        else:
+            if max_nonwear_minutes is not None and "total_nonwear_minutes" in df.columns:
+                df = df.filter(pl.col("total_nonwear_minutes") <= max_nonwear_minutes)
+            after_nonwear = len(df)
+            if variance_filter:
+                df = apply_variance_filter(df)
+            after_all = len(df)
         if after_all == 0:
             logger.warning(
                 "  SKIP %s: all %d rows filtered (nonwear: -%d, variance: -%d)",

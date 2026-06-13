@@ -43,12 +43,17 @@ def run_eval(config: EvalConfig, model) -> dict[str, dict]:
     # Cache-based models (precomputed per-user features/embeddings) declare
     # needs_segments=False and skip the loader's per-cohort binding. Global-fit models
     # (GRU-D, MultiRocket) also set needs_segments=False but consume the whole segment
-    # store via a set_loader hook. Build the single loader (one daily_hourly_hf read)
-    # whenever either path is needed, and inject it for whole-store consumers.
+    # store via a set_loader hook. Build the single loader whenever either path is needed,
+    # and inject it for whole-store consumers. The store resolution is the model's choice:
+    # "hourly" (daily_hourly_hf, default) or "minute" (daily_hf, for MAE/XGBoost).
     needs_segments = getattr(model, "needs_segments", True)
     wants_loader = hasattr(model, "set_loader")
     loader = (
-        DataLoader(config.data_dir, granularity=grain)
+        DataLoader(
+            config.data_dir,
+            granularity=grain,
+            resolution=getattr(model, "segment_resolution", "hourly"),
+        )
         if (needs_segments or wants_loader)
         else None
     )

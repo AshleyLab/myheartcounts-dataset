@@ -134,20 +134,25 @@ def extract_mae_embeddings(
     data_dir: str | None = None,
     batch_size: int = BATCH_SIZE,
     seed: int = 42,
+    loader=None,
 ) -> None:
     """Regenerate the MAE day-embedding intermediate from raw (GPU). Writes
     ``embeddings.npy`` (N_days, 384) / ``user_ids.npy`` / ``dates.npy`` under
-    ``output_dir`` — one pooled row per kept (user, day).
+    ``output_dir`` — one pooled row per eligible (user, day).
+
+    Eligible days come from the provider's daily lookup (the single eligibility source,
+    not a re-derived wear/variance filter); the raw minute tensors are fetched through the
+    shared minute-resolution :class:`DataLoader` (``loader``; one is built if not injected).
     """
     from collections import defaultdict
 
-    import datasets as hf_ds
+    import pandas as pd
     import torch
     from tqdm import tqdm
 
     from openmhc._evaluate import _DatasetPaths
 
-    from data.processing.hf_config import DEFAULT_VARIANCE_THRESHOLDS
+    from downstream_evaluation.data.provider import lookup_filename
     from downstream_evaluation.data.splits import load_split_file
     from downstream_evaluation.models.mae.utils import create_inherited_mask
 
@@ -160,53 +165,44 @@ def extract_mae_embeddings(
     patch_size = model.patch_size
     transforms = _build_transforms(paths.daily_hf.parent / "normalization_stats.json")
 
-    # daily_hf: (19, 1440) channel-first minute tensors + per-day QC metadata.
-    logger.info("loading daily_hf: %s", paths.daily_hf)
-    ds = hf_ds.load_from_disk(str(paths.daily_hf))
-    n = len(ds)
-
-    # Cohort universe = union of all split users (every per-task cohort ⊆ this set),
-    # so extracting over it covers every user fit/predict can ask for, no more.
+    # Eligible (user, day) = the daily lookup's valid days, restricted to the split-cohort
+    # universe (every per-task cohort ⊆ this). Eligibility is the provider's lookup — the
+    # single source of truth — not a re-derived wear/variance filter; the raw minute tensors
+    # are fetched lazily from daily_hf through the shared DataLoader.
     split_users = load_split_file(paths.splits_file)
     cohort_users: set[str] = set()
     for users in split_users.values():
         cohort_users |= {str(u) for u in users}
 
-    user_ids_arr = np.asarray(ds["user_id"], dtype=object).astype(str)
-    dates_arr = np.asarray(ds["date"], dtype=object).astype(str)
-    nonwear_arr = np.asarray(ds["total_nonwear_minutes"], dtype=np.float64)
-    var_arr = np.asarray(ds["channel_variance"], dtype=np.float64)
+    lookup_path = Path(paths.root) / "processed" / lookup_filename("daily", full_history=True)
+    lk = pd.read_parquet(lookup_path, columns=["user_id", "date"])
+    eligible_by_user: dict[str, list[str]] = defaultdict(list)
+    for u, d in zip(lk["user_id"].astype(str), lk["date"].astype(str)):
+        if u in cohort_users:
+            eligible_by_user[u].append(d[:10])
+    logger.info(
+        "MAE eligible days (daily lookup ∩ cohort): %d users, %d (user,day) cells",
+        len(eligible_by_user), sum(len(v) for v in eligible_by_user.values()),
+    )
 
-    # Day filters: split membership, wear time, per-channel variance (NaN = keep).
-    split_mask = np.array([u in cohort_users for u in user_ids_arr], dtype=bool)
-    wear_mask = nonwear_arr <= MAX_NONWEAR_MINUTES
-    var_mask = np.ones(n, dtype=bool)
-    for ch, thresh in DEFAULT_VARIANCE_THRESHOLDS.items():
-        if ch < var_arr.shape[1]:
-            col = var_arr[:, ch]
-            var_mask &= np.isnan(col) | (col >= thresh)
-    keep = split_mask & wear_mask & var_mask
-    kept = np.where(keep)[0]
-    logger.info("daily_hf filtered: %d -> %d days (split+wear+variance)", n, len(kept))
+    if loader is None:  # standalone use; run_eval injects the shared minute loader
+        from downstream_evaluation.data.loader import DataLoader
 
-    by_user: dict[str, list[int]] = defaultdict(list)
-    for idx in kept:
-        by_user[user_ids_arr[idx]].append(int(idx))
-
-    # Read only the `values` column per row (avoid decoding the other big arrays).
-    ds_vals = ds.select_columns(["values"])
+        loader = DataLoader(data_dir, resolution="minute")
 
     emb_list: list[np.ndarray] = []
     uid_list: list[str] = []
     date_list: list[str] = []
 
     with torch.no_grad():
-        for uid, indices in tqdm(sorted(by_user.items()), desc="MAE encode", unit="user"):
-            for start in range(0, len(indices), batch_size):
-                batch_idx = indices[start : start + batch_size]
+        for uid in tqdm(sorted(eligible_by_user), desc="MAE encode", unit="user"):
+            day_values, day_dates = loader.participant_minute(uid, eligible_by_user[uid])
+            for start in range(0, len(day_values), batch_size):
+                batch_v = day_values[start : start + batch_size]
+                batch_d = day_dates[start : start + batch_size]
                 batch_x = []
-                for idx in batch_idx:
-                    X = torch.as_tensor(ds_vals[idx]["values"]).float()  # (19, 1440)
+                for v in batch_v:
+                    X = torch.as_tensor(v).float()  # (19, 1440)
                     for t in transforms:
                         X = t(X)
                     batch_x.append(X)
@@ -217,14 +213,14 @@ def extract_mae_embeddings(
                 latent_np = latent.cpu().float().numpy()  # (B, num_patches, 384)
                 mask_np = mask_out.cpu().numpy()  # (B, num_patches), 1=masked
 
-                for j, idx in enumerate(batch_idx):
+                for j, d in enumerate(batch_d):
                     observed = mask_np[j] == 0
                     if observed.sum() == 0:
                         continue
                     pooled = latent_np[j, observed, :].mean(axis=0).astype(np.float32)
                     emb_list.append(pooled)
                     uid_list.append(uid)
-                    date_list.append(dates_arr[idx][:10])
+                    date_list.append(d)
 
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -253,6 +249,7 @@ class MAE:
     name = "mae"
     input_granularity = "daily"  # per-user eligible days come from the daily lookup
     needs_segments = False  # consumes its own build-on-miss embedding cache
+    segment_resolution = "minute"  # extraction reads the minute store (daily_hf) via the loader
 
     def __init__(
         self,
@@ -271,12 +268,19 @@ class MAE:
         self._dim = EMBED_DIM
         self._probe = None
         self._ctx = None  # EvalContext (cohort user_ids + eligible dates), injected per call
+        self._loader = None  # shared minute-resolution DataLoader, injected by run_eval
 
     def set_context(self, ctx) -> None:
         """Receive the per-(task, split) cohort context; the engine injects it before
         ``fit`` / ``predict``. MAE pools each user's cached day-embeddings over their
         eligible ``dates`` — neither carried by the clean ``Method`` signature."""
         self._ctx = ctx
+
+    def set_loader(self, loader) -> None:
+        """Receive the shared minute-resolution :class:`DataLoader`; cache-miss extraction
+        fetches each user's eligible-day minute tensors from it (``run_eval`` injects it;
+        standalone use builds its own)."""
+        self._loader = loader
 
     def _resolve_cache_dir(self) -> Path:
         if self._cache_dir is not None:
@@ -295,6 +299,7 @@ class MAE:
                 data_dir=self._data_dir,
                 batch_size=self._batch_size,
                 seed=self.seed,
+                loader=self._loader,
             )
         emb = np.load(cache / "embeddings.npy")
         uids = np.load(cache / "user_ids.npy", allow_pickle=True)

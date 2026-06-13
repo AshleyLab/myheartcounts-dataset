@@ -144,13 +144,38 @@ def extract_xgboost_features(
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
 
-    # Per-user future-data cutoff = latest valid label date + max_future_days.
-    cutoff_dates = build_cutoff_dates(max_future_days=max_future_days) if max_future_days > 0 else None
-    suffix = f"_cutoff{max_future_days}" if max_future_days > 0 else ""
+    # Eligibility source. Default (no-TC): the daily lookup's valid (user, date) cells — the
+    # single source of truth shared with every model, replacing the per-pipeline wear/variance
+    # re-derivation. xgboost keeps all eligible users; the per-task cohort is applied later in
+    # fit/predict. The forward-windowed ablation (max_future_days > 0) keeps the legacy
+    # re-derived cutoff path — xgboost's features are task-agnostic and can't honor the
+    # per-task windowed lookup.
+    if max_future_days > 0:
+        cutoff_dates = build_cutoff_dates(max_future_days=max_future_days)
+        eligible_keys = None
+        suffix = f"_cutoff{max_future_days}"
+    else:
+        import polars as pl
+
+        from downstream_evaluation.data.provider import lookup_filename
+
+        lk = pl.read_parquet(
+            Path(paths.root) / "processed" / lookup_filename("daily", full_history=True),
+            columns=["user_id", "date"],
+        )
+        eligible_keys = set(
+            zip(
+                lk["user_id"].cast(pl.Utf8).to_list(),
+                lk["date"].cast(pl.Utf8).str.slice(0, 10).to_list(),
+            )
+        )
+        cutoff_dates = None
+        suffix = ""
     logger.info(
-        "xgboost feature build: arrow=%s out=%s nonwear<=%d cutoff_days=%d users=%s",
-        arrow_dir, out, max_nonwear_minutes, max_future_days,
-        len(cutoff_dates) if cutoff_dates else "all",
+        "xgboost feature build: arrow=%s out=%s eligibility=%s cells=%s",
+        arrow_dir, out,
+        "lookup" if eligible_keys is not None else f"cutoff{max_future_days}",
+        len(eligible_keys) if eligible_keys is not None else "n/a",
     )
 
     # 1. Timeseries — also writes the per-day checkpoints day-dynamics consumes.
@@ -160,10 +185,11 @@ def extract_xgboost_features(
         build_user_features_chunked(
             arrow_dir=arrow_dir, output_path=ts_out, checkpoint_dir=ckpt_dir,
             max_nonwear_minutes=max_nonwear_minutes, variance_filter=variance_filter,
-            cutoff_dates=cutoff_dates,
+            cutoff_dates=cutoff_dates, eligible_keys=eligible_keys,
         )
 
     # 2. Day dynamics — reads the timeseries checkpoints (must run after stage 1).
+    #    The checkpoints are already eligibility-filtered, so cutoff_dates stays None here.
     dd_out = out / "pipeline_day_dynamics_user_features.parquet"
     if force or not dd_out.exists():
         build_signal_processing_features(
@@ -177,7 +203,7 @@ def extract_xgboost_features(
             arrow_dir=arrow_dir, output_path=ca_out,
             checkpoint_path=out / f"curve_analysis_avg_curves{suffix}.parquet",
             max_nonwear_minutes=max_nonwear_minutes, variance_filter=variance_filter,
-            cutoff_dates=cutoff_dates,
+            cutoff_dates=cutoff_dates, eligible_keys=eligible_keys,
         )
     logger.info("xgboost features written -> %s", out)
 

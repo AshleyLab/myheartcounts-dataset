@@ -73,6 +73,7 @@ def _accumulate_arrow_file(
     max_nonwear_minutes: int | None = None,
     variance_filter: bool = True,
     cutoff_dates: dict[str, str] | None = None,
+    eligible_keys: set[tuple[str, str]] | None = None,
 ) -> int:
     """Process one Arrow file: accumulate per-user running sums and counts.
 
@@ -91,8 +92,17 @@ def _accumulate_arrow_file(
 
     col_names = set(table.column_names)
 
+    # Provider eligibility (single source): keep rows whose (user_id, date) is eligible,
+    # replacing the wear/variance/cutoff re-derivation below.
+    if eligible_keys is not None:
+        uids = table.column("user_id").to_pylist()
+        dts = [str(d)[:10] for d in table.column("date").to_pylist()]
+        table = table.filter([(u, d) in eligible_keys for u, d in zip(uids, dts)])
+        if table.num_rows == 0:
+            return 0
+
     # Filter out high-nonwear rows before processing
-    if max_nonwear_minutes is not None and "total_nonwear_minutes" in col_names:
+    if eligible_keys is None and max_nonwear_minutes is not None and "total_nonwear_minutes" in col_names:
         mask = pc.less_equal(table.column("total_nonwear_minutes"), max_nonwear_minutes)
         table = table.filter(mask)
         if table.num_rows == 0:
@@ -101,7 +111,7 @@ def _accumulate_arrow_file(
     # Variance filter: reject rows where a monitored channel has near-zero
     # variance (flat signal = sensor malfunction). Inline PyArrow-level
     # implementation to avoid Polars conversion in this PyArrow-native function.
-    if variance_filter and "channel_variance" in col_names:
+    if eligible_keys is None and variance_filter and "channel_variance" in col_names:
         var_col = table.column("channel_variance")
         keep_mask = []
         for i in range(table.num_rows):
@@ -122,7 +132,7 @@ def _accumulate_arrow_file(
             return 0
 
     # Future-data cutoff: drop rows after each user's cutoff date
-    if cutoff_dates is not None:
+    if eligible_keys is None and cutoff_dates is not None:
         user_ids_col = table.column("user_id").to_pylist()
         dates_col = [str(d) for d in table.column("date").to_pylist()]
         keep_mask = []
@@ -483,6 +493,7 @@ def build_curve_analysis_features(
     max_nonwear_minutes: int | None = None,
     variance_filter: bool = True,
     cutoff_dates: dict[str, str] | None = None,
+    eligible_keys: set[tuple[str, str]] | None = None,
 ) -> pl.DataFrame:
     """Build curve analysis user-level features from Arrow files.
 
@@ -562,6 +573,7 @@ def build_curve_analysis_features(
                 max_nonwear_minutes,
                 variance_filter=variance_filter,
                 cutoff_dates=cutoff_dates,
+                eligible_keys=eligible_keys,
             )
             elapsed = time.time() - t0
             done = i + 1

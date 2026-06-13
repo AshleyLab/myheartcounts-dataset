@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 # Channels and hours per day in daily_hourly_hf segments.
 _N_CHANNELS = 19
 _HOURS_PER_DAY = 24
+_MINUTES_PER_DAY = 1440  # daily_hf minute resolution
 
 
 @dataclass
@@ -164,10 +165,18 @@ def prepare_daily_hourly_hf(ds) -> "hf_ds.Dataset":
 class DataLoader:
     """Load the segment source once (lazily); materialize per-participant segments by date."""
 
-    def __init__(self, data_dir: str | None, granularity: str = "daily") -> None:
+    def __init__(
+        self, data_dir: str | None, granularity: str = "daily", resolution: str = "hourly"
+    ) -> None:
         """Args:
         data_dir: dataset root (``MHC_DATA_DIR`` / openmhc cache if ``None``).
         granularity: only ``"daily"`` is supported (hourly daily segments).
+        resolution: which segment store backs the loader.
+            ``"hourly"`` materializes the small ``daily_hourly_hf`` store in RAM and serves
+            it via the array methods (``participant`` / ``user_days`` / ``segment_store`` /
+            ``as_daily_rows``). ``"minute"`` indexes the large ``daily_hf`` minute store
+            lazily (mmap; ``values`` fetched one row at a time) and serves it via
+            ``participant_minute`` — that store is far too big to hold in RAM.
 
         Construction is cheap; the segment source is read + indexed on first access
         (so a cache-based model that never touches raw data pays nothing).
@@ -176,10 +185,14 @@ class DataLoader:
             raise NotImplementedError(
                 f"DataLoader supports 'daily' granularity for now, got {granularity!r}"
             )
+        if resolution not in ("hourly", "minute"):
+            raise ValueError(f"resolution must be 'hourly' or 'minute', got {resolution!r}")
         self.granularity = granularity
+        self.resolution = resolution
         self._data_dir = data_dir
-        self._values: np.ndarray | None = None  # (N, 24, 19) float32, NaN at missing
-        self._mask: np.ndarray | None = None  # (N, 24, 19) float32
+        self._values: np.ndarray | None = None  # (N, 24, 19) f32, NaN at missing [hourly]
+        self._mask: np.ndarray | None = None  # (N, 24, 19) f32 [hourly]
+        self._minute_vals = None  # lazy mmap'd (19, 1440) values column [minute]
         self._users: np.ndarray | None = None  # per-row user_id
         self._dates: np.ndarray | None = None  # per-row YYYY-MM-DD
         self._row_by_key: dict[tuple[str, str], int] | None = None
@@ -187,13 +200,16 @@ class DataLoader:
 
     def _ensure_loaded(self) -> None:
         """Read + index the segment source on first access (one read per run)."""
-        if self._values is not None:
+        if self._row_by_key is not None:
             return
         import datasets as hf_ds
 
         from openmhc._evaluate import _DatasetPaths
 
         paths = _DatasetPaths.resolve(self._data_dir)
+        if self.resolution == "minute":
+            self._load_minute_index(hf_ds, paths)
+            return
         ds = hf_ds.load_from_disk(str(paths.daily_hourly_hf))
         if isinstance(ds, hf_ds.DatasetDict):
             ds = hf_ds.concatenate_datasets(list(ds.values()))
@@ -213,6 +229,24 @@ class DataLoader:
             self._row_by_key[(u, d)] = i
             self._rows_by_user.setdefault(u, []).append(i)
 
+    def _load_minute_index(self, hf_ds, paths) -> None:
+        """Index the large minute store (``daily_hf``) without materializing it: build the
+        ``(user_id, date) -> row`` map from the metadata columns and keep ``values`` mmap'd,
+        fetched one row at a time by :meth:`participant_minute`. ``daily_hf`` is the
+        *unfiltered* minute store, so eligibility is the caller's concern — supplied as the
+        ``dates`` argument, exactly as the hourly :meth:`participant` takes ``td.dates``."""
+        ds = hf_ds.load_from_disk(str(paths.daily_hf))
+        if isinstance(ds, hf_ds.DatasetDict):
+            ds = hf_ds.concatenate_datasets(list(ds.values()))
+        self._users = np.asarray(ds["user_id"], dtype=object).astype(str)
+        self._dates = np.asarray([_day(d) for d in ds["date"]], dtype=object)
+        self._minute_vals = ds.select_columns(["values"])  # mmap'd; one row read on demand
+        self._row_by_key = {}
+        self._rows_by_user = {}
+        for i, (u, d) in enumerate(zip(self._users, self._dates)):
+            self._row_by_key[(u, d)] = i
+            self._rows_by_user.setdefault(u, []).append(i)
+
     def participant(self, user_id, dates) -> ParticipantSegments:
         """One participant's eligible segments, selected by ``dates`` (date-ascending)."""
         self._ensure_loaded()
@@ -222,6 +256,30 @@ class DataLoader:
         )
         idx = np.asarray(rows, dtype=np.int64)
         return ParticipantSegments(values=self._values[idx], mask=self._mask[idx])
+
+    def participant_minute(self, user_id, dates) -> tuple[np.ndarray, list[str]]:
+        """One participant's minute segments for ``dates`` (lazy fetch, minute resolution).
+
+        The minute twin of :meth:`participant`: the provider supplies the eligible
+        ``dates`` (``td.dates``); the loader fetches just those rows' raw ``(19, 1440)``
+        values from the mmap'd ``daily_hf`` store. Returns ``(values, dates_used)`` —
+        ``values`` is ``(n, 19, 1440)`` float32 in store order, ``dates_used`` the matched
+        dates. Requires ``resolution='minute'``."""
+        if self.resolution != "minute":
+            raise RuntimeError(
+                f"participant_minute() requires resolution='minute', got '{self.resolution}'"
+            )
+        self._ensure_loaded()
+        u = str(user_id)
+        pairs = sorted(
+            (self._row_by_key[(u, k)], k) for d in dates if (u, k := _day(d)) in self._row_by_key
+        )
+        if not pairs:
+            return np.empty((0, _N_CHANNELS, _MINUTES_PER_DAY), dtype=np.float32), []
+        vals = np.stack(
+            [np.asarray(self._minute_vals[i]["values"], dtype=np.float32) for i, _ in pairs]
+        )
+        return vals, [k for _, k in pairs]
 
     def bind(self, td: TaskData) -> TaskData:
         """Fill ``td.inputs`` with one :class:`ParticipantSegments` per cohort user,
