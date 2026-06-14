@@ -426,7 +426,6 @@ def compute_per_draw_errors(
     seed: int,
     subgroup_map: dict[str, dict[str, str]] | None = None,
     subgroup_attributes: list[str] | None = None,
-    min_subgroup_size: int = 10,
     domain_map: dict[str, str] = TASK_DOMAIN_MAP,
 ) -> pd.DataFrame:
     """Phase 1: per-(method, task, subgroup, draw) error ``E = 1 - metric``.
@@ -485,7 +484,11 @@ def compute_per_draw_errors(
                         if cm is None:
                             continue
                         m_b = cm[idx_b[t]]
-                        if m_b.sum() < min_subgroup_size:
+                        # Skip only an empty cell — a metric on zero users is undefined.
+                        # Every nonempty subgroup counts; no minimum-size floor (its noise
+                        # is already carried in the bootstrap CI, and non-finite metrics are
+                        # dropped at emit). Matches the imputation track.
+                        if not m_b.any():
                             continue
                         masks_b[t] = m_b
                     if not masks_b:

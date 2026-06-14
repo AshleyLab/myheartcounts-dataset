@@ -1,25 +1,24 @@
 #!/usr/bin/env python
-r"""End-to-end driver for the downstream paper-metrics pipeline.
+r"""Config-driven driver for the downstream paper-metrics pipeline.
 
-Chains the bootstrap phases into one command — each phase is a subprocess, so a
-failing phase prints its command and aborts:
+One command, one config: reads ``configs/paper/downstream_paper.yaml`` (or any
+``--config``) and chains the bootstrap phases, each as a subprocess so a failing
+phase prints its command and aborts:
 
   Phase 1 — ``bootstrap_downstream_draws.py``         → ``bootstrap_draws.parquet``
   Phase 2 — ``aggregate_downstream_paper_metrics.py`` → 4 sidecar CSVs
             ``aggregate_fairness_skill_score.py``     → ``fairness_skill_score_bootstrap.csv``
 
-Predictions (per-(method, task) ``test.parquet`` under ``--predictions_dir``) come
-from the eval pipeline run with ``--output.save_predictions true``; this driver
-does not run the eval itself.
+Predictions (per-(method, task) ``test.parquet`` under ``predictions_dir``) come
+from the eval run with ``PREDICTIONS_DIR`` set; this driver does not run the eval.
 
 Usage::
 
     PYTHONPATH=src python scripts/downstream_paper_results/run_paper_pipeline.py \
-        --predictions_dir results/eval/final/predictions \
-        --csvs_dir results/eval/final \
-        --output-dir results/paper \
-        --methods linear multirocket mae toto chronos2 xgboost wbm gru_d \
-        --baseline linear --n-bootstrap 1000
+        --config configs/paper/downstream_paper.yaml
+
+    # re-aggregate only (draws already exist), e.g. to retune the fairness knobs:
+    ... --config configs/paper/downstream_paper.yaml --skip-phase1
 """
 
 from __future__ import annotations
@@ -29,6 +28,8 @@ import logging
 import subprocess
 import sys
 from pathlib import Path
+
+import yaml
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 log = logging.getLogger(__name__)
@@ -41,89 +42,107 @@ def _run(cmd: list[str], dry_run: bool) -> None:
     log.info("$ %s", " ".join(str(c) for c in cmd))
     if dry_run:
         return
-    res = subprocess.run(cmd, check=False)
-    if res.returncode != 0:
-        raise SystemExit(f"Command failed ({res.returncode}): {' '.join(str(c) for c in cmd)}")
+    if subprocess.run(cmd, check=False).returncode != 0:
+        raise SystemExit(f"Command failed: {' '.join(str(c) for c in cmd)}")
+
+
+def _phase1_bootstrap(cfg: dict, draws: Path, methods: list[str], dry_run: bool) -> None:
+    _run(
+        [
+            sys.executable,
+            str(HERE / "bootstrap_downstream_draws.py"),
+            "--predictions_dir", str(cfg["predictions_dir"]),
+            "--csvs_dir", str(cfg["csvs_dir"]),
+            "--methods", *methods,
+            "--n_bootstrap", str(cfg["n_bootstrap"]),
+            "--seed", str(cfg["seed"]),
+            "--fairness_attributes", *cfg.get("fairness_attributes", ["age_group", "sex"]),
+            "--output", str(draws),
+        ],
+        dry_run,
+    )
+
+
+def _phase2_aggregate(cfg: dict, draws: Path, out_dir: Path, dry_run: bool) -> None:
+    agg = [
+        sys.executable,
+        str(HERE / "aggregate_downstream_paper_metrics.py"),
+        "--draws", str(draws),
+        "--output-dir", str(out_dir),
+        "--baseline-method", cfg["baseline_method"],
+        "--clip-lower", str(cfg["clip_lower"]),
+        "--clip-upper", str(cfg["clip_upper"]),
+        "--lambda-fairness", str(cfg["lambda_fairness"]),
+        "--fairness-combine", cfg["fairness_combine"],
+        "--ci-level", str(cfg["ci_level"]),
+    ]
+    for d in cfg.get("disparity_fns") or []:
+        agg += ["--disparity-fn", d]
+    _run(agg, dry_run)
+    _run(
+        [
+            sys.executable,
+            str(HERE / "aggregate_fairness_skill_score.py"),
+            "--draws", str(draws),
+            "--output", str(out_dir / "fairness_skill_score_bootstrap.csv"),
+            "--baseline-method", cfg["baseline_method"],
+            "--clip-lower", str(cfg["clip_lower"]),
+            "--clip-upper", str(cfg["clip_upper"]),
+            "--ci-level", str(cfg["ci_level"]),
+        ],
+        dry_run,
+    )
 
 
 def main() -> None:
-    """Chain phase 1 → phase 2 (+ fairness reducer)."""
+    """Read the config, chain phase 1 → phase 2 (+ fairness reducer)."""
     p = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    p.add_argument("--predictions_dir", type=Path, required=True)
-    p.add_argument("--csvs_dir", type=Path, required=True)
-    p.add_argument("--output-dir", type=Path, required=True)
-    p.add_argument("--methods", nargs="+", required=True)
-    p.add_argument("--baseline", default="linear")
-    p.add_argument("--n-bootstrap", type=int, default=1000)
-    p.add_argument("--seed", type=int, default=42)
+    p.add_argument(
+        "--config",
+        type=Path,
+        required=True,
+        help="Pipeline config YAML (see configs/paper/downstream_paper.yaml).",
+    )
+    p.add_argument(
+        "--methods", nargs="+", default=None, help="Restrict to a subset of the config's methods."
+    )
     p.add_argument(
         "--skip-phase1",
         action="store_true",
-        help="Skip phase 1 (assume bootstrap_draws.parquet already exists).",
+        help="Skip phase 1 (reuse the existing bootstrap_draws.parquet).",
     )
     p.add_argument(
-        "--skip-phase2", action="store_true", help="Skip phase 2 (only produce the draws parquet)."
+        "--skip-phase2", action="store_true", help="Skip phase 2 (only build the draws parquet)."
     )
-    p.add_argument("--dry-run", action="store_true", help="Print commands without running them.")
+    p.add_argument(
+        "--strict",
+        action="store_true",
+        help="Fail if any method has no predictions dir — for runs whose numbers are published.",
+    )
+    p.add_argument("--dry-run", action="store_true", help="Print the phase commands without running.")
     args = p.parse_args()
 
-    args.output_dir.mkdir(parents=True, exist_ok=True)
-    draws = args.output_dir / "bootstrap_draws.parquet"
-    py = [sys.executable]
+    cfg = yaml.safe_load(args.config.read_text())
+    methods = args.methods or cfg["methods"]
+    out_dir = Path(cfg["output_dir"])
+    out_dir.mkdir(parents=True, exist_ok=True)
+    draws = out_dir / "bootstrap_draws.parquet"
+
+    if args.strict:
+        pred_root = Path(cfg["predictions_dir"])
+        missing = [m for m in methods if not (pred_root / m).is_dir()]
+        if missing:
+            raise SystemExit(f"[strict] methods with no predictions dir under {pred_root}: {missing}")
 
     if not args.skip_phase1:
-        _run(
-            py
-            + [
-                str(HERE / "bootstrap_downstream_draws.py"),
-                "--predictions_dir",
-                str(args.predictions_dir),
-                "--csvs_dir",
-                str(args.csvs_dir),
-                "--methods",
-                *args.methods,
-                "--n_bootstrap",
-                str(args.n_bootstrap),
-                "--seed",
-                str(args.seed),
-                "--output",
-                str(draws),
-            ],
-            args.dry_run,
-        )
-
+        _phase1_bootstrap(cfg, draws, methods, args.dry_run)
     if not args.skip_phase2:
-        _run(
-            py
-            + [
-                str(HERE / "aggregate_downstream_paper_metrics.py"),
-                "--draws",
-                str(draws),
-                "--output-dir",
-                str(args.output_dir),
-                "--baseline-method",
-                args.baseline,
-            ],
-            args.dry_run,
-        )
-        _run(
-            py
-            + [
-                str(HERE / "aggregate_fairness_skill_score.py"),
-                "--draws",
-                str(draws),
-                "--output",
-                str(args.output_dir / "fairness_skill_score_bootstrap.csv"),
-                "--baseline-method",
-                args.baseline,
-            ],
-            args.dry_run,
-        )
+        _phase2_aggregate(cfg, draws, out_dir, args.dry_run)
 
-    log.info("Pipeline complete → %s", args.output_dir)
+    log.info("Pipeline complete → %s", out_dir)
 
 
 if __name__ == "__main__":

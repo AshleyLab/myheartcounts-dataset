@@ -61,7 +61,6 @@ def main() -> None:
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--output", type=Path, required=True, help="bootstrap_draws.parquet path")
     p.add_argument("--fairness_attributes", nargs="+", default=["age_group", "sex"])
-    p.add_argument("--min_subgroup_size", type=int, default=10)
     args = p.parse_args()
 
     aligned = align_across_methods(
@@ -82,7 +81,6 @@ def main() -> None:
         seed=args.seed,
         subgroup_map=subgroup_map,
         subgroup_attributes=attributes,
-        min_subgroup_size=args.min_subgroup_size,
         domain_map=TASK_DOMAIN_MAP,
     )
     meta = {
