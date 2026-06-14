@@ -50,7 +50,7 @@ class TemporalWindowConfig:
         return self.default_weeks_after is None and not self.task_weeks_after
 
     @classmethod
-    def windowed(cls) -> "TemporalWindowConfig":
+    def windowed(cls) -> TemporalWindowConfig:
         """Forward-windowed ablation policy (52 weeks; age and BiologicalSex 156)."""
         return cls(default_weeks_after=52, task_weeks_after={"age": 156, "BiologicalSex": 156})
 
@@ -77,6 +77,66 @@ class EvalConfig:
     seed: int = 42
     temporal: TemporalWindowConfig = field(default_factory=TemporalWindowConfig)
     predictions_dir: str | None = None
+
+
+# --------------------------------------------------------------------------- #
+# Hydra CLI config tree (consumed by ``mhc-downstream-eval``; composed from
+# ``configs/downstream/*``). Separate from ``EvalConfig`` above (the engine
+# config): the CLI translates this into an ``openmhc.evaluate_prediction`` call.
+# Mirrors the imputation track's ``ImputationEvalConfig`` so the two CLIs share
+# the ``eval_hydra`` plumbing and feel identical to an open-source user.
+# --------------------------------------------------------------------------- #
+@dataclass
+class DataConfig:
+    """Dataset location for the CLI; ``None`` falls back to ``MHC_DATA_DIR``."""
+
+    data_dir: str | None = None
+
+
+@dataclass
+class MethodConfig:
+    """Which bundled model to run + its build-on-miss knobs.
+
+    ``type`` selects the registry builder. The remaining fields are the
+    per-method options that used to be env vars / constructor args: ``checkpoint``
+    (MAE / WBM), ``features_dir`` + ``max_future_days`` (XGBoost). Builders ignore
+    the fields they don't read.
+    """
+
+    type: str = "linear"
+    checkpoint: str | None = None
+    features_dir: str | None = None
+    max_future_days: int = 0
+
+
+@dataclass
+class EvaluationConfig:
+    """What to evaluate. ``tasks`` is ``"all"`` or an explicit list of task names."""
+
+    tasks: str | list[str] = "all"
+
+
+@dataclass
+class OutputConfig:
+    """Where results land.
+
+    ``predictions_dir`` (when set) enables the per-task prediction parquets +
+    ``_subgroups.json`` for the paper-metrics bootstrap.
+    """
+
+    results_dir: str = "results/eval"
+    predictions_dir: str | None = None
+
+
+@dataclass
+class DownstreamEvalConfig:
+    """Root config for the ``mhc-downstream-eval`` Hydra CLI."""
+
+    data: DataConfig = field(default_factory=DataConfig)
+    method: MethodConfig = field(default_factory=MethodConfig)
+    evaluation: EvaluationConfig = field(default_factory=EvaluationConfig)
+    output: OutputConfig = field(default_factory=OutputConfig)
+    seed: int = 42
 
 
 # --------------------------------------------------------------------------- #

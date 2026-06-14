@@ -6,6 +6,7 @@ alike: `fit(data, labels, task_type)` / `predict(data)` on per-participant array
 
 - [How it works](#how-it-works)
 - [Reproduce the paper results](#reproduce-the-paper-results)
+- [Reproducible runs via the CLI](#reproducible-runs-via-the-cli-mhc-downstream-eval)
 - [Evaluate your own model](#evaluate-your-own-model)
 
 ## How it works
@@ -98,6 +99,69 @@ magnitude below the reported bootstrap SEs, so every conclusion is unaffected.
 `gru_d` trains from scratch on GPU and is reproducible to within training
 variance (every task within 2 SE across runs); it is bit-exact on CPU given the
 seed (`scripts/validate_grud_determinism.py`).
+
+## Reproducible runs via the CLI (`mhc-downstream-eval`)
+
+The bundled baselines also run from a composable [Hydra](https://hydra.cc) CLI —
+the prediction-track twin of `mhc-impute-eval` / `mhc-forecast-eval`. It builds
+the model and calls the same `openmhc.evaluate_prediction` engine as the snippets
+above; reach for it (over the `METHOD=… scripts/run_eval.py` env-var driver) when
+you want config provenance, parameter sweeps, or cluster dispatch — each run
+snapshots its fully-resolved config next to the results.
+
+```bash
+pip install -e ".[hydra]"          # or, from the published package: pip install "openmhc[hydra]"
+mhc-downstream-eval method=xgboost
+# no install needed for a one-off:
+PYTHONPATH=src python -m downstream_evaluation.hydra.cli method=xgboost
+```
+
+**Configs.** Composable YAML under [`configs/downstream/`](../../configs/downstream/),
+one group per axis; override any field on the command line:
+
+```
+configs/downstream/
+  eval.yaml               # defaults list + run-dir layout
+  data/default.yaml       # data_dir (null -> MHC_DATA_DIR)
+  method/<name>.yaml      # one per bundled model (8): type + build-on-miss knobs
+  evaluation/default.yaml # tasks: all | [age, Diabetes, ...]
+  output/default.yaml     # results_dir, predictions_dir
+```
+
+**Usage.**
+
+```bash
+mhc-downstream-eval method=linear                       # one method, all 32 tasks
+mhc-downstream-eval method=xgboost evaluation.tasks=[age,Diabetes] \
+    data.data_dir=/path/to/mhc-data output.predictions_dir=results/eval/predictions
+mhc-downstream-eval --multirun method=linear,mae,xgboost   # sweep (one run dir each)
+```
+
+**Output.** Each run lands in `${output.results_dir}/<timestamp>_<method>/`:
+
+```
+eval.csv               # long-format per-(task, metric) results — same schema as results/eval/final/
+resolved_config.yaml   # the fully-resolved config (provenance)
+.hydra/                # Hydra's own config + overrides snapshot
+cli.log                # run log
+```
+
+**Cluster dispatch (PBS).** CPU methods
+(`linear`, `xgboost`, `multirocket`, `gru_d`, `toto`, `chronos2`):
+
+```bash
+qsub -v METHOD=xgboost,MHC_DATA_DIR=$HOME/mhc-data jobs/imperial/pbs/run_downstream_eval.pbs
+```
+
+GPU methods (`mae`, `wbm`) use `run_downstream_eval_gpu.pbs`. The CPU job requests
+`mem=96gb` because the hourly loader materializes the `daily_hourly_hf` cohort in
+RAM (~32 GB peak) — these methods do not fit an interactive login session.
+
+**Add a method.** Register a builder in
+[`hydra/registry.py`](hydra/registry.py) and drop a
+`configs/downstream/method/<name>.yaml` with `type: <name>`. The builder takes
+`(method_cfg, data_cfg)` and returns `(model, None)` — the same model object you
+would otherwise hand to `openmhc.evaluate_prediction`.
 
 ## Evaluate your own model
 

@@ -1,0 +1,3 @@
+# @package data
+# Dataset root. null -> resolved from the MHC_DATA_DIR environment variable.
+data_dir: null

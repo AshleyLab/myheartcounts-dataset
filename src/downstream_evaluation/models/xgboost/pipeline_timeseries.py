@@ -1,17 +1,19 @@
 """Feature extraction pipeline for MHC wearable data.
 
 This module orchestrates the feature extraction process:
-1. Load Arrow files lazily
+1. Stream Arrow files one shard at a time (chunked; ~1-2GB peak RAM)
 2. Apply day-level feature extraction
 3. Aggregate to user-level features
 4. Output to Parquet
 
 Usage:
-    >>> from downstream_evaluation.models.xgboost.pipeline_timeseries import build_user_features
+    >>> from downstream_evaluation.models.xgboost.pipeline_timeseries import (
+    ...     build_user_features_chunked,
+    ... )
     >>> from pathlib import Path
-    >>> result = build_user_features(
+    >>> result = build_user_features_chunked(
     ...     Path("data/processed/daily_hf"),
-    ...     Path("data/features/xgboost/user_features.parquet")
+    ...     Path("data/features/xgboost/user_features.parquet"),
     ... )
 """
 
@@ -67,71 +69,6 @@ def _detect_and_normalize(df: pl.DataFrame) -> pl.DataFrame:
     df = apply_zero_to_nan(df)
 
     return df
-
-
-def load_arrow_files(arrow_dir: Path, splits: list[str] | None = None) -> pl.LazyFrame:
-    """Load Arrow stream files into a lazy DataFrame.
-
-    Scans all .arrow files in the specified directory and its subdirectories
-    (train/, test/, val/). Files are loaded lazily for memory efficiency.
-
-    Automatically detects both the original XGB schema (``data`` column) and
-    the MHC-B daily_hf schema (``values`` column) and normalizes to a
-    canonical format with columns: user_id, date, data, nonwear_vector,
-    total_nonwear_minutes.
-
-    Args:
-        arrow_dir: Path to directory containing Arrow files (with train/test/val subdirs)
-        splits: Optional list of splits to load (e.g., ["train", "val"]).
-                If None, loads all splits.
-
-    Returns:
-        Polars LazyFrame with columns: user_id, date, data,
-        nonwear_vector, total_nonwear_minutes (plus any extras present)
-
-    Raises:
-        FileNotFoundError: If arrow_dir does not exist
-        ValueError: If no Arrow files found
-
-    Example:
-        >>> lf = load_arrow_files(Path("data/processed/daily_hf"))
-        >>> lf = load_arrow_files(Path("data/processed/daily_hf"), splits=["train"])
-    """
-    arrow_dir = Path(arrow_dir)
-    if not arrow_dir.exists():
-        raise FileNotFoundError(f"Directory not found: {arrow_dir}")
-
-    # Determine which splits to load
-    if splits is None:
-        splits = ["train", "test", "val"]
-
-    # Collect all arrow files (try subdirs first, then flat directory)
-    arrow_files = []
-    for split in splits:
-        split_dir = arrow_dir / split
-        if split_dir.exists():
-            arrow_files.extend(split_dir.glob("*.arrow"))
-
-    # Flat directory fallback (MHC-B daily_hf has no subdirs)
-    if not arrow_files:
-        arrow_files = sorted(arrow_dir.glob("data-*.arrow"))
-
-    if not arrow_files:
-        raise ValueError(f"No Arrow files found in {arrow_dir}")
-
-    # Load each file and concatenate
-    # Note: Arrow stream files need special handling - read with pyarrow first
-    dfs = []
-    for arrow_file in arrow_files:
-        with pa.ipc.open_stream(arrow_file) as reader:
-            table = reader.read_all()
-            df = pl.from_arrow(table)
-            df = _detect_and_normalize(df)
-            dfs.append(df)
-
-    # Concatenate all dataframes and convert to lazy
-    combined = pl.concat(dfs)
-    return combined.lazy()
 
 
 def _apply_cutoff_filter(df: pl.DataFrame, cutoff_dates: dict[str, str]) -> pl.DataFrame:
@@ -389,114 +326,3 @@ def build_user_features_chunked(
         )
 
     return user_features
-
-
-def build_user_features(
-    arrow_dir: Path,
-    output_path: Path | None = None,
-    splits: list[str] | None = None,
-) -> pl.DataFrame:
-    """Build user-level features from Arrow files.
-
-    Main pipeline function that:
-    1. Loads Arrow files lazily
-    2. Applies all day-level feature extractors
-    3. Aggregates to user-level (median, IQR, etc.)
-    4. Optionally writes to Parquet
-
-    Args:
-        arrow_dir: Path to directory containing Arrow files
-        output_path: Optional path to write output Parquet file
-        splits: Optional list of splits to process (default: all)
-
-    Returns:
-        DataFrame with one row per user and feature columns
-
-    Example:
-        >>> result = build_user_features(
-        ...     Path("data/processed/daily_hf"),
-        ...     Path("data/features/xgboost/user_features.parquet")
-        ... )
-        >>> print(result.shape)
-    """
-    # Load data lazily
-    lf = load_arrow_files(arrow_dir, splits=splits)
-
-    # Apply day-level feature extraction
-    lf_with_daily = lf.with_columns(get_all_daily_extractors())
-
-    # Aggregate to user level
-    user_features = lf_with_daily.group_by("user_id").agg(
-        pl.len().alias("total_days"),
-        *get_all_user_aggregators(),
-    )
-
-    # Collect results (streaming for large datasets)
-    result = user_features.collect(streaming=True)
-
-    # Write to Parquet if output path provided
-    if output_path is not None:
-        output_path = Path(output_path)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        result.write_parquet(output_path)
-        logger.info(
-            "Wrote %d users x %d features to %s",
-            result.shape[0],
-            result.shape[1],
-            output_path,
-        )
-
-    return result
-
-
-def extract_daily_features(
-    arrow_dir: Path,
-    output_path: Path | None = None,
-    splits: list[str] | None = None,
-) -> pl.DataFrame:
-    """Extract day-level features without user aggregation.
-
-    Useful for:
-    - Validating day-level extraction
-    - Building day-level models
-    - Debugging feature values
-
-    Args:
-        arrow_dir: Path to directory containing Arrow files
-        output_path: Optional path to write output Parquet file
-        splits: Optional list of splits to process (default: all)
-
-    Returns:
-        DataFrame with one row per user-day and feature columns
-
-    Example:
-        >>> daily = extract_daily_features(
-        ...     Path("data/processed/daily_hf"),
-        ...     splits=["train"]
-        ... )
-        >>> print(daily.head())
-    """
-    lf = load_arrow_files(arrow_dir, splits=splits)
-
-    # Apply day-level extraction, keep user_id and date
-    daily_features = lf.select(
-        pl.col("user_id"),
-        pl.col("date"),
-        pl.col("total_nonwear_minutes"),
-        *get_all_daily_extractors(),
-    )
-
-    result = daily_features.collect(streaming=True)
-
-    if output_path is not None:
-        output_path = Path(output_path)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        result.write_parquet(output_path)
-        logger.info(
-            "Wrote %d day-records x %d features to %s",
-            result.shape[0],
-            result.shape[1],
-            output_path,
-        )
-
-    return result

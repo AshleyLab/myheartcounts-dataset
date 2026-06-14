@@ -1,0 +1,5 @@
+# @package output
+results_dir: results/eval
+# When set, the evaluator writes per-(method, task) test predictions +
+# _subgroups.json here (input to the paper-metrics bootstrap). null disables.
+predictions_dir: null
