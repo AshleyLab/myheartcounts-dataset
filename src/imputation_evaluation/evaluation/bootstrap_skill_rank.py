@@ -52,6 +52,7 @@ from imputation_evaluation.evaluation.disparity_metrics import (
     disparity_higher_is_better,
 )
 from imputation_evaluation.evaluation.paper_metrics_core import (
+    BINARY_CATEGORIES_ORDERED,
     EXCLUDE_BINARY_SCENARIOS,
     build_baseline_errors,
     compute_average_rankings,
@@ -426,11 +427,56 @@ def _per_user_auc_from_cell_stats(
     return out
 
 
+def _per_method_cell_collapsed_errors(
+    per_user_auc: np.ndarray,
+    boot_idx: np.ndarray,
+    binary_categories: tuple[tuple[str, tuple[int, ...]], ...],
+) -> np.ndarray:
+    """Compute (n_boot, n_binary_categories) per-draw E for collapsed scopes.
+
+    Reuses the precomputed per-(user, channel) AUC matrix from
+    :func:`_per_user_auc_from_cell_stats` — no recomputation across draws.
+
+    For each binary category:
+
+    1. Per-(user, category) E = ``nanmean`` over the category's channels of
+       ``1 − AUC[user, ch]``. Users with only one class in every channel of
+       the category → NaN.
+    2. Per-(draw, category) E = ``nanmean`` over the draw's resampled
+       users of per-(user, category) E. Users with NaN per-category E drop
+       from the macro mean (their replicates simply don't contribute).
+
+    Returned array preserves the column order of ``binary_categories``.
+    """
+    n_users = per_user_auc.shape[0]
+    n_boot = boot_idx.shape[0]
+    n_cats = len(binary_categories)
+    out = np.full((n_boot, n_cats), np.nan, dtype=np.float64)
+
+    # Precompute per-(user, category) E once across all draws.
+    per_user_E_cat = np.full((n_users, n_cats), np.nan, dtype=np.float64)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        for cat_idx, (_cat_name, ch_indices) in enumerate(binary_categories):
+            # Restrict to columns that actually have AUC data (some channels
+            # may be all-NaN for this cell — e.g. a category with no
+            # qualifying users on a rare scenario).
+            cols = np.asarray(ch_indices, dtype=np.int64)
+            sub = per_user_auc[:, cols]  # (n_users, n_channels_in_cat)
+            per_user_E_cat[:, cat_idx] = np.nanmean(1.0 - sub, axis=1)
+
+        for cat_idx in range(n_cats):
+            per_draw_rows = per_user_E_cat[boot_idx, cat_idx]
+            out[:, cat_idx] = np.nanmean(per_draw_rows, axis=1)
+    return out
+
+
 def _per_method_cell_errors(
     cell_stats: CellStats,
     boot_idx: np.ndarray,
     channel_stds: np.ndarray,
     include_auc: bool,
+    per_user_auc: np.ndarray | None = None,
 ) -> np.ndarray:
     """Compute (n_boot, n_channels) per-draw error E under **user-macro** aggregation.
 
@@ -479,7 +525,8 @@ def _per_method_cell_errors(
 
     # --- Binary: per-(user, channel) AUC, then per-draw user-macro ---------
     if include_auc:
-        per_user_auc = _per_user_auc_from_cell_stats(cell_stats, n_channels)
+        if per_user_auc is None:
+            per_user_auc = _per_user_auc_from_cell_stats(cell_stats, n_channels)
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", RuntimeWarning)
             for ch in range(n_channels):
@@ -760,11 +807,20 @@ def compute_per_draw_errors(
                     cs = cell_stats_map[cell]
                     if not cs.has_data.any():
                         continue
+                    # Precompute the per-(user, channel) AUC matrix once per
+                    # (method, scenario, cell); reused by both the per-channel
+                    # reducer (for binary task E) and the Part D collapsed
+                    # reducer below.
+                    if include_auc:
+                        per_user_auc = _per_user_auc_from_cell_stats(cs, n_channels)
+                    else:
+                        per_user_auc = None
                     E = _per_method_cell_errors(
                         cs,
                         idx_b,
                         channel_stds,
                         include_auc=include_auc,
+                        per_user_auc=per_user_auc,
                     )
                     for ch in range(n_channels):
                         if not cs.has_data[ch]:
@@ -790,6 +846,37 @@ def compute_per_draw_errors(
                                     "E": float(val),
                                 }
                             )
+
+                    # --- Part D: emit per-(draw, binary_category) rows -----
+                    # Skip on semantic scenarios (same exclusion as the
+                    # per-channel binary path) and when AUC isn't requested.
+                    if (
+                        include_auc
+                        and per_user_auc is not None
+                        and scenario not in EXCLUDE_BINARY_SCENARIOS
+                    ):
+                        E_cat = _per_method_cell_collapsed_errors(
+                            per_user_auc, idx_b, BINARY_CATEGORIES_ORDERED,
+                        )
+                        for cat_idx, (cat_name, _) in enumerate(BINARY_CATEGORIES_ORDERED):
+                            col_E = E_cat[:, cat_idx].astype(np.float32)
+                            for b in range(n_boot):
+                                val = col_E[b]
+                                if not np.isfinite(val):
+                                    continue
+                                rows.append(
+                                    {
+                                        "method": method,
+                                        "scenario": scenario,
+                                        "split": split,
+                                        "channel": f"cat_collapsed:{cat_name}",
+                                        "channel_type": "binary_collapsed",
+                                        "subgroup_attr": attr,
+                                        "subgroup_value": value,
+                                        "draw": int(b),
+                                        "E": float(val),
+                                    }
+                                )
 
     if not rows:
         return pd.DataFrame(

@@ -201,6 +201,20 @@ def compute_fairness_skill_scores(
 
     summary_frames: list[pd.DataFrame] = []
 
+    # Exclude Part D's collapsed-binary rows by default: this aggregator
+    # computes fairness over per-(scenario, channel) tasks, and including
+    # both per-channel ch_7..ch_18 rows AND cat_collapsed:{sleep,workouts}
+    # rows would double-count the binary signal. Callers that want
+    # fairness over the collapsed scopes specifically can pre-filter the
+    # ``draws_df`` to ``channel.str.startswith("cat_collapsed:")`` upstream.
+    is_collapsed = draws_df["channel"].astype(str).str.startswith("cat_collapsed:")
+    if is_collapsed.any():
+        logger.info(
+            "Excluding %d Part D collapsed-binary rows from fairness aggregation",
+            int(is_collapsed.sum()),
+        )
+    draws_df = draws_df[~is_collapsed]
+
     for split in splits:
         df_split = draws_df[draws_df["split"] == split]
 

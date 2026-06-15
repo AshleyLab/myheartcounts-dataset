@@ -52,6 +52,21 @@ CHANNEL_CATEGORIES: dict[str, set[str]] = {
     "workouts": {f"ch_{i}" for i in range(9, 19)},
 }
 
+# Binary categories eligible for the collapsed-scope leaderboard rows.
+# Each entry maps a category name to its ordered tuple of channel indices.
+# Order matters for stable column layout in the precomputed per-(user, cat)
+# matrix that drives the per-draw E for ``cat_collapsed:*`` and
+# ``overall_binary_collapsed`` scopes — see ``bootstrap_skill_rank.py``'s
+# ``_per_method_cell_collapsed_errors``. Continuous categories are
+# deliberately NOT collapsed (decided in plan Part D): the unequal channel
+# counts that motivate the binary collapse don't apply to continuous,
+# whose seven channels already weight roughly fairly under the per-task
+# geomean.
+BINARY_CATEGORIES_ORDERED: tuple[tuple[str, tuple[int, ...]], ...] = (
+    ("sleep",    (7, 8)),
+    ("workouts", tuple(range(9, 19))),
+)
+
 
 def channel_category(channel: str) -> str | None:
     """Return the category name for a channel, or None if uncategorised."""
@@ -59,6 +74,11 @@ def channel_category(channel: str) -> str | None:
         if channel in channels:
             return cat
     return None
+
+
+def is_collapsed_channel(channel: str) -> bool:
+    """True for the synthetic ``cat_collapsed:*`` channel labels emitted by Part D."""
+    return channel.startswith("cat_collapsed:")
 
 
 # --------------------------------------------------------------------------
@@ -125,9 +145,31 @@ def compute_skill_scores(
     clip_lower: float = CLIP_LOWER,
     clip_upper: float = CLIP_UPPER,
 ) -> pd.DataFrame:
-    """Skill score per method × scope (overall, scenario, ``cat:<…>``, semantic).
+    """Skill score per method × scope.
 
-    Skill score:  ``S = 1 − exp(mean(log(clip(E_method / E_baseline))))``.
+    Emits these scopes:
+
+    Per-channel (the historical layout):
+      - ``<scenario>`` (one per scenario)
+      - ``cat:activity`` / ``cat:physiology`` / ``cat:sleep`` / ``cat:workouts``
+        (structural scenarios only)
+      - ``semantic`` (semantic scenarios only)
+      - ``overall`` (all 19 per-channel tasks × all scenarios)
+
+    Collapsed-binary (added by Part D — leaderboard reports side-by-side):
+      - ``cat_collapsed:sleep`` / ``cat_collapsed:workouts`` (one geomean per
+        category × scenario task set)
+      - ``overall_binary_collapsed`` (7 continuous per-channel tasks + 2
+        binary categories × scenarios — same task layout as ``overall``
+        with the 12 binary channels replaced by 2 collapsed-category tasks)
+
+    Skill score: ``S = 1 − exp(mean(log(clip(E_method / E_baseline))))``.
+
+    The collapsed scopes consume rows where ``channel`` starts with
+    ``cat_collapsed:`` (produced upstream by
+    ``bootstrap_skill_rank._per_method_cell_collapsed_errors``). The legacy
+    per-channel scopes explicitly exclude those rows so they don't
+    double-count the binary information.
     """
     bl = baseline_errors.set_index(["scenario", "channel"])["E"]
 
@@ -147,6 +189,7 @@ def compute_skill_scores(
             "channel": row["channel"],
             "category": channel_category(row["channel"]),
             "clipped_ratio": clipped,
+            "is_collapsed": is_collapsed_channel(row["channel"]),
         })
 
     ratio_df = pd.DataFrame(ratios)
@@ -156,14 +199,22 @@ def compute_skill_scores(
     def _skill(log_ratios: np.ndarray) -> float:
         return 1.0 - float(np.exp(np.mean(log_ratios)))
 
+    # Partition into legacy per-channel rows vs collapsed-binary rows.
+    legacy_df = ratio_df[~ratio_df["is_collapsed"]]
+    collapsed_df = ratio_df[ratio_df["is_collapsed"]]
+
     results = []
-    for (method, scenario), group in ratio_df.groupby(["method", "scenario"], observed=True):
+
+    # --- Per-scenario (per-channel) -----------------------------------
+    for (method, scenario), group in legacy_df.groupby(["method", "scenario"], observed=True):
         results.append({
             "method": method, "scope": scenario,
             "skill_score": _skill(np.log(group["clipped_ratio"].values)),
             "n_tasks": len(group),
         })
-    structural = ratio_df[~ratio_df["scenario"].isin(SEMANTIC_SCENARIOS)]
+
+    # --- cat:<cat> (structural scenarios only, per-channel) -----------
+    structural = legacy_df[~legacy_df["scenario"].isin(SEMANTIC_SCENARIOS)]
     for (method, cat), group in structural.groupby(["method", "category"], observed=True):
         if cat is None:
             continue
@@ -172,37 +223,81 @@ def compute_skill_scores(
             "skill_score": _skill(np.log(group["clipped_ratio"].values)),
             "n_tasks": len(group),
         })
-    semantic = ratio_df[ratio_df["scenario"].isin(SEMANTIC_SCENARIOS)]
+
+    # --- semantic (semantic scenarios only, per-channel) --------------
+    semantic = legacy_df[legacy_df["scenario"].isin(SEMANTIC_SCENARIOS)]
     for method, group in semantic.groupby("method", observed=True):
         results.append({
             "method": method, "scope": "semantic",
             "skill_score": _skill(np.log(group["clipped_ratio"].values)),
             "n_tasks": len(group),
         })
-    for method, group in ratio_df.groupby("method", observed=True):
+
+    # --- overall (per-channel; historical leaderboard column) ----------
+    for method, group in legacy_df.groupby("method", observed=True):
         results.append({
             "method": method, "scope": "overall",
             "skill_score": _skill(np.log(group["clipped_ratio"].values)),
             "n_tasks": len(group),
         })
+
+    # --- cat_collapsed:<cat> (one per binary category) ----------------
+    if not collapsed_df.empty:
+        for (method, channel), group in collapsed_df.groupby(["method", "channel"], observed=True):
+            cat_name = str(channel).split(":", 1)[1]
+            results.append({
+                "method": method, "scope": f"cat_collapsed:{cat_name}",
+                "skill_score": _skill(np.log(group["clipped_ratio"].values)),
+                "n_tasks": len(group),
+            })
+
+        # --- overall_binary_collapsed: continuous per-channel tasks +
+        #     collapsed-binary tasks (the binary side of "overall" replaced).
+        #     Excludes per-channel binary rows so each binary task is counted
+        #     once.
+        continuous_legacy = legacy_df[legacy_df["category"].isin({"activity", "physiology"})]
+        merged = pd.concat([continuous_legacy, collapsed_df], ignore_index=True)
+        for method, group in merged.groupby("method", observed=True):
+            results.append({
+                "method": method, "scope": "overall_binary_collapsed",
+                "skill_score": _skill(np.log(group["clipped_ratio"].values)),
+                "n_tasks": len(group),
+            })
+
     return pd.DataFrame(results)
 
 
 def compute_average_rankings(errors: pd.DataFrame) -> pd.DataFrame:
-    """Average rank per method × scope. Lower E → better → rank 1."""
+    """Average rank per method × scope. Lower E → better → rank 1.
+
+    Emits the same scope set as :func:`compute_skill_scores`: per-channel
+    legacy scopes (``<scenario>``, ``cat:*``, ``semantic``, ``overall``)
+    plus the Part D collapsed-binary scopes (``cat_collapsed:sleep``,
+    ``cat_collapsed:workouts``, ``overall_binary_collapsed``) when
+    ``cat_collapsed:*`` rows are present.
+
+    Ranks are computed within each ``(scenario, channel)`` task across
+    methods, so collapsed-binary tasks rank methods against each other
+    inside the collapsed scope without bleeding into per-channel rank
+    computations.
+    """
     errors = errors.copy()
     errors["rank"] = errors.groupby(["scenario", "channel"], observed=True)["E"].rank(
         method="average", ascending=True,
     )
     errors["category"] = errors["channel"].map(channel_category)
+    errors["is_collapsed"] = errors["channel"].map(is_collapsed_channel)
+
+    legacy_errors = errors[~errors["is_collapsed"]]
+    collapsed_errors = errors[errors["is_collapsed"]]
 
     results = []
-    for (method, scenario), group in errors.groupby(["method", "scenario"], observed=True):
+    for (method, scenario), group in legacy_errors.groupby(["method", "scenario"], observed=True):
         results.append({
             "method": method, "scope": scenario,
             "avg_rank": float(group["rank"].mean()), "n_tasks": len(group),
         })
-    structural = errors[~errors["scenario"].isin(SEMANTIC_SCENARIOS)]
+    structural = legacy_errors[~legacy_errors["scenario"].isin(SEMANTIC_SCENARIOS)]
     for (method, cat), group in structural.groupby(["method", "category"], observed=True):
         if cat is None:
             continue
@@ -210,17 +305,36 @@ def compute_average_rankings(errors: pd.DataFrame) -> pd.DataFrame:
             "method": method, "scope": f"cat:{cat}",
             "avg_rank": float(group["rank"].mean()), "n_tasks": len(group),
         })
-    sem = errors[errors["scenario"].isin(SEMANTIC_SCENARIOS)]
+    sem = legacy_errors[legacy_errors["scenario"].isin(SEMANTIC_SCENARIOS)]
     for method, group in sem.groupby("method", observed=True):
         results.append({
             "method": method, "scope": "semantic",
             "avg_rank": float(group["rank"].mean()), "n_tasks": len(group),
         })
-    for method, group in errors.groupby("method", observed=True):
+    for method, group in legacy_errors.groupby("method", observed=True):
         results.append({
             "method": method, "scope": "overall",
             "avg_rank": float(group["rank"].mean()), "n_tasks": len(group),
         })
+
+    # --- Part D scopes (collapsed binary categories) ------------------
+    if not collapsed_errors.empty:
+        for (method, channel), group in collapsed_errors.groupby(["method", "channel"], observed=True):
+            cat_name = str(channel).split(":", 1)[1]
+            results.append({
+                "method": method, "scope": f"cat_collapsed:{cat_name}",
+                "avg_rank": float(group["rank"].mean()), "n_tasks": len(group),
+            })
+        continuous_legacy = legacy_errors[
+            legacy_errors["category"].isin({"activity", "physiology"})
+        ]
+        merged = pd.concat([continuous_legacy, collapsed_errors], ignore_index=True)
+        for method, group in merged.groupby("method", observed=True):
+            results.append({
+                "method": method, "scope": "overall_binary_collapsed",
+                "avg_rank": float(group["rank"].mean()), "n_tasks": len(group),
+            })
+
     return pd.DataFrame(results)
 
 
