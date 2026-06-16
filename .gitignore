@@ -39,3 +39,6 @@ logs/
 releases-fc/
 forecasting_model_ckpt/
 __MACOSX/
+
+# Scratch / throwaway experiment + benchmark scaffolding
+scratch/
