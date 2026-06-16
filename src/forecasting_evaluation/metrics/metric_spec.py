@@ -50,6 +50,15 @@ else:
 LOWER_IS_BETTER_METRICS = {"mae", "mse", "mase", "mase_all", "ql", "sql"}
 HIGHER_IS_BETTER_METRICS = {"f1", "auprc", "auroc"}
 
+# ε-floor on the higher-is-better error e = 1 − metric. A perfect score (e = 0)
+# would make the paired skill ratio e_method/e_baseline either 0 or divide-by-zero;
+# flooring keeps every defined-AUC user in the paired set symmetrically (a perfect
+# user contributes a small finite error instead of being dropped). Treats a perfect
+# AUROC as indistinguishable from 0.995 — a finite-sample resolution floor. Applies
+# to binary/classification metrics only; continuous errors are left unfloored
+# (an absolute floor is meaningless in their scale-dependent units).
+BINARY_ERROR_FLOOR = 0.005
+
 # --- Channel groups (benchmark-fixed) ---
 CONTINUOUS_CHANNELS: tuple[int, ...] = tuple(range(0, 7))
 SLEEP_CHANNELS: tuple[int, ...] = (7, 8)
@@ -98,7 +107,7 @@ def metric_to_error(metric_name: str, metric_value: float) -> float:
     if metric_key in HIGHER_IS_BETTER_METRICS:
         if metric_value < 0.0 or metric_value > 1.0:
             return float("nan")
-        return float(1.0 - metric_value)
+        return float(max(1.0 - metric_value, BINARY_ERROR_FLOOR))
     raise ValueError(f"Unknown metric '{metric_name}'. Add it to lower- or higher-is-better sets.")
 
 
@@ -178,21 +187,38 @@ def safe_to_metric_array(value: Any) -> np.ndarray | None:
     return np.vstack([row[:min_len] for row in rows])
 
 
-def metric_channel_value(metric: np.ndarray, channel_idx: int) -> float:
-    """Collapse a (channel[,horizon]) metric array to one value for a channel."""
+def metric_channel_sum_count(metric: np.ndarray, channel_idx: int) -> tuple[float, int] | None:
+    """Sum and finite-cell count over the horizon for one channel.
+
+    Returns ``(sum_of_finite_cells, count_of_finite_cells)``, or ``None`` if the
+    channel index is out of range or the channel has no finite cells. The finite
+    mask (``np.isfinite``) is the per-cell validity used to micro-average within a
+    user's prediction windows.
+    """
     if metric.ndim == 1:
         if channel_idx >= metric.shape[0]:
-            return float("nan")
+            return None
         value = float(metric[channel_idx])
-        return value if np.isfinite(value) else float("nan")
+        if not np.isfinite(value):
+            return None
+        return value, 1
 
     if channel_idx >= metric.shape[0]:
-        return float("nan")
+        return None
     values = metric[channel_idx]
     finite_values = values[np.isfinite(values)]
     if finite_values.size == 0:
+        return None
+    return float(np.sum(finite_values)), int(finite_values.size)
+
+
+def metric_channel_value(metric: np.ndarray, channel_idx: int) -> float:
+    """Collapse a (channel[,horizon]) metric array to one finite-mean for a channel."""
+    sum_count = metric_channel_sum_count(metric, channel_idx)
+    if sum_count is None:
         return float("nan")
-    return float(np.mean(finite_values))
+    total, count = sum_count
+    return total / count
 
 
 def load_models_dict(args: argparse.Namespace) -> dict[str, dict[str, str]]:

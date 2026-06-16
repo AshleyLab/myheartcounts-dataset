@@ -34,11 +34,11 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from forecasting_evaluation.metrics.skill_score_summary import (  # noqa: E402
+    _aggregate_unit_error,
     _channel_label,
     _list_parquet_files,
     _load_models_dict,
-    _metric_channel_value,
-    _metric_to_error,
+    _metric_channel_sum_count,
     _parse_channel_indices,
     _safe_read_parquet,
     _safe_to_metric_array,
@@ -138,9 +138,11 @@ def _load_metric_values(
     metric_name: str,
     channel_indices: tuple[int, ...],
     group_name: str,
+    within_user_aggregation: str = "micro",
 ) -> pd.DataFrame:
     metric_dir = Path(model_root) / metric_name
-    per_user_values: dict[tuple[str, int, str], list[float]] = {}
+    # Per (user, channel, metric): one (cell_sum, cell_count) pair per window.
+    per_user_pairs: dict[tuple[str, int, str], list[tuple[float, int]]] = {}
 
     for parquet_file in _list_parquet_files(metric_dir):
         df = _safe_read_parquet(
@@ -156,20 +158,16 @@ def _load_metric_values(
             if metric is None:
                 continue
             for channel_idx in channel_indices:
-                value = _metric_channel_value(metric=metric, channel_idx=channel_idx)
-                if not np.isfinite(value):
-                    continue
-                error = _metric_to_error(metric_name=metric_name, metric_value=value)
-                if not np.isfinite(error):
+                sum_count = _metric_channel_sum_count(metric=metric, channel_idx=channel_idx)
+                if sum_count is None:
                     continue
                 key = (user_id, int(channel_idx), metric_name)
-                per_user_values.setdefault(key, []).append(error)
+                per_user_pairs.setdefault(key, []).append(sum_count)
 
     rows: list[dict[str, Any]] = []
-    for (user_id, channel_idx, metric), values in per_user_values.items():
-        finite = np.asarray(values, dtype=float)
-        finite = finite[np.isfinite(finite)]
-        if finite.size == 0:
+    for (user_id, channel_idx, metric), pairs in per_user_pairs.items():
+        error, n_values = _aggregate_unit_error(metric, pairs, within_user_aggregation)
+        if not np.isfinite(error):
             continue
         rows.append(
             {
@@ -179,8 +177,8 @@ def _load_metric_values(
                 "channel_idx": int(channel_idx),
                 "channel_name": _channel_label(channel_idx),
                 "user_id": user_id,
-                "error": float(np.mean(finite)),
-                "n_values": int(finite.size),
+                "error": error,
+                "n_values": int(n_values),
             }
         )
     return pd.DataFrame(rows)
@@ -193,6 +191,7 @@ def _build_error_table(
     binary_metrics: list[str],
     continuous_channel_indices: tuple[int, ...],
     binary_channel_indices: tuple[int, ...],
+    within_user_aggregation: str = "micro",
 ) -> pd.DataFrame:
     frames: list[pd.DataFrame] = []
     metric_groups = {
@@ -214,6 +213,7 @@ def _build_error_table(
                     metric_name=metric_name,
                     channel_indices=channel_indices,
                     group_name=group_name,
+                    within_user_aggregation=within_user_aggregation,
                 )
                 if not frame.empty:
                     frames.append(frame)
@@ -624,6 +624,7 @@ def compute_fairness_skill_score_tables(
     labels_path: str | Path | None = None,
     enrollment_path: str | Path | None = None,
     demographics: dict[str, dict[str, str]] | None = None,
+    within_user_aggregation: str = "micro",
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Compute subgroup, fairness, model-summary, and channel-summary tables."""
     if baseline_model not in models:
@@ -635,6 +636,8 @@ def compute_fairness_skill_score_tables(
         raise ValueError("clip bounds must be positive with lower <= upper")
     if lambda_fairness < 0:
         raise ValueError("lambda_fairness must be non-negative")
+    if within_user_aggregation not in {"micro", "macro"}:
+        raise ValueError("--within-user-aggregation must be either 'micro' or 'macro'")
 
     error_df = _build_error_table(
         models=models,
@@ -642,6 +645,7 @@ def compute_fairness_skill_score_tables(
         binary_metrics=binary_metrics,
         continuous_channel_indices=continuous_channel_indices,
         binary_channel_indices=binary_channel_indices,
+        within_user_aggregation=within_user_aggregation,
     )
     task_errors = _build_task_errors(error_df)
     global_df = _compute_global_scores(
@@ -710,6 +714,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--clip-lower", type=float, default=0.01)
     parser.add_argument("--clip-upper", type=float, default=100.0)
     parser.add_argument("--lambda-fairness", type=float, default=0.5)
+    parser.add_argument(
+        "--within-user-aggregation",
+        choices=["micro", "macro"],
+        default="micro",
+        help=(
+            "How to combine a user's prediction windows: 'micro' weights each window "
+            "by its finite horizon-cell count; 'macro' averages per-window means "
+            "unweighted (legacy)."
+        ),
+    )
     parser.add_argument("--labels-path", default="data/labels/last_labels.json")
     parser.add_argument("--enrollment-path", default="data/labels/enrollment_info.json")
     parser.add_argument("--output-dir", default="results/metrics_summary")
@@ -743,6 +757,7 @@ def main() -> None:
             lambda_fairness=float(args.lambda_fairness),
             labels_path=args.labels_path,
             enrollment_path=args.enrollment_path,
+            within_user_aggregation=str(args.within_user_aggregation),
         )
     )
 

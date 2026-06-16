@@ -88,6 +88,9 @@ def compute_skill_from_errors(
 _metric_channel_value = _spec.metric_channel_value
 
 
+_metric_channel_sum_count = _spec.metric_channel_sum_count
+
+
 def _row_sample_key(row: pd.Series, occurrence: int) -> str:
     history_length = row.get("history_length")
     forecasting_length = row.get("forecasting_length")
@@ -104,10 +107,14 @@ def _load_metric_values(
     channel_indices: tuple[int, ...],
     group_name: str,
     aggregation_unit: str,
+    within_user_aggregation: str = "micro",
 ) -> pd.DataFrame:
     metric_dir = Path(model_root) / metric_name
     rows: list[dict[str, Any]] = []
-    per_unit_values: dict[tuple[str, int, str], list[float]] = {}
+    # Per (unit, channel, metric): one (cell_sum, cell_count) pair per window. Both
+    # macro (mean of per-window means) and micro (sum/count over finite horizon
+    # cells) are derivable from these pairs.
+    per_unit_pairs: dict[tuple[str, int, str], list[tuple[float, int]]] = {}
 
     for parquet_file in _list_parquet_files(metric_dir):
         df = _safe_read_parquet(
@@ -132,20 +139,16 @@ def _load_metric_values(
             unit_id = user_id if aggregation_unit == "user" else f"{user_id}|{sample_id}"
 
             for channel_idx in channel_indices:
-                value = _metric_channel_value(metric=metric, channel_idx=channel_idx)
-                if not np.isfinite(value):
+                sum_count = _metric_channel_sum_count(metric=metric, channel_idx=channel_idx)
+                if sum_count is None:
                     continue
-                error = _metric_to_error(metric_name=metric_name, metric_value=value)
-                if not np.isfinite(error):
-                    continue
-                per_unit_values.setdefault((unit_id, int(channel_idx), metric_name), []).append(
-                    error
+                per_unit_pairs.setdefault((unit_id, int(channel_idx), metric_name), []).append(
+                    sum_count
                 )
 
-    for (unit_id, channel_idx, metric), values in per_unit_values.items():
-        finite_values = np.asarray(values, dtype=float)
-        finite_values = finite_values[np.isfinite(finite_values)]
-        if finite_values.size == 0:
+    for (unit_id, channel_idx, metric), pairs in per_unit_pairs.items():
+        error, n_values = _aggregate_unit_error(metric, pairs, within_user_aggregation)
+        if not np.isfinite(error):
             continue
         rows.append(
             {
@@ -155,12 +158,42 @@ def _load_metric_values(
                 "channel_idx": int(channel_idx),
                 "channel_name": _channel_label(channel_idx),
                 "unit_id": unit_id,
-                "error": float(np.mean(finite_values)),
-                "n_values": int(finite_values.size),
+                "error": error,
+                "n_values": int(n_values),
             }
         )
 
     return pd.DataFrame(rows)
+
+
+def _aggregate_unit_error(
+    metric_name: str,
+    pairs: list[tuple[float, int]],
+    within_user_aggregation: str,
+) -> tuple[float, int]:
+    """Reduce a unit's per-window (sum, count) pairs to one (error, n_values).
+
+    ``macro`` reproduces the legacy behaviour: convert each window's finite-mean to
+    an error and average those unweighted (n_values = #windows). ``micro`` pools all
+    finite horizon cells across the unit's windows, then converts once
+    (n_values = #finite cells).
+    """
+    if within_user_aggregation == "macro":
+        errors: list[float] = []
+        for cell_sum, cell_count in pairs:
+            error = _metric_to_error(metric_name=metric_name, metric_value=cell_sum / cell_count)
+            if np.isfinite(error):
+                errors.append(error)
+        if not errors:
+            return float("nan"), 0
+        return float(np.mean(errors)), len(errors)
+
+    total_sum = float(sum(cell_sum for cell_sum, _ in pairs))
+    total_count = int(sum(cell_count for _, cell_count in pairs))
+    if total_count == 0:
+        return float("nan"), 0
+    error = _metric_to_error(metric_name=metric_name, metric_value=total_sum / total_count)
+    return error, total_count
 
 
 def _build_error_table(
@@ -168,6 +201,7 @@ def _build_error_table(
     models: dict[str, dict[str, str]],
     metric_groups: dict[str, dict[str, Any]],
     aggregation_unit: str,
+    within_user_aggregation: str = "micro",
 ) -> pd.DataFrame:
     frames: list[pd.DataFrame] = []
     for group_name, group_spec in metric_groups.items():
@@ -182,6 +216,7 @@ def _build_error_table(
                     channel_indices=channel_indices,
                     group_name=group_name,
                     aggregation_unit=aggregation_unit,
+                    within_user_aggregation=within_user_aggregation,
                 )
                 if not frame.empty:
                     frames.append(frame)
@@ -448,6 +483,7 @@ def compute_skill_score_tables(
     clip_upper: float,
     min_pairs: int,
     aggregation_unit: str,
+    within_user_aggregation: str = "micro",
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Compute long, model summary, and wide skill score tables."""
     if baseline_model not in models:
@@ -459,6 +495,8 @@ def compute_skill_score_tables(
         raise ValueError("--clip-lower and --clip-upper must be positive with lower <= upper")
     if aggregation_unit not in {"user", "sample"}:
         raise ValueError("--aggregation-unit must be either 'user' or 'sample'")
+    if within_user_aggregation not in {"micro", "macro"}:
+        raise ValueError("--within-user-aggregation must be either 'micro' or 'macro'")
 
     metric_groups = {
         "continuous": {
@@ -474,6 +512,7 @@ def compute_skill_score_tables(
         models=models,
         metric_groups=metric_groups,
         aggregation_unit=aggregation_unit,
+        within_user_aggregation=within_user_aggregation,
     )
     long_df = _compute_long_skill_scores(
         error_df=error_df,
@@ -536,6 +575,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Collapse metrics to user-level or sample-level before paired ratios.",
     )
     parser.add_argument(
+        "--within-user-aggregation",
+        choices=["micro", "macro"],
+        default="micro",
+        help=(
+            "How to combine a unit's prediction windows: 'micro' weights each window "
+            "by its finite horizon-cell count (sum/count over all cells); 'macro' "
+            "averages per-window means unweighted (legacy)."
+        ),
+    )
+    parser.add_argument(
         "--output-dir",
         default="results/metrics_summary",
         help="Directory for generated CSV files.",
@@ -572,6 +621,7 @@ def main() -> None:
         clip_upper=float(args.clip_upper),
         min_pairs=int(args.min_pairs),
         aggregation_unit=str(args.aggregation_unit),
+        within_user_aggregation=str(args.within_user_aggregation),
     )
 
     output_dir = Path(args.output_dir)
@@ -594,6 +644,7 @@ def main() -> None:
     print(f"Saved wide table: {wide_path}")
     print(f"Baseline: {args.baseline}")
     print(f"Aggregation unit: {args.aggregation_unit}")
+    print(f"Within-user aggregation: {args.within_user_aggregation}")
     print(f"Ratio clip: [{args.clip_lower}, {args.clip_upper}]")
 
 

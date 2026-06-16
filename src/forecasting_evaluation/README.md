@@ -575,6 +575,29 @@ A default `mhc-forecast-eval model=seasonal_naive` run corresponds to
 appendix raw tables exactly requires running start-time offsets `0`, `6`, `12`,
 and `18`, computing no-combine metrics for each, and aggregating them together.
 
+### 4.6 Binary-Channel Metrics (pooled within-user)
+
+Classification metrics for the binary channels (sleep `7-8`, workout `9-18`) are
+produced by a companion script, `metrics/binary_offline_calculate.py`, into the
+**same** metrics tree:
+
+```text
+results/metrics/<model>/{f1,auroc,auprc}/<sanitized_user_id>.parquet
+```
+
+Unlike the point metrics — which are decomposable and stored per
+`channel × horizon` cell — AUROC/AUPRC/F1 are **non-decomposable**, so they are
+computed by **pooling within each user**: all of that user's windows' finite
+`(ground_truth, score)` pairs for a channel are concatenated and scored once with
+scikit-learn, yielding **one row per user** per channel (carrying `n_windows` and
+pooled `binary_valid/positive/negative_count`). This is the correct within-user
+micro for these metrics — a per-window-then-average AUROC is not meaningful. F1
+uses a fixed threshold (`--f1-threshold`, default `0.5`).
+
+The eval runner (`mhc-forecast-eval`) invokes this automatically after the point
+metrics when `metrics.binary_metrics` is non-empty (default `[auprc, auroc, f1]`),
+so all three trees are produced regardless of which one is scored later.
+
 ---
 
 ## 5. Offline Metrics Summary
@@ -730,3 +753,101 @@ python src/forecasting_evaluation/metrics/deprecated/summary_metrics_result.py \
 - `SubTrajectoryGenerator` requires user entries in `data.sample_index_file` and does not implement fallback candidate generation.
 - `forecasting.valid_prediction_window.valid_day_threshold` and `valid_hour_threshold` are configured but not enforced in sample generation.
 - `valid_prediction_window.history_length` is configured but current slicing still uses all history before `index_hours`.
+
+---
+
+## 9. Paper Scoring (Skill / Rank / Fairness) and Reproduction
+
+The leaderboard is produced from the offline metric trees by the scoring layer
+(distinct from §5's deprecated raw-summary script):
+
+| Script | Output |
+|---|---|
+| `metrics/skill_score_summary.py` | per-task + model-summary skill scores |
+| `metrics/grouped_metric_rank_summary.py` | per-user metric values + mean ranks |
+| `metrics/fair_skill_score.py` / `fairness_skill_score_summary.py` | disparity-ratio fairness skill score |
+| `metrics/bootstrap_skill_rank.py`, `bootstrap_fair_skill_score.py` | paired user-bootstrap CIs |
+| `scripts/paper_results/forecasting/run_paper_pipeline.py` | end-to-end driver (Phases 0–3) |
+
+### 9.1 Scoring semantics
+
+- **Skill score** (vs a fixed `baseline`, default `seasonal_naive`): for each task
+  `(channel, metric)`, take the paired ratio `E_model / E_baseline` over the common
+  users, clip to `[0.01, 100]`, geometric-mean over users → `R`; `skill = 1 − R`.
+  Higher-is-better metrics (`auroc/auprc/f1`) are first converted to an error
+  `e = 1 − value`. A scope rollup (a continuous channel collection, `sleep` = 7–8,
+  `workout` = 9–18) is the geometric mean of its per-channel ratios (each channel
+  equally weighted).
+- **Within-user aggregation** (`within_user_aggregation`, default `micro`):
+  - *continuous*: pool **all finite horizon cells** across a user's windows,
+    `E_{user,channel} = Σ err / Σ cells` (a window with more valid hours counts
+    proportionally more). `macro` reproduces the legacy mean-of-per-window-means.
+  - *binary*: already pooled per user by the producer (§4.6), so the toggle is a
+    no-op for `auroc/auprc/f1`.
+- **Rank**: per `(scope, metric)`, rank the 12 models within each user on the
+  per-user value, then average ranks over users. `sleep`/`workout` combine their
+  channels by an unweighted mean of the per-user values before ranking.
+- **Bootstrap**: resample **users** (the cluster unit) with replacement and
+  recompute via the same readers → `mean / se / 95% CI`. The identity draw
+  reproduces the deterministic point estimate.
+
+### 9.2 Reproduce end-to-end from the raw dataset
+
+This is the canonical path: **raw dataset → predictions → offline metrics →
+leaderboard**, all 12 models, no pre-existing artifacts.
+
+**Step 1 — get the data and point `MHC_DATA_DIR` at it.**
+```bash
+# either the packaged dataset…
+python -c "import openmhc; openmhc.download_dataset(version='full')"
+# …or DVC (see §7.1)
+dvc pull data/hourly_trajectory.dvc data/forecasting_sample_index.dvc
+
+export MHC_DATA_DIR=/path/to/openmhc/data   # the parent of hourly_trajectory/, splits/, forecasting_sample_index/
+```
+The full forecasting test split is **827 users / 43,563 samples** (§0.5). If the
+`forecasting_sample_index` is not packaged, generate it once with
+`scripts/precompute_forecasting_inputs.py` (§3.1).
+
+**Step 2 — provide checkpoints for the learned models.** Zeroshot foundation
+models (`chronos2`, `toto`) and statistical models (`seasonal_naive`,
+`autoARIMA`, `autoETS`) need none. The finetuned/trained entries
+(`chronos2_finetuned`, `toto_finetuned*`, `dlinear`, `mixlinear`, `segrnn`) need
+release bundles — set each model's `release_dir` in
+`configs/paper/sweep_forecasting.yaml` to your checkpoint path (see §0.5 “Checkpoints
+and Releases”). To reproduce only the no-checkpoint subset, pass `--models`.
+
+**Step 3 — confirm the scoring config** in `configs/paper/sweep_forecasting.yaml`
+(current defaults):
+```yaml
+baseline: seasonal_naive
+continuous_metrics: [mae]
+binary_metrics: [auroc]            # scored binary metric: auroc | auprc | f1
+within_user_aggregation: micro     # micro (default) | macro
+bootstrap: { enabled: true, n_boot: 1000, seed: 42, fairness: true }
+```
+
+**Step 4 — run the whole pipeline** (Phase 0 inference → 1 discover → 2 skill/rank
+→ 3 bootstrap/fairness):
+```bash
+python scripts/paper_results/forecasting/run_paper_pipeline.py \
+  --sweep-config configs/paper/sweep_forecasting.yaml
+```
+Phase 0 runs `mhc-forecast-eval` per model, which writes the prediction parquets
+**and** the offline metric trees — point metrics per `channel × horizon` cell and
+the **pooled-micro** binary metrics (§4.6) — under
+`<runs_root>/<model>/predictions/<run_label>/<model>_metrics/<run_label>/`. This
+step is GPU-heavy for the foundation/learned models and is normally dispatched as
+per-model SLURM jobs; restart with `--skip-eval` to run only Phases 1–3 once the
+metric trees exist.
+
+**Step 5 — read the leaderboard** in `output_root`:
+`forecasting_skill_score_{long,model_summary,wide}.csv`,
+`forecasting_grouped_metric_rank_{long,user_level_long,wide}.csv`,
+`forecasting_fairness_skill_score.csv`, and the matching `*_bootstrap.csv`.
+
+> **Memory:** the binary-metric pass and the bootstrap load all users' contexts
+> into RAM — run on a real allocation (~64–96 GB), not a small interactive shell,
+> or it OOM-kills silently. Keep the prediction parquets if you may re-score binary
+> metrics later: pooled AUROC needs the raw `(ground_truth, score)` pairs, which the
+> per-window metric trees do not retain.

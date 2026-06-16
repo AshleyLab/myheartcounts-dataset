@@ -55,6 +55,9 @@ _metric_lower_is_better = _spec.metric_lower_is_better
 _parse_channel_indices = _spec.parse_channel_indices
 
 
+_metric_channel_sum_count = _spec.metric_channel_sum_count
+
+
 def _parse_group_arg(group_arg: str) -> tuple[str, tuple[int, ...]]:
     if "=" not in group_arg:
         raise argparse.ArgumentTypeError(
@@ -177,24 +180,6 @@ def _safe_to_metric_array(value: Any) -> np.ndarray | None:
     return np.vstack([row[:min_len] for row in rows])
 
 
-def _metric_channel_value(metric: np.ndarray, channel_idx: int) -> tuple[float, int] | None:
-    if metric.ndim == 1:
-        if channel_idx >= metric.shape[0]:
-            return None
-        value = float(metric[channel_idx])
-        if not np.isfinite(value):
-            return None
-        return value, 1
-
-    if channel_idx >= metric.shape[0]:
-        return None
-    values = metric[channel_idx]
-    finite_values = values[np.isfinite(values)]
-    if finite_values.size == 0:
-        return None
-    return float(np.mean(finite_values)), int(finite_values.size)
-
-
 def _load_channel_user_metrics(
     *,
     model_name: str,
@@ -202,11 +187,12 @@ def _load_channel_user_metrics(
     metric_name: str,
     channel_indices: tuple[int, ...],
     scope_type: str,
+    within_user_aggregation: str = "micro",
 ) -> pd.DataFrame:
     metric_dir = Path(model_root) / metric_name
     rows: list[dict[str, Any]] = []
-    per_user_values: dict[tuple[str, int], list[float]] = {}
-    per_user_counts: dict[tuple[str, int], int] = {}
+    # Per (user, channel): one (cell_sum, cell_count) pair per window.
+    per_user_pairs: dict[tuple[str, int], list[tuple[float, int]]] = {}
 
     for parquet_file in _list_parquet_files(metric_dir):
         df = _safe_read_parquet(parquet_file, columns=["user_id", metric_name])
@@ -218,20 +204,19 @@ def _load_channel_user_metrics(
             if metric is None:
                 continue
             for channel_idx in channel_indices:
-                collapsed = _metric_channel_value(metric=metric, channel_idx=channel_idx)
-                if collapsed is None:
+                sum_count = _metric_channel_sum_count(metric=metric, channel_idx=channel_idx)
+                if sum_count is None:
                     continue
-                metric_value, n_values = collapsed
-                per_user_values.setdefault((user_id, int(channel_idx)), []).append(metric_value)
-                per_user_counts[(user_id, int(channel_idx))] = per_user_counts.get(
-                    (user_id, int(channel_idx)), 0
-                ) + int(n_values)
+                per_user_pairs.setdefault((user_id, int(channel_idx)), []).append(sum_count)
 
-    for (user_id, channel_idx), values in per_user_values.items():
-        finite_values = np.asarray(values, dtype=float)
-        finite_values = finite_values[np.isfinite(finite_values)]
-        if finite_values.size == 0:
+    for (user_id, channel_idx), pairs in per_user_pairs.items():
+        total_count = int(sum(cell_count for _, cell_count in pairs))
+        if total_count == 0:
             continue
+        if within_user_aggregation == "macro":
+            metric_value = float(np.mean([cell_sum / cell_count for cell_sum, cell_count in pairs]))
+        else:
+            metric_value = float(sum(cell_sum for cell_sum, _ in pairs)) / total_count
         rows.append(
             {
                 "model": model_name,
@@ -242,8 +227,8 @@ def _load_channel_user_metrics(
                 "metric_display": _metric_display_name(metric_name),
                 "channel_idx": int(channel_idx),
                 "user_id": user_id,
-                "metric_value": float(np.mean(finite_values)),
-                "n_values": int(per_user_counts.get((user_id, channel_idx), finite_values.size)),
+                "metric_value": metric_value,
+                "n_values": total_count,
             }
         )
 
@@ -255,6 +240,7 @@ def _build_continuous_user_rows(
     models: dict[str, dict[str, str]],
     metrics: list[str],
     channel_indices: tuple[int, ...],
+    within_user_aggregation: str = "micro",
 ) -> pd.DataFrame:
     frames: list[pd.DataFrame] = []
     for model_name, model_spec in models.items():
@@ -265,6 +251,7 @@ def _build_continuous_user_rows(
                 metric_name=metric_name,
                 channel_indices=channel_indices,
                 scope_type="continuous_channel",
+                within_user_aggregation=within_user_aggregation,
             )
             if not frame.empty:
                 frames.append(frame)
@@ -278,6 +265,7 @@ def _build_binary_user_rows(
     models: dict[str, dict[str, str]],
     metrics: list[str],
     groups: list[tuple[str, tuple[int, ...]]],
+    within_user_aggregation: str = "micro",
 ) -> pd.DataFrame:
     frames: list[pd.DataFrame] = []
     all_binary_channels = tuple(sorted({idx for _, indices in groups for idx in indices}))
@@ -289,6 +277,7 @@ def _build_binary_user_rows(
                 metric_name=metric_name,
                 channel_indices=all_binary_channels,
                 scope_type="binary_channel",
+                within_user_aggregation=within_user_aggregation,
             )
             if channel_rows.empty:
                 continue
@@ -428,17 +417,22 @@ def build_grouped_metric_rank_tables(
     binary_metrics: list[str],
     continuous_channel_indices: tuple[int, ...],
     binary_groups: list[tuple[str, tuple[int, ...]]],
+    within_user_aggregation: str = "micro",
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Build user-level, long, and wide grouped metric rank tables."""
+    if within_user_aggregation not in {"micro", "macro"}:
+        raise ValueError("--within-user-aggregation must be either 'micro' or 'macro'")
     continuous_user = _build_continuous_user_rows(
         models=models,
         metrics=[metric.strip().lower() for metric in continuous_metrics if metric.strip()],
         channel_indices=continuous_channel_indices,
+        within_user_aggregation=within_user_aggregation,
     )
     binary_user = _build_binary_user_rows(
         models=models,
         metrics=[metric.strip().lower() for metric in binary_metrics if metric.strip()],
         groups=binary_groups,
+        within_user_aggregation=within_user_aggregation,
     )
     frames = [frame for frame in [continuous_user, binary_user] if not frame.empty]
     if frames:
@@ -487,6 +481,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Binary group mapping GROUP=idx,idx. Defaults to sleep=7,8 and workout=9-18.",
     )
     parser.add_argument(
+        "--within-user-aggregation",
+        choices=["micro", "macro"],
+        default="micro",
+        help=(
+            "How to combine a user's prediction windows per channel: 'micro' weights "
+            "each window by its finite horizon-cell count; 'macro' averages per-window "
+            "means unweighted (legacy). The cross-channel group fold is unaffected."
+        ),
+    )
+    parser.add_argument(
         "--output-dir",
         default="results/metrics_summary",
         help="Directory for generated CSV files.",
@@ -515,6 +519,7 @@ def main() -> None:
         binary_metrics=list(args.binary_metrics),
         continuous_channel_indices=continuous_channel_indices,
         binary_groups=binary_groups,
+        within_user_aggregation=str(args.within_user_aggregation),
     )
 
     output_dir = Path(args.output_dir)
@@ -538,6 +543,7 @@ def main() -> None:
     print(f"Continuous metrics: {args.continuous_metrics}")
     print(f"Binary groups: {binary_groups}")
     print(f"Binary metrics: {args.binary_metrics}")
+    print(f"Within-user aggregation: {args.within_user_aggregation}")
 
 
 if __name__ == "__main__":

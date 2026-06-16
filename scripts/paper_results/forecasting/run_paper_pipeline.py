@@ -154,6 +154,7 @@ def _phase_skill_rank(cfg: dict, selected: dict[str, str], dry_run: bool) -> Non
     cont = cfg.get("continuous_metrics", ["mae"])
     binm = cfg.get("binary_metrics", ["auprc"])
     agg = cfg.get("aggregation_unit", "user")
+    within = cfg.get("within_user_aggregation", "micro")
     metrics = REPO_ROOT / "src" / "forecasting_evaluation" / "metrics"
 
     _run(
@@ -164,6 +165,7 @@ def _phase_skill_rank(cfg: dict, selected: dict[str, str], dry_run: bool) -> Non
             "--continuous-metrics", *cont,
             "--binary-metrics", *binm,
             "--aggregation-unit", agg,
+            "--within-user-aggregation", within,
             "--output-dir", str(out),
             "--output-prefix", "forecasting_skill_score",
         ],
@@ -175,6 +177,7 @@ def _phase_skill_rank(cfg: dict, selected: dict[str, str], dry_run: bool) -> Non
             "--config", str(models_json),
             "--continuous-metrics", *cont,
             "--binary-metrics", *binm,
+            "--within-user-aggregation", within,
             "--output-dir", str(out),
             "--output-prefix", "forecasting_grouped_metric_rank",
         ],
@@ -201,6 +204,7 @@ def _phase_bootstrap(cfg: dict, selected: dict[str, str], dry_run: bool) -> None
     n_boot = int(bs.get("n_boot", 1000))
     seed = int(bs.get("seed", 42))
     ci_level = float(bs.get("ci_level", 0.95))
+    within = cfg.get("within_user_aggregation", "micro")
     logger.info(
         "Phase 3 bootstrap: B=%d seed=%d ci=%.2f over %d models (baseline=%s)",
         n_boot, seed, ci_level, len(models), cfg["baseline"],
@@ -219,6 +223,7 @@ def _phase_bootstrap(cfg: dict, selected: dict[str, str], dry_run: bool) -> None
         n_boot=n_boot,
         seed=seed,
         ci_level=ci_level,
+        within_user_aggregation=within,
     )
     skill_path = out / "forecasting_skill_score_bootstrap.csv"
     rank_path = out / "forecasting_grouped_metric_rank_bootstrap.csv"
@@ -263,6 +268,7 @@ def _phase_bootstrap(cfg: dict, selected: dict[str, str], dry_run: bool) -> None
         n_boot=n_boot,
         seed=seed,
         ci_level=ci_level,
+        within_user_aggregation=within,
     )
     fair_point_path = out / "forecasting_fairness_skill_score.csv"
     fair_boot_path = out / "forecasting_fairness_skill_score_bootstrap.csv"

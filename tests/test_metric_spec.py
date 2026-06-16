@@ -27,6 +27,8 @@ def test_metric_to_error():
     # lower-is-better passes through; negative is invalid -> nan
     assert spec.metric_to_error("mae", 2.0) == 2.0
     assert math.isnan(spec.metric_to_error("mae", -1.0))
+    # lower-is-better is NOT floored (perfect continuous error stays 0)
+    assert spec.metric_to_error("mae", 0.0) == 0.0
     # higher-is-better flips to 1 - x; out-of-[0,1] -> nan
     assert spec.metric_to_error("auprc", 0.75) == pytest.approx(0.25)
     assert math.isnan(spec.metric_to_error("auprc", 1.5))
@@ -34,11 +36,37 @@ def test_metric_to_error():
         spec.metric_to_error("nonsense", 1.0)
 
 
+def test_metric_to_error_binary_floor():
+    # A perfect AUROC floors to ε instead of 0, so the paired skill ratio stays finite.
+    assert spec.metric_to_error("auroc", 1.0) == pytest.approx(spec.BINARY_ERROR_FLOOR)
+    assert spec.metric_to_error("auprc", 1.0) == pytest.approx(spec.BINARY_ERROR_FLOOR)
+    # Just below perfect: 1 - 0.999 = 0.001 < ε -> floored to ε.
+    assert spec.metric_to_error("auroc", 0.999) == pytest.approx(spec.BINARY_ERROR_FLOOR)
+    # Comfortably above the floor: unchanged.
+    assert spec.metric_to_error("auroc", 0.8) == pytest.approx(0.2)
+    # NaN guard precedes the floor (single-class users stay NaN, get dropped).
+    assert math.isnan(spec.metric_to_error("auroc", float("nan")))
+
+
 def test_metric_channel_value():
     arr = np.array([[1.0, 3.0], [np.nan, np.nan]])
     assert spec.metric_channel_value(arr, 0) == 2.0  # mean over horizon
     assert math.isnan(spec.metric_channel_value(arr, 1))  # all-nan channel
     assert math.isnan(spec.metric_channel_value(arr, 5))  # out of range
+
+
+def test_metric_channel_sum_count():
+    # 2D (channel x horizon): sum + finite-cell count over the horizon
+    arr = np.array([[1.0, 3.0, np.nan], [np.nan, np.nan, np.nan]])
+    assert spec.metric_channel_sum_count(arr, 0) == (4.0, 2)  # 1+3 over 2 finite cells
+    assert spec.metric_channel_sum_count(arr, 1) is None  # all-nan channel
+    assert spec.metric_channel_sum_count(arr, 5) is None  # out of range
+    # 1D (channel only): one cell per channel
+    arr1d = np.array([2.0, np.nan])
+    assert spec.metric_channel_sum_count(arr1d, 0) == (2.0, 1)
+    assert spec.metric_channel_sum_count(arr1d, 1) is None  # nan
+    # metric_channel_value delegates to sum/count
+    assert spec.metric_channel_value(arr, 0) == pytest.approx(2.0)
 
 
 def test_single_source_across_scripts():

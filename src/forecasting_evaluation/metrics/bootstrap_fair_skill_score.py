@@ -64,6 +64,7 @@ def bootstrap_fair_skill_score(
     ci_level: float = 0.95,
     clip_lower: float = CLIP_LOWER,
     clip_upper: float = CLIP_UPPER,
+    within_user_aggregation: str = "micro",
 ) -> dict[str, pd.DataFrame]:
     """Paired user-bootstrap CIs + point estimate for the fair skill score.
 
@@ -85,6 +86,9 @@ def bootstrap_fair_skill_score(
         ci_level: percentile-CI level (0.95 -> 2.5/97.5).
         clip_lower: lower clip on the per-task disparity ratio.
         clip_upper: upper clip on the per-task disparity ratio.
+        within_user_aggregation: 'micro' (default) weights each window by its finite
+            horizon-cell count when building per-user errors; 'macro' averages
+            per-window means unweighted (legacy). Shared with the point flow.
 
     Returns:
         ``{"fairness_skill_scores": ci_df, "fairness_skill_scores_point": point_df}``.
@@ -101,6 +105,7 @@ def bootstrap_fair_skill_score(
         binary_metrics=binary_metrics,
         continuous_channel_indices=continuous_channel_indices,
         binary_channel_indices=binary_channel_indices,
+        within_user_aggregation=within_user_aggregation,
     )
     if error_df.empty:
         logger.warning("Fairness bootstrap: no error rows discovered; returning empty tables.")

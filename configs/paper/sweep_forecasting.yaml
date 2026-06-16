@@ -16,8 +16,12 @@ output_root: results/forecasting_eval/simurgh/summary/forecasting_full_20260609
 
 baseline: seasonal_naive
 continuous_metrics: [mae]
-binary_metrics: [auprc]
+binary_metrics: [auroc]            # scored binary metric: auroc | auprc | f1 (eval still produces all three)
 aggregation_unit: user
+# How a user's prediction windows are combined before paired scoring:
+#   micro (default) = pool all finite horizon cells (continuous); binary is pooled per user by the producer
+#   macro           = legacy unweighted mean of per-window means
+within_user_aggregation: micro
 
 # Phase 0 (mhc-forecast-eval) overrides applied to every model.
 common_overrides: []

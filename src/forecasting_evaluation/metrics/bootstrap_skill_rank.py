@@ -134,6 +134,7 @@ def bootstrap_skill_rank(
     clip_lower: float = 0.01,
     clip_upper: float = 100.0,
     min_pairs: int = 1,
+    within_user_aggregation: str = "micro",
 ) -> dict[str, pd.DataFrame]:
     """Paired user-bootstrap CIs for forecasting skill scores and mean ranks.
 
@@ -152,6 +153,9 @@ def bootstrap_skill_rank(
         clip_lower: lower clip on the per-task error ratio (skill aggregator).
         clip_upper: upper clip on the per-task error ratio (skill aggregator).
         min_pairs: minimum paired units required to score a task.
+        within_user_aggregation: 'micro' (default) weights each window by its finite
+            horizon-cell count when building per-user errors; 'macro' averages
+            per-window means unweighted (legacy). Shared with the point flow.
 
     Returns:
         ``{"skill_scores": df, "avg_rankings": df}`` where each row carries
@@ -172,17 +176,22 @@ def bootstrap_skill_rank(
 
     # ---- Phase 0: build per-user tables ONCE (the only disk IO) ----
     error_df = _build_error_table(
-        models=models, metric_groups=metric_groups, aggregation_unit="user"
+        models=models,
+        metric_groups=metric_groups,
+        aggregation_unit="user",
+        within_user_aggregation=within_user_aggregation,
     )
     cont_user = _build_continuous_user_rows(
         models=models,
         metrics=[m.strip().lower() for m in continuous_metrics if m.strip()],
         channel_indices=continuous_channel_indices,
+        within_user_aggregation=within_user_aggregation,
     )
     bin_user = _build_binary_user_rows(
         models=models,
         metrics=[m.strip().lower() for m in binary_metrics if m.strip()],
         groups=binary_groups,
+        within_user_aggregation=within_user_aggregation,
     )
     rank_frames = [f for f in (cont_user, bin_user) if not f.empty]
     rank_user_df = pd.concat(rank_frames, ignore_index=True) if rank_frames else pd.DataFrame()
