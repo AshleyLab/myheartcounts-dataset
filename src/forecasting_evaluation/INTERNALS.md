@@ -24,7 +24,7 @@ Each record in `hourly_trajectory` must include at least:
 
 ### 2.1.1 How hourly trajectory is built
 
-`data/hourly_trajectory` is not read directly from raw files. It is produced by [scripts/data/build_hourly_trajectory_res.py](../../scripts/data/build_hourly_trajectory_res.py#L65), which calls [build_hourly_trajectory_res()](../data/processing/hourly_trajectory_res.py#L19). The Imperial PBS entrypoint is [build_hourly_trajectory.pbs](../../jobs/imperial/pbs/forecasting/build_hourly_trajectory.pbs#L1).
+`data/hourly_trajectory` is not read directly from raw files. It is produced by the (private) data-build pipeline that organizes raw minute-level daily data into continuous user-level hourly sequences. Those build scripts are not part of this public repo; the trajectory ships with the packaged dataset.
 
 The full processing chain is:
 
@@ -65,8 +65,6 @@ It represents which days for each user pass day-level quality control. Default d
 - `WearTimeFilter(min_wear_fraction=0.5)`
 - `LowChannelVarianceFilter`
 
-Note: [scripts/precompute_forecasting_inputs.py](../../scripts/precompute_forecasting_inputs.py#L105) currently parses arguments like `--min_wear_fraction` and `--disable_variance_filter`, but does not pass them through when calling [generate_day_drop_mask()](data/day_retain_mask_generator.py#L19), so function defaults are still used in practice.
-
 ### 2.3 Sample index
 
 [SampleIndexGenerator](data/sample_index_generator.py#L24) reads hourly trajectory and day retain mask, and produces:
@@ -92,18 +90,11 @@ Each integer is a forecast-start day index. Generation logic:
 4. `maximum_sample_count_per_user` filter: keep up to the configured number of candidate days per user; if exceeded, randomly sample. Default `_S_100`.
 5. Users with empty candidate lists are dropped when saving.
 
-Imperial entrypoint example is in [generate_sample_index.slurm](../../jobs/imperial/slurm/forecasting/generate_sample_index.slurm#L1):
-
-```bash
-python scripts/precompute_forecasting_inputs.py \
-  --daily_hf_dir data/processed/daily_hf \
-  --hourly_trajectory_path data/hourly_trajectory \
-  --sample_index_path data/forecasting_sample_index/sample_index.json \
-  --day_remain_mask_path data/forecasting_sample_index/day_remain_mask.json \
-  --forecasting_length 24 \
-  --filter_parameters_json '{"missing_mask": true, "historical_check": {"recent_day_count": 7, "minimum_valid_day": 3}, "maximum_sample_count_per_user": 100}' \
-  --seed 42
-```
+`SampleIndexGenerator` is driven from raw data by the (private) preprocessing
+wrapper, which passes the daily HF dir, hourly trajectory, day-retain mask,
+forecasting length, filter parameters (`missing_mask`, `historical_check`,
+`maximum_sample_count_per_user`), and seed. The resulting `sample_index` ships
+with the packaged dataset.
 
 ## 3. Walk Through the Evaluation Flow Step by Step via ForecastingEvaluator.run()
 
@@ -224,13 +215,11 @@ Each row corresponds to one forecasting window, with major fields:
 Entrypoint example:
 
 ```bash
-python scripts/run_forecasting_eval.py \
-  --config configs/forecasting_eval/default.yaml \
-  --config configs/forecasting_eval/model_config/seasonalNaive.yaml \
-  --config configs/forecasting_eval/forecasting_setup/final_eval_24.yaml
+mhc-forecast-eval model=seasonal_naive
 ```
 
-Imperial array entrypoint is [run_forecasting_eval.slurm](../../jobs/imperial/slurm/forecasting/run_forecasting_eval.slurm#L1), typically stacking base config, model config, and forecasting setup config.
+See [README.md](README.md#05-reproducible-runs-via-mhc-forecast-eval) for the
+Hydra CLI, config composition, and Sherlock dispatch.
 
 ## 6. Supported model types
 
@@ -331,40 +320,16 @@ Current skip policy: if `results/metrics/<run_key>/mae/<user_id>.parquet` alread
 
 ## 8. Aggregation and paper results
 
-### 8.1 Hourly summary
-
-[summary_metrics_result.py](metrics/deprecated/summary_metrics_result.py#L457) targets one specific metric directory, for example `results/metrics/<run_key>/mae`:
-
-```bash
-python src/forecasting_evaluation/metrics/deprecated/summary_metrics_result.py \
-  --model seasonal_naive=results/metrics/seasonal_naive/mae \
-  --output-dir results/metrics_summary
-```
-
-Outputs:
-
-- `mae_by_model_channel_hour.csv`
-- `statistical_result.csv`
-
-It aggregates mean/std/n by `model, channel, channel_idx, hour`, and reports user count, sample count, and average inference time.
-
-### 8.2 paper_result
-
-[paper_result/](paper_result) is a second-stage aggregation layer for paper tables and figures. Common entrypoints include:
-
-- [run_hour_group_metric_summary.py](../../scripts/forecasting/run_hour_group_metric_summary.py#L1)
-- [plot_model_metric_combined.py](../../scripts/forecasting/plot_model_metric_combined.py#L578)
-- [get_hour_group_metric_summary.slurm](../../jobs/imperial/slurm/forecasting/paper_result/get_hour_group_metric_summary.slurm#L1)
-- [plot_model_metric_combined.slurm](../../jobs/imperial/slurm/forecasting/paper_result/plot_model_metric_combined.slurm#L1)
-
-[hour_group_metric_summary.py](paper_result/hour_group_metric_summary.py#L438) reads `results/metrics/<model>/<metric>/<user>.parquet`, first performs NaN-aware averaging across multiple metric matrices for the same user, then aggregates by channel and 3-hour groups `0-2, 3-5, ..., 21-23`.
+The leaderboard scoring layer (skill score, mean rank, fairness, bootstrap)
+consumes the per-metric parquet trees produced above. Its scripts, semantics,
+and end-to-end reproduction are documented in
+[README.md §8](README.md#8-paper-scoring-skill--rank--fairness-and-reproduction).
 
 ## 9. Common caveats
 
 - `data.day_remain_mask` is mainly used to generate sample index; what evaluation truly requires is `data.sample_index_file`.
 - `forecasting.daily_start_hour_offset` only affects runtime window slicing, not sample index, manifest, or cache key.
 - The semantic meaning of `history_length` is now unified as forecast origin; do not treat it as fixed `n_steps` for PyPOTS.
-- [SubTrajectoryGenerator](data/generator.py#L25) is still present in code, but evaluator main path has converged to `history_cf cache + row-group manifest`.
 - `features.covariate_types` is currently interface-only; code does not actually build hour/day covariates.
 - Zeros are converted to `NaN` first, so all downstream observed masks depend on finite values.
 - If prediction parquet or metric parquet already exists, default skip policy may make reruns look like they did not update; check `overwrite_existing_parquet` or clean target outputs.

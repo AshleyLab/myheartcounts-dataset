@@ -23,8 +23,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 SAMPLE_INDEX_REQUIRED_MSG = (
-    "Forecasting evaluation requires data.sample_index_file. "
-    "Please generate it first with scripts/precompute_forecasting_inputs.py."
+    "Forecasting evaluation requires data.sample_index_file. It ships in the "
+    "dataset bundle from openmhc.download_dataset(version=...) under "
+    "forecasting_sample_index/ (see docs/manual-dataset-setup.md to assemble a "
+    "root by hand)."
 )
 
 

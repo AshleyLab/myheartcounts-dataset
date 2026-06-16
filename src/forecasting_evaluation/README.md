@@ -5,19 +5,19 @@ evaluates how well a model forecasts the next `horizon` hours of multivariate
 wearable sensor data for held-out users, given the full history up to each
 forecast origin.
 
-This README is task-oriented:
+This organized as follows:
 
 - **Part 1** — implement a custom forecaster and score it with
-  `openmhc.evaluate_forecasting`. Most users only need this.
+`openmhc.evaluate_forecasting`. Most users only need this.
 - **Part 2** — the `mhc-forecast-eval` Hydra CLI for reproducible runs, and how
-  to add your own model to it.
+to add your own model to it.
 - **Part 3** — reproduce the paper leaderboard (skill / rank / fairness) from
-  scratch.
+scratch.
 
 How the pipeline works internally — the preprocessing chain,
 `ForecastingEvaluator.run()`, the prediction parquet schema, and the offline
 metric math — lives in [INTERNALS.md](INTERNALS.md). The full runtime config
-schema is the dataclass tree in [`config.py`](config.py).
+schema is the dataclass tree in `[config.py](config.py)`.
 
 ---
 
@@ -46,8 +46,7 @@ print(results.summary())       # per-channel metric table
 results.to_csv("forecasting_results.csv")
 ```
 
-`evaluate_forecasting(forecaster, version, forecasting_length=24, data_dir=None,
-seed=42, max_samples=None)` returns a [`ForecastingResults`](../openmhc/_results.py)
+`evaluate_forecasting(forecaster, version, forecasting_length=24, data_dir=None, seed=42, max_samples=None)` returns a `[ForecastingResults](../openmhc/_results.py)`
 instance. The dataset root is resolved from `data_dir` first, then the
 `MHC_DATA_DIR` environment variable; if neither is set the API raises.
 
@@ -69,31 +68,33 @@ def predict(
 ```
 
 - **Same window for every model.** Windows are selected by data-quality
-  criteria only, so all models see the identical set. The harness passes the
-  *full prefix* before the forecast origin; a model that wants a fixed context
-  truncates / pads it itself.
+criteria only, so all models see the identical set. The harness passes the
+*full prefix* before the forecast origin; a model that wants a fixed context
+truncates / pads it itself.
 - **NaN → Seasonal-Naive fallback.** The harness never drops a window for
-  model-capability reasons. Emit `NaN` for any cell you cannot predict — the
-  harness substitutes the Seasonal-Naive baseline there before scoring and
-  reports how often via `results.overall_fallback_rate` / `results.fallback_rate`.
+model-capability reasons. Emit `NaN` for any cell you cannot predict — the
+harness substitutes the Seasonal-Naive baseline there before scoring and
+reports how often via `results.overall_fallback_rate` / `results.fallback_rate`.
 - **Quantiles are optional.** Return a `(point, quantiles)` tuple instead of a
-  bare array (`quantiles` shape `(n_channels, horizon, n_quantiles)`) and expose
-  the matching levels as a `quantile_levels` attribute. The benchmark ranks
-  point forecasts.
+bare array (`quantiles` shape `(n_channels, horizon, n_quantiles)`) and expose
+the matching levels as a `quantile_levels` attribute. The benchmark ranks
+point forecasts.
 - **Optional metadata.** The harness inspects your signature once and forwards
-  only the keyword-only kwargs you declare (`variable_names`, `past_covariates`,
-  `future_covariates`, `index_days`). Three-argument forecasters work unchanged.
+only the keyword-only kwargs you declare (`variable_names`, `past_covariates`,
+`future_covariates`, `index_days`). Three-argument forecasters work unchanged.
 
 ### Built-in reference forecasters (`openmhc.forecasters`)
 
 All are fine-tuned / trained on the MHC training split and load a released
 checkpoint bundle via `from_release(...)` (a local dir or an `hf://` URI):
 
-| Class | Model | Extra |
-|---|---|---|
-| `Chronos2Forecaster` | Fine-tuned Amazon Chronos-2 | `pip install 'openmhc[chronos]'` |
-| `TotoForecaster` | Fine-tuned Datadog Toto | `pip install 'openmhc[toto]'` |
-| `DLinearForecaster`, `SegRNNForecaster`, `MixLinearForecaster` | From-scratch neural | `pip install 'openmhc[pypots]'` |
+
+| Class                                                          | Model                       | Extra                            |
+| -------------------------------------------------------------- | --------------------------- | -------------------------------- |
+| `Chronos2Forecaster`                                           | Fine-tuned Amazon Chronos-2 | `pip install 'openmhc[chronos]'` |
+| `TotoForecaster`                                               | Fine-tuned Datadog Toto     | `pip install 'openmhc[toto]'`    |
+| `DLinearForecaster`, `SegRNNForecaster`, `MixLinearForecaster` | From-scratch neural         | `pip install 'openmhc[pypots]'`  |
+
 
 ```python
 from openmhc.forecasters import Chronos2Forecaster
@@ -114,7 +115,7 @@ and binary (`auroc`, `auprc`) metrics. Useful methods:
 - `.to_dataframe()` — long-format DataFrame (includes per-channel `fallback_rate`).
 - `.to_csv(path)` / `.to_json(path)` — dump results.
 - `.to_submission_yaml(method_name=..., submitter_team=..., code_url=...)` —
-  render a paste-ready leaderboard submission.
+render a paste-ready leaderboard submission.
 
 ---
 
@@ -122,24 +123,24 @@ and binary (`auroc`, `auprc`) metrics. Useful methods:
 
 Reach for the CLI (instead of the Part 1 Python API) when you want composable
 YAML config presets, timestamped run directories with the resolved config and
-release manifest copied in, Hydra `--multirun` sweeps, and SLURM dispatch on
-Sherlock. The CLI is declared in [`pyproject.toml`](../../pyproject.toml) as the
-`mhc-forecast-eval` console script; public-API users never touch Hydra.
+release manifest copied in, Hydra `--multirun` sweeps, and SLURM dispatch. The CLI is declared in `[pyproject.toml](../../pyproject.toml)` as the`mhc-forecast-eval` console script; public-API do not need to touch Hydra.
 
 ### Configs
 
 The config tree lives at `configs/forecasting/`, composed via `eval.yaml`:
 
-| Group | Picks |
-|---|---|
-| `model/` | Forecaster preset + hyperparameters: `seasonal_naive`, `autoARIMA`, `autoETS`, `chronos2`, `toto`, `mixlinear`, `dlinear`, `segrnn` |
-| `data/` | Trajectory dataset paths, split file, day mask, sample index, workers |
-| `forecasting/` | Forecast horizon and daily start-hour offset |
-| `features/` | Channel / covariate selection (the fixed 19-channel set) |
-| `output/` | Prediction parquet root and overwrite policy |
-| `metrics/` | Which offline metrics to compute (point + pooled binary) |
 
-The schema is the dataclass tree in [`config.py`](config.py)
+| Group          | Picks                                                                                                                               |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `model/`       | Forecaster preset + hyperparameters: `seasonal_naive`, `autoARIMA`, `autoETS`, `chronos2`, `toto`, `mixlinear`, `dlinear`, `segrnn` |
+| `data/`        | Trajectory dataset paths, split file, day mask, sample index, workers                                                               |
+| `forecasting/` | Forecast horizon and daily start-hour offset                                                                                        |
+| `features/`    | Channel / covariate selection (the fixed 19-channel set)                                                                            |
+| `output/`      | Prediction parquet root and overwrite policy                                                                                        |
+| `metrics/`     | Which offline metrics to compute (point + pooled binary)                                                                            |
+
+
+The schema is the dataclass tree in `[config.py](config.py)`
 (`ForecastingEvalConfig`); Hydra validates every override against it.
 
 ### Usage
@@ -195,69 +196,34 @@ selected nested model config.
 Four edits. The model class uses the **same `predict` contract as the Part 1
 protocol**, so a forecaster written for the public API drops straight in.
 
-1. **[`config.py`](config.py)** — add the type to the `ModelType` literal,
-   define a small `@dataclass` for its hyperparameters, and add a field on
+1. `**[config.py](config.py)`** — add the type to the `ModelType` literal,
+  define a small `@dataclass` for its hyperparameters, and add a field on
    `ForecastingModelConfig`:
-
-   ```python
-   ModelType = Literal[..., "my_model"]
-
-   @dataclass
-   class MyModelConfig:
-       window: int = 168
-
-   @dataclass
-   class ForecastingModelConfig:
-       ...
-       my_model: MyModelConfig = field(default_factory=MyModelConfig)
-   ```
-
-2. **[`models/registry.py`](models/registry.py)** — add an `elif` branch in
-   `create_forecasting_model` that builds the model and sets `model_name`:
-
-   ```python
-   elif config.type == "my_model":
-       from forecasting_evaluation.models.my_model import MyModel
-       model = MyModel(seed=seed, window=config.my_model.window)
-       model.model_name = model_name
-   ```
-
+2. `**[models/registry.py](models/registry.py)**` — add an `elif` branch in
+  `create_forecasting_model` that builds the model and sets `model_name`:
 3. **The model class** — implement `predict(history, horizon)` (optionally
-   subclass [`BasePredictionModel`](models/base.py) for the no-op `reset()` and
+  subclass `[BasePredictionModel](models/base.py)` for the no-op `reset()` and
    the `model_name` / `quantile_levels` attributes the evaluator reads):
-
-   ```python
-   from forecasting_evaluation.models.base import BasePredictionModel
-
-   class MyModel(BasePredictionModel):
-       def __init__(self, seed: int = 42, window: int = 168):
-           self.window = window
-
-       def predict(self, history, horizon):
-           ...   # return (n_features, horizon), or a (point, quantiles) tuple
-   ```
-
-4. **`configs/forecasting/model/my_model.yaml`**:
-
-   ```yaml
+4. `**configs/forecasting/model/my_model.yaml`**:
+  ```yaml
    # @package model
    type: my_model
    name: null
    release_dir: null
    my_model:
      window: 168
-   ```
+  ```
 
 Run with `mhc-forecast-eval model=my_model`. The public-API path
 (`openmhc.evaluate_forecasting(MyModel(...))`) keeps working in parallel — the
 model class itself does not need to know about Hydra.
 
-### Sherlock
+### SLURM Cluster submissions: 
 
 SLURM submission scripts live under `jobs/sherlock/forecasting_eval/` (e.g.
 `submit_all.sh`, `run_baselines.sbatch`). They read the dataset root from
 `MHC_DATA_DIR` and each learned model's checkpoint from
-`MHC_FORECAST_<MODEL>_RELEASE_DIR`.
+`MHC_FORECAST_<MODEL>_RELEASE_DIR`. NOTE: the current files are configures for internal clusters but adaptation should be relatively straighforward for other SLURM-based HPC clusters.
 
 ---
 
@@ -270,17 +236,14 @@ one script.
 **Step 1 — get the data and point `MHC_DATA_DIR` at it.**
 
 ```bash
-# packaged dataset…
 python -c "import openmhc; openmhc.download_dataset(version='full')"
-# …or DVC
-dvc pull data/hourly_trajectory.dvc data/forecasting_sample_index.dvc
 
 export MHC_DATA_DIR=/path/to/openmhc/data   # parent of hourly_trajectory/, splits/, forecasting_sample_index/
 ```
 
 The full forecasting test split is **827 users / 43,563 samples** — use these
 numbers as a sanity check. The `forecasting_sample_index` ships with the
-packaged / DVC dataset; regenerating it from raw data is part of the (private)
+packaged dataset; regenerating it from raw data is part of the (private)
 preprocessing chain in [INTERNALS.md](INTERNALS.md#1-data-preprocessing). It has
 no fallback path, so a missing index fails fast.
 
@@ -325,19 +288,19 @@ add `--skip-eval` to run only Phases 1–3 once the metric trees exist.
 ### Scoring semantics (brief)
 
 - **Skill score** (vs `baseline`, default `seasonal_naive`): per task
-  `(channel, metric)`, take the paired ratio `E_model / E_baseline` over common
-  users, clip to `[0.01, 100]`, geometric-mean → `R`; `skill = 1 − R`.
-  Higher-is-better metrics (`auroc/auprc/f1`) are first converted to error
-  `e = 1 − value`.
+`(channel, metric)`, take the paired ratio `E_model / E_baseline` over common
+users, clip to `[0.01, 100]`, geometric-mean → `R`; `skill = 1 − R`.
+Higher-is-better metrics (`auroc/auprc/f1`) are first converted to error
+`e = 1 − value`.
 - **Within-user aggregation** (default `micro`): continuous metrics pool all
-  finite horizon cells across a user's windows; binary metrics are already
-  pooled per user by the producer (so the toggle is a no-op for them).
+finite horizon cells across a user's windows; binary metrics are already
+pooled per user by the producer (so the toggle is a no-op for them).
 - **Rank**: per scope, rank the 12 models within each user, then average ranks
-  over users.
+over users.
 - **Fairness**: disparity-ratio fairness skill score across demographic
-  subgroups.
+subgroups.
 - **Bootstrap**: resample users (the cluster unit) with replacement and recompute
-  via the same readers → `mean / se / 95% CI`.
+via the same readers → `mean / se / 95% CI`.
 
 ### Interpreting metrics
 
@@ -362,4 +325,4 @@ For how the engine works — the data preprocessing chain, the step-by-step
 parquet schema, the offline metric definitions (`mae`, `mase`, `ql`, `sql`,
 channel merge, hour-of-day scales), and current caveats — see
 [INTERNALS.md](INTERNALS.md). The complete config schema is the dataclass tree in
-[`config.py`](config.py).
+`[config.py](config.py)`.

@@ -13,7 +13,8 @@ class DataConfig:
     task_name: str = "hourly_trajectory_forecasting"
     split_file: str | None = "data/splits/sharable_users_seed42_2026.json"
     day_remain_mask: str | None = "data/forecasting_sample_index/day_remain_mask.json"
-    # Required for forecasting evaluation. Generate it with scripts/precompute_forecasting_inputs.py.
+    # Required for forecasting evaluation; ships in the openmhc.download_dataset()
+    # bundle (see docs/manual-dataset-setup.md to assemble a root by hand).
     sample_index_file: str = "data/forecasting_sample_index/sample_index_P_24_M_H_7_3_S_100.json"
     train_ratio: float = 0.8
     val_ratio: float = 0.1
