@@ -329,8 +329,13 @@ class ForecastingEvaluator:
                         # any context windowing / truncation / padding it needs.
                         history_window = history_cf[:, :history_end_hour]
 
-                        # Target window is always the absolute horizon slice from origin.
-                        target_window = history_cf[:, history_end_hour:pred_end_hour]
+                        # NB: the horizon ground-truth slice is intentionally NOT
+                        # persisted with the predictions. Scoring re-derives it from the
+                        # raw history cache (metrics/offline slice_ground_truth) so every
+                        # model and the baseline share one identical, model-agnostic
+                        # ground truth. Do not re-add a per-model ground_truth column:
+                        # a model that standardized its window would silently persist a
+                        # mis-scaled copy (it has happened) that nothing would catch.
 
                         meta = {
                             "variable_names": variable_names,
@@ -366,10 +371,6 @@ class ForecastingEvaluator:
                             # Boolean mask (n_channels, horizon): True where the model
                             # emitted NaN and the Seasonal-Naive baseline was substituted.
                             "fallback_mask": fallback_mask,
-                            # Raw ground-truth slice (n_channels, horizon) co-located with the
-                            # predictions so post-hoc metric recomputation / bootstrapping needs no
-                            # model re-run. Observed mask is recoverable as isfinite(ground_truth).
-                            "ground_truth": target_window,
                             "performance": base_result,
                         }
                         quantile_levels = getattr(model, "quantile_levels", None)

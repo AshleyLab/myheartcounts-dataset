@@ -316,8 +316,9 @@ workout) are AUROC/AUPRC/F1 pooled within each user. The math is in
 > **Memory:** the binary-metric pass and the bootstrap load all users' contexts
 > into RAM — run on a real allocation (~64–96 GB), not a small interactive
 > shell, or it OOM-kills silently. Keep the prediction parquets if you may
-> re-score binary metrics later: pooled AUROC needs the raw
-> `(ground_truth, score)` pairs, which the per-window metric trees do not retain.
+> re-score binary metrics later: pooled AUROC needs every per-sample prediction
+> score (re-paired at score time with cache-derived ground truth), which the
+> per-window metric trees do not retain.
 
 ---
 
