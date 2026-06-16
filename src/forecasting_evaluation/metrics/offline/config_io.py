@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import fields
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,18 @@ from forecasting_evaluation.config import (
 )
 
 
+def _known_fields(config_cls: type, raw: dict[str, Any] | None) -> dict[str, Any]:
+    """Keep only keys that are accepted dataclass fields of ``config_cls``.
+
+    Run configs are persisted alongside predictions for post-hoc metric
+    recomputation, so a config written by an older schema (e.g. carrying a since-
+    removed field like ``seasonal_naive_average_history``) must still load. Unknown
+    top-level keys are dropped rather than raising ``TypeError``.
+    """
+    allowed = {f.name for f in fields(config_cls)}
+    return {key: value for key, value in (raw or {}).items() if key in allowed}
+
+
 def load_run_config(run_path: Path) -> ForecastingEvalConfig:
     """Load forecasting config from run directory config.yaml."""
     config_path = run_path / "config.yaml"
@@ -26,7 +39,7 @@ def load_run_config(run_path: Path) -> ForecastingEvalConfig:
     with config_path.open("r", encoding="utf-8") as handle:
         raw_cfg: dict[str, Any] = yaml.safe_load(handle)
 
-    data_cfg = DataConfig(**raw_cfg.get("data", {}))
+    data_cfg = DataConfig(**_known_fields(DataConfig, raw_cfg.get("data", {})))
 
     forecasting_raw = raw_cfg.get("forecasting", {})
     forecasting_cfg = ForecastingConfig(
@@ -34,9 +47,9 @@ def load_run_config(run_path: Path) -> ForecastingEvalConfig:
         daily_start_hour_offset=forecasting_raw.get("daily_start_hour_offset", 0),
     )
 
-    model_cfg = ForecastingModelConfig(**raw_cfg.get("model", {}))
-    features_cfg = FeaturesConfig(**raw_cfg.get("features", {}))
-    output_cfg = OutputConfig(**raw_cfg.get("output", {}))
+    model_cfg = ForecastingModelConfig(**_known_fields(ForecastingModelConfig, raw_cfg.get("model", {})))
+    features_cfg = FeaturesConfig(**_known_fields(FeaturesConfig, raw_cfg.get("features", {})))
+    output_cfg = OutputConfig(**_known_fields(OutputConfig, raw_cfg.get("output", {})))
 
     return ForecastingEvalConfig(
         seed=raw_cfg.get("seed", 42),
