@@ -47,6 +47,29 @@ def _public_inputs(td):
     return [seg.as_array() for seg in td.inputs]
 
 
+def _spec_inputs(loader, spec, td, ttype, streaming, with_labels):
+    """Per-participant data for a DataSpec model: a streamed :class:`CohortView`, or its
+    eager drain to a list.
+
+    The eager drain is byte-identical to ``_public_inputs`` for an equivalent legacy
+    hourly-day model — both ultimately call ``loader.participant(...).as_array()`` — so
+    routing a hourly-day model through here is a no-op on the data it sees.
+    """
+    from downstream_evaluation.data.cohort import CohortView
+
+    cohort = CohortView(
+        loader,
+        spec,
+        td.user_ids,
+        td.dates,
+        td.labels if with_labels else None,
+        ttype,
+        td.task,
+        td.split,
+    )
+    return cohort if streaming else [cohort.load(u) for u in cohort.user_ids]
+
+
 def _set_context(model, td) -> None:
     """Hand a unified Method its per-(task, split) context, if it defines the hook.
 
@@ -70,18 +93,27 @@ class DownstreamEvaluator:
         """
         self.predictions_dir = predictions_dir
 
-    def run(self, provider, loader, model, tasks: list[str]) -> dict[str, dict]:
-        """Evaluate ``model`` on each task; returns ``{task: {**metrics, n_test}}``."""
+    def run(self, provider, loader, model, tasks: list[str], spec=None) -> dict[str, dict]:
+        """Evaluate ``model`` on each task; returns ``{task: {**metrics, n_test}}``.
+
+        ``spec`` (an :class:`~openmhc.DataSpec`) routes the model through the CohortView
+        path; ``None`` is the legacy per-cohort ``bind`` path, unchanged.
+        """
+        streaming = bool(
+            spec is not None and (spec.is_streaming_required or getattr(model, "streaming", False))
+        )
         results: dict[str, dict] = {}
         for task in tasks:
             train_td = provider.task_data(task, "train")
             test_td = provider.task_data(task, "test")
-            if loader is not None:
+            if spec is None and loader is not None:
                 train_td, test_td = loader.bind(train_td), loader.bind(test_td)
             if len(train_td.user_ids) == 0 or len(test_td.user_ids) == 0:
                 logger.warning("task %s: empty train/test split, skipping", task)
                 continue
-            y_true, y_pred = self._eval_task(model, task, train_td, test_td)
+            y_true, y_pred = self._eval_task(
+                model, task, train_td, test_td, loader, spec, streaming
+            )
             results[task] = {**_metrics_for(task, y_true, y_pred), "n_test": int(len(y_true))}
             if self.predictions_dir is not None:
                 from downstream_evaluation.evaluation.predictions_io import (
@@ -99,17 +131,25 @@ class DownstreamEvaluator:
             logger.info("  %s: n_test=%d", task, len(y_true))
         return results
 
-    def _eval_task(self, model, task: str, train_td, test_td):
+    def _eval_task(
+        self, model, task: str, train_td, test_td, loader=None, spec=None, streaming=False
+    ):
         """Evaluate one task; returns ``(y_true, y_pred)`` for the test split.
 
         The model sees clean per-participant arrays + labels + ``task_type`` (the
-        :class:`~openmhc.Method` contract). The optional ``set_context`` hook hands
-        bundled baselines their cohort identity (``user_ids`` / ``task``) before
-        each call; external methods omit it.
+        :class:`~openmhc.Method` contract). With a ``spec`` the data arrives via a
+        :class:`~downstream_evaluation.data.cohort.CohortView` (streamed, or drained to a
+        list); without one it is the legacy bound ``_public_inputs``. The optional
+        ``set_context`` hook hands bundled baselines their cohort identity (``user_ids`` /
+        ``task``) before each call; external methods omit it.
         """
         ttype = get_task_type(task)
-        train_data = _public_inputs(train_td)
-        test_data = _public_inputs(test_td)
+        if spec is None:
+            train_data = _public_inputs(train_td)
+            test_data = _public_inputs(test_td)
+        else:
+            train_data = _spec_inputs(loader, spec, train_td, ttype, streaming, with_labels=True)
+            test_data = _spec_inputs(loader, spec, test_td, ttype, streaming, with_labels=False)
         _set_context(model, train_td)
         model.fit(train_data, train_td.labels, ttype)
         _set_context(model, test_td)

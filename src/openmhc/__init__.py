@@ -15,6 +15,7 @@ Quick start:
 """
 
 from openmhc._constants import MASKING_SCENARIOS, SENSOR_CHANNELS
+from openmhc._data_spec import DataSpec
 from openmhc._dataset import data_dir, download_dataset
 from openmhc._protocols import (
     EvalContext,
@@ -33,6 +34,8 @@ __all__ = [
     # Protocols
     "Method",
     "EvalContext",
+    "DataSpec",
+    "CohortView",
     "Imputer",
     "Forecaster",
     # Standard probe (turns embeddings into predictions)
@@ -55,6 +58,20 @@ __all__ = [
 ]
 
 
+def __getattr__(name: str):
+    """Lazily expose engine-backed public types without eagerly importing the engine.
+
+    ``CohortView`` lives in the internal engine (it wraps the loader); external models
+    only ever *receive* one, so we defer its import to first access — keeping
+    ``import openmhc`` light, as the rest of this package does.
+    """
+    if name == "CohortView":
+        from downstream_evaluation.data.cohort import CohortView
+
+        return CohortView
+    raise AttributeError(f"module 'openmhc' has no attribute {name!r}")
+
+
 def evaluate_prediction(
     model: Method,
     tasks: str | list[str] = "all",
@@ -67,8 +84,9 @@ def evaluate_prediction(
     Args:
         model: Object implementing the :class:`Method` protocol —
             ``fit(data, labels, task_type)`` / ``predict(data)`` on per-participant
-            arrays. Encoder-style models run :class:`LinearProbe` inside
-            ``fit`` / ``predict``.
+            arrays. Declare input shape via ``data_spec`` (see :class:`DataSpec`); ``data``
+            is a list, or a streamed :class:`CohortView` for large specs. Encoder-style
+            models run :class:`LinearProbe` inside ``fit`` / ``predict``.
         tasks: "all" to run the 32 benchmark tasks, or a list of task names.
         data_dir: Path to the `daily_hourly_hf` dataset directory.
             None uses the default location.

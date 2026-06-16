@@ -64,6 +64,18 @@ def _day(d) -> str:
     return s[:10]
 
 
+def _to_public_minute(values_nan_cf: np.ndarray) -> np.ndarray:
+    """``(n, 19, 1440)`` NaN-at-missing channel-first -> public ``(n, 1440, 38)``.
+
+    Transposes to time-first and appends a ``1 = missing`` mask (``isnan``), mirroring
+    the hourly :meth:`ParticipantSegments.as_array` contract. Pure numpy (no torch / no
+    dataset), so the layout is unit-testable in isolation.
+    """
+    v = np.ascontiguousarray(np.asarray(values_nan_cf, dtype=np.float32).transpose(0, 2, 1))
+    mask = np.isnan(v).astype(np.float32)
+    return np.concatenate([v, mask], axis=-1)
+
+
 class _RawDailyRows:
     """Row-position view of the store in the raw on-disk form.
 
@@ -280,6 +292,30 @@ class DataLoader:
             [np.asarray(self._minute_vals[i]["values"], dtype=np.float32) for i, _ in pairs]
         )
         return vals, [k for _, k in pairs]
+
+    def participant_minute_public(self, user_id, dates) -> np.ndarray:
+        """One participant's minute days in the public ``(n, 1440, 38)`` form.
+
+        The minute twin of :meth:`participant`'s ``as_array``: channels 0-18 are sensor
+        values with NaN at missing positions, 19-37 the ``1 = missing`` mask. ``daily_hf``
+        stores zero-filled ``(19, 1440)`` values with no mask column, so missingness is
+        recovered with ``ZeroToNaNTransform`` (the per-channel heuristic — a naive ``== 0``
+        is wrong), exactly as the minute imputation / MAE paths do. Requires
+        ``resolution='minute'``.
+        """
+        import torch
+
+        from data.transforms.nan_transforms import ZeroToNaNTransform
+
+        values, _ = self.participant_minute(user_id, dates)  # (n, 19, 1440) zero-filled
+        if len(values) == 0:
+            return np.empty((0, _MINUTES_PER_DAY, 2 * _N_CHANNELS), dtype=np.float32)
+        zero_to_nan = ZeroToNaNTransform()
+        nan_cf = np.stack([
+            zero_to_nan(torch.from_numpy(np.ascontiguousarray(day, dtype=np.float32))).numpy()
+            for day in values
+        ])  # (n, 19, 1440) NaN at missing
+        return _to_public_minute(nan_cf)
 
     def bind(self, td: TaskData) -> TaskData:
         """Fill ``td.inputs`` with one :class:`ParticipantSegments` per cohort user,

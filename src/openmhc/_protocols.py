@@ -7,7 +7,7 @@ No base class inheritance required -- just implement the right methods.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from typing import Iterable, Protocol, runtime_checkable
 
 import numpy as np
 
@@ -55,37 +55,56 @@ class Method(Protocol):
     ``fit`` / ``predict`` — so its score still reflects the representation, not the
     choice of classifier — while an end-to-end method owns its head directly.
 
-    ``data`` is a list with one entry per participant, at ``input_granularity``
-    (default ``"daily"`` → each entry ``(n_segments, 24, 38)``: channels 0-18 raw
-    sensor values with NaN at missing positions, 19-37 the missingness mask).
-    ``labels`` is a ``(n,)`` array aligned with ``data``. ``task_type`` is one of
-    ``"binary"``, ``"multiclass"``, ``"ordinal"``, ``"regression"``.
+    **Choose your input shape** with ``data_spec = DataSpec(resolution, window)``
+    (see :class:`~openmhc.DataSpec`):
 
-    A model may also define the optional ``set_context(ctx: EvalContext)`` hook; the
-    engine calls it before ``fit`` and again before ``predict`` (bundled baselines
-    only — see :class:`EvalContext`).
+    - ``DataSpec("hourly", "day")``       → each participant ``(n_days, 24, 38)``
+    - ``DataSpec("hourly", "series", N)`` → each participant ``(N, 38)`` (one continuous window)
+    - ``DataSpec("minute", "day")``       → each participant ``(n_days, 1440, 38)``
 
-    Example (encoder-style, via the uniform probe)::
+    Channels are always 0-18 raw sensor values (NaN at missing positions) and 19-37 the
+    missingness mask (1 = missing). ``labels`` is a ``(n,)`` array aligned with the cohort;
+    ``task_type`` is ``"binary"`` / ``"multiclass"`` / ``"ordinal"`` / ``"regression"``.
 
+    **Consuming ``data``** — iterate it to get one participant's array at a time::
+
+        for x in data: ...        # x is that participant's array, shaped to your data_spec
+
+    For small (hourly) specs ``data`` is a plain ``list``; for large specs (``minute``, or
+    whenever you set ``streaming = True``) it is a streamed :class:`~openmhc.CohortView`
+    that yields the *same* per-participant arrays one at a time, so the whole cohort never
+    sits in memory. **Iterate — don't index** (``data[i]``) **or stack the raw cohort**
+    (``np.stack(data)``): those force everything into RAM and break streaming. Encoding each
+    participant and stacking the small results (as below) is always safe.
+
+    A model may also define the optional ``set_context(ctx: EvalContext)`` hook, called
+    before ``fit`` and ``predict`` (bundled baselines only — see :class:`EvalContext`). A
+    model without a ``data_spec`` falls back to the legacy ``input_granularity = "daily"``
+    (equivalent to ``DataSpec("hourly", "day")``).
+
+    Example (encoder-style, via the uniform probe — streaming-safe as written)::
+
+        import numpy as np
         import openmhc
+        from openmhc import DataSpec
 
         class MyMethod:
-            input_granularity = "daily"
+            data_spec = DataSpec("hourly", "day")            # (n_days, 24, 38) per participant
 
             def fit(self, data, labels, task_type):
-                emb = np.stack([self._encode(x) for x in data])
+                emb = np.stack([self._encode(x) for x in data])   # iterate; stack small embeddings
                 self._probe = openmhc.LinearProbe(task_type).fit(emb, labels)
 
             def predict(self, data):
                 return self._probe.predict(np.stack([self._encode(x) for x in data]))
     """
 
-    def fit(self, data: list[np.ndarray], labels: np.ndarray, task_type: str) -> None:
-        """Fit on the train cohort: per-participant ``data`` + aligned ``labels``."""
+    def fit(self, data: Iterable[np.ndarray], labels: np.ndarray, task_type: str) -> None:
+        """Fit on the train cohort: per-participant ``data`` (iterate it) + aligned ``labels``."""
         ...
 
-    def predict(self, data: list[np.ndarray]) -> np.ndarray:
-        """Return one prediction per participant, aligned with ``data``."""
+    def predict(self, data: Iterable[np.ndarray]) -> np.ndarray:
+        """Return one prediction per participant, in ``data`` order."""
         ...
 
 

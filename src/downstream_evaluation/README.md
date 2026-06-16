@@ -134,9 +134,10 @@ Implement `fit` / `predict` and hand the model to the benchmark — no base clas
 ```python
 import numpy as np
 import openmhc
+from openmhc import DataSpec
 
 class MyEncoderMethod:
-    input_granularity = "daily"          # the benchmark hands you daily segments
+    data_spec = DataSpec("hourly", "day")    # your input shape — see "Input shapes" below
 
     def _encode(self, data: np.ndarray) -> np.ndarray:
         # data: (n_days, 24, 38) — one participant's eligible days.
@@ -164,9 +165,10 @@ results.to_csv("my_results.csv")     # full long-format results
 ```python
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+from openmhc import DataSpec
 
 class MyEndToEndMethod:
-    input_granularity = "daily"
+    data_spec = DataSpec("hourly", "day")
 
     def _features(self, data):
         return np.stack([np.nan_to_num(x).reshape(-1, 38).mean(0) for x in data])
@@ -183,14 +185,37 @@ class MyEndToEndMethod:
         return self._model.predict(X)                    # ordinal/multiclass: levels; regression: values
 ```
 
-The contract, in full:
+**Input shapes.** Declare what each participant's data looks like with `data_spec`:
 
-- `fit(data, labels, task_type)` — `data` is a list with one `(n_days, 24, 38)` array per participant; `labels` aligns with it; `task_type` is one of `"binary"`, `"multiclass"`, `"ordinal"`, `"regression"`.
-- `predict(data)` — return one prediction per participant, aligned with `data`. For **binary** tasks return a continuous score / probability of the positive class (AUPRC needs a ranking, not hard labels); for ordinal/multiclass return class levels; for regression, values.
-- Both styles may train, pretrain, or be training-free — the style choice is only about the head, and it decides which paper rows you are comparable with.
-- Cohorts, eligibility, and time windows are the benchmark's job — your model only ever sees eligible data, and cannot get the cohort wrong.
+| `data_spec` | each participant |
+|---|---|
+| `DataSpec("hourly", "day")` | `(n_days, 24, 38)` |
+| `DataSpec("hourly", "series", N)` | `(N, 38)` — one continuous window |
+| `DataSpec("minute", "day")` | `(n_days, 1440, 38)` |
 
-`evaluate_prediction(model, tasks="all", data_dir=None, seed=42)` returns a `PredictionResults` with `.summary()`, `.to_csv()`, `.to_json()`, and `.to_dataframe()`. `tasks="all"` runs the 32 benchmark tasks (`openmhc.list_tasks()`); `data_dir` defaults to the `MHC_DATA_DIR` env var.
+Channels 0-18 are sensor values (NaN at missing), 19-37 the missingness mask. Iterate `data` for one participant at a time — `minute` (and other large) specs stream, so don't index `data[i]` or stack the whole cohort.
+
+**Memory.** Why iterate instead of stacking? For `hourly` specs the whole cohort is small (a few GB), so `data` is just a list. For `minute` (and other large) specs the full cohort is hundreds of GB — far past RAM — so the benchmark *streams* it: `data` is a `CohortView` that hands you one participant at a time and never holds the whole cohort at once. Peak memory then stays at roughly one participant (plus whatever you accumulate), **independent of cohort size** — as long as you iterate and don't stack the raw `data`.
+
+**The contract.** You implement two methods.
+
+`fit(data, labels, task_type)` — train on the cohort:
+
+- `data` — iterate it, one participant's array at a time (a list; a streamed `CohortView` for large specs — see *Input shapes*).
+- `labels` — one per participant, aligned with the cohort.
+- `task_type` — `"binary"`, `"multiclass"`, `"ordinal"`, or `"regression"`.
+
+`predict(data)` — return one prediction per participant, in `data` order. What to return depends on the task:
+
+| `task_type` | return per participant |
+|---|---|
+| `binary` | score / probability of the positive class — a ranking, **not** 0/1 labels (AUPRC needs it) |
+| `multiclass` / `ordinal` | the class level |
+| `regression` | the value |
+
+The benchmark owns the cohort and eligibility — who's included, and which of each participant's dates count (full history by default) — so your model only ever sees eligible data and can't get the cohort wrong. Encoder vs end-to-end may train, pretrain, or be training-free; the style only decides which paper rows you're comparable with.
+
+Run it with `openmhc.evaluate_prediction(model)` → a `PredictionResults` (`.summary()`, `.to_csv()`, `.to_json()`, `.to_dataframe()`). `tasks="all"` runs all 32 tasks (`openmhc.list_tasks()`); `data_dir` defaults to `$MHC_DATA_DIR`.
 
 ## Requirements
 

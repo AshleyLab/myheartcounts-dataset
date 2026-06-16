@@ -37,28 +37,42 @@ def run_eval(config: EvalConfig, model) -> dict[str, dict]:
 
     Returns ``{task: {**metrics, "n_test": int}, "config": {...}}``.
     """
-    grain = getattr(model, "input_granularity", "daily")
+    # A model declares its input shape either via the structured ``data_spec``
+    # (:class:`~openmhc.DataSpec`, the single source of truth) or the legacy loose attrs
+    # (``input_granularity`` / ``segment_resolution``). DataSpec is additive: models
+    # without it follow the exact legacy path below, so existing baselines are unchanged.
+    spec = getattr(model, "data_spec", None)
+    grain = spec.provider_granularity if spec is not None else getattr(model, "input_granularity", "daily")
     lookup = f"{config.data_dir}/processed/{lookup_filename(grain, config.temporal.is_full_history)}"
     provider = TaskDataProvider(lookup, config.split_users, granularity=grain)
-    # Cache-based models (precomputed per-user features/embeddings) declare
-    # needs_segments=False and skip the loader's per-cohort binding. Global-fit models
-    # (GRU-D, MultiRocket) also set needs_segments=False but consume the whole segment
-    # store via a set_loader hook. Build the single loader whenever either path is needed,
-    # and inject it for whole-store consumers. The store resolution is the model's choice:
-    # "hourly" (daily_hourly_hf, default) or "minute" (daily_hf, for MAE/XGBoost).
-    needs_segments = getattr(model, "needs_segments", True)
-    wants_loader = hasattr(model, "set_loader")
-    loader = (
-        DataLoader(
-            config.data_dir,
-            granularity=grain,
-            resolution=getattr(model, "segment_resolution", "hourly"),
+
+    if spec is not None:
+        # DataSpec models: build a loader at the spec's resolution; the evaluator builds a
+        # per-(task, split) CohortView and chooses eager-list vs streamed delivery from the
+        # spec. The loader always serves daily segments (series is windowed on top).
+        loader = DataLoader(config.data_dir, granularity="daily", resolution=spec.loader_resolution)
+        loader_for_run = loader
+    else:
+        # Legacy path (unchanged). Cache-based models (precomputed per-user features/
+        # embeddings) declare needs_segments=False and skip the loader's per-cohort binding;
+        # global-fit models (GRU-D, MultiRocket) also set needs_segments=False but consume the
+        # whole segment store via a set_loader hook. Build the single loader whenever either
+        # path is needed, and inject it for whole-store consumers. The store resolution is the
+        # model's choice: "hourly" (daily_hourly_hf, default) or "minute" (daily_hf).
+        needs_segments = getattr(model, "needs_segments", True)
+        wants_loader = hasattr(model, "set_loader")
+        loader = (
+            DataLoader(
+                config.data_dir,
+                granularity=grain,
+                resolution=getattr(model, "segment_resolution", "hourly"),
+            )
+            if (needs_segments or wants_loader)
+            else None
         )
-        if (needs_segments or wants_loader)
-        else None
-    )
-    if loader is not None and wants_loader:
-        model.set_loader(loader)
+        if loader is not None and wants_loader:
+            model.set_loader(loader)
+        loader_for_run = loader if needs_segments else None
 
     # Hand the temporal-window policy to models that build their own windows from raw
     # (Toto/Chronos-2); cohort/lookup models ignore it (their window is baked into the
@@ -69,7 +83,7 @@ def run_eval(config: EvalConfig, model) -> dict[str, dict]:
     logger.info("Running prediction eval (granularity=%s) on %d tasks", grain, len(config.tasks))
 
     evaluator = DownstreamEvaluator(predictions_dir=config.predictions_dir)
-    results = evaluator.run(provider, loader if needs_segments else None, model, config.tasks)
+    results = evaluator.run(provider, loader_for_run, model, config.tasks, spec=spec)
 
     # Predictions export: alongside the per-(method, task) parquets the evaluator
     # wrote, persist one shared per-user subgroup map (age_group + sex) for the
