@@ -22,7 +22,9 @@
 #SBATCH --error=/scratch/users/%u/logs/openmhc/paper_bootstrap_%j.err
 
 # shellcheck disable=SC1091
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_common.sh"
+# Use absolute path: sbatch copies the script to /var/spool/slurmd at run
+# time, so $BASH_SOURCE doesn't point at the in-repo sibling _common.sh.
+source /home/users/schuetzn/myheartcounts-dataset/jobs/sherlock/imputation_eval/_common.sh
 
 python scripts/paper_results/run_paper_pipeline.py \
   --sweep-config jobs/sherlock/imputation_eval/sweep_methods.yaml \

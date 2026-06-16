@@ -68,19 +68,19 @@ methods:
   - {name: personalized_mode}
   - {name: personalized_temporal_mean}
   - name: brits
-    overrides: [method.release_dir=${RELEASES}/brits]
+    overrides: ["method.release_dir=${RELEASES}/brits"]
   - name: dlinear
-    overrides: [method.release_dir=${RELEASES}/dlinear]
+    overrides: ["method.release_dir=${RELEASES}/dlinear"]
   # 7-day DLinear (W&B v48). Note the release dir is dlinear-7day (kebab),
   # decoupled from the registry key dlinear_weekly. Sweep entry name must
   # match the registry key; the path lives only in the override.
   - name: dlinear_weekly
-    overrides: [method.release_dir=${RELEASES}/dlinear-7day]
+    overrides: ["method.release_dir=${RELEASES}/dlinear-7day"]
   - name: fedformer
-    overrides: [method.release_dir=${RELEASES}/fedformer]
+    overrides: ["method.release_dir=${RELEASES}/fedformer"]
   - name: timesnet
-    overrides: [method.release_dir=${RELEASES}/timesnet]
+    overrides: ["method.release_dir=${RELEASES}/timesnet"]
   - name: lsm2
-    overrides: [method.release_dir=${RELEASES}/lsm2]
+    overrides: ["method.release_dir=${RELEASES}/lsm2"]
   - name: lsm2_weekly_sparse
-    overrides: [method.release_dir=${RELEASES}/lsm2_weekly_sparse]
+    overrides: ["method.release_dir=${RELEASES}/lsm2_weekly_sparse"]
