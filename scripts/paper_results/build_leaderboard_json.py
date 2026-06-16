@@ -11,6 +11,11 @@ Section headers ("Daily (single-day) methods" /
 "Personalized-context (extended-history) methods") and downstream/forecasting
 arrays are preserved verbatim. `generated_at` is bumped to today.
 
+Method order within each section is derived from the bootstrapped skill
+scores at render time (descending mean); the static registry only carries
+the (csv_key -> display_name, mtype) mapping. Order changes are visible
+in the printed before/after diff and (more importantly) in the website PR.
+
 Usage:
     python scripts/paper_results/build_leaderboard_json.py \
         --current  /tmp/leaderboard_canonical.json \
@@ -23,39 +28,39 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import sys
 from datetime import date
 from pathlib import Path
 
 
 # ---------------------------------------------------------------------------
-# Method registry — order within each list is the display order in the JSON,
-# which the schema doc expects to coincide with skill-score ranking. The
-# script asserts this at render time and will fail loudly if a CSV refresh
-# reorders methods within a section.
+# Method registry — static metadata only (display name + category). Display
+# order in the JSON is computed at render time from the bootstrapped skill
+# scores; the dict insertion order is irrelevant.
 # ---------------------------------------------------------------------------
 
-# (csv_key, display_name, mtype)
-DAILY: list[tuple[str, str, str]] = [
-    ("lsm2",          "LSM-2 (daily)",   "Self-Supervised"),
-    ("linear",        "Linear",          "Statistical"),
-    ("dlinear",       "DLinear",         "Deep Learning"),
-    ("temporal_mean", "Temporal mean",   "Statistical"),
-    ("locf",          "LOCF (baseline)", "Statistical"),
-    ("brits",         "BRITS",           "Deep Learning"),
-    ("timesnet",      "TimesNet",        "Deep Learning"),
-    ("temporal_mode", "Temporal mode",   "Statistical"),
-    ("fedformer",     "FEDformer",       "Deep Learning"),
-    ("mode",          "Mode",            "Statistical"),
-    ("mean",          "Mean",            "Statistical"),
-]
+# csv_key -> (display_name, mtype)
+DAILY_META: dict[str, tuple[str, str]] = {
+    "lsm2":          ("LSM-2 (daily)",   "Self-Supervised"),
+    "linear":        ("Linear",          "Statistical"),
+    "dlinear":       ("DLinear",         "Deep Learning"),
+    "temporal_mean": ("Temporal mean",   "Statistical"),
+    "locf":          ("LOCF (baseline)", "Statistical"),
+    "brits":         ("BRITS",           "Deep Learning"),
+    "timesnet":      ("TimesNet",        "Deep Learning"),
+    "temporal_mode": ("Temporal mode",   "Statistical"),
+    "fedformer":     ("FEDformer",       "Deep Learning"),
+    "mode":          ("Mode",            "Statistical"),
+    "mean":          ("Mean",            "Statistical"),
+}
 
-PERSONALIZED: list[tuple[str, str, str]] = [
-    ("lsm2_weekly_sparse",         "LSM-2-Sparse (7-day)", "Self-Supervised"),
-    ("personalized_temporal_mean", "Pers. temp. mean",     "Statistical"),
-    ("personalized_mean",          "Pers. mean",           "Statistical"),
-    ("dlinear_weekly",             "DLinear (7-day)",      "Deep Learning"),
-    ("personalized_mode",          "Pers. mode",           "Statistical"),
-]
+PERSONALIZED_META: dict[str, tuple[str, str]] = {
+    "lsm2_weekly_sparse":         ("LSM-2-Sparse (7-day)", "Self-Supervised"),
+    "personalized_temporal_mean": ("Pers. temp. mean",     "Statistical"),
+    "personalized_mean":          ("Pers. mean",           "Statistical"),
+    "dlinear_weekly":             ("DLinear (7-day)",      "Deep Learning"),
+    "personalized_mode":          ("Pers. mode",           "Statistical"),
+}
 
 DAILY_HEADER = "Daily (single-day) methods"
 PERSONALIZED_HEADER = "Personalized-context (extended-history) methods"
@@ -123,27 +128,29 @@ def _fmt_rank(r: float) -> str:
 
 
 def _build_section(
-    section_methods: list[tuple[str, str, str]],
+    meta: dict[str, tuple[str, str]],
     *,
     skill: dict[str, float],
     fair: dict[str, float],
     rank: dict[str, float],
     subs: dict[str, dict[str, float]],
     submitted_on: str,
+    section_label: str = "",
 ) -> list[dict]:
-    """Render method rows for one section. Verifies ordering by skill desc."""
-    # Verify the static list is already in descending skill order.
-    skill_scores = [skill[k] for k, _, _ in section_methods]
-    if skill_scores != sorted(skill_scores, reverse=True):
-        ordered = sorted(section_methods, key=lambda x: -skill[x[0]])
-        raise SystemExit(
-            "Section order mismatch — CSV ranks no longer agree with hard-coded "
-            f"section order. Update DAILY / PERSONALIZED to match: "
-            f"{[k for k, _, _ in ordered]}"
-        )
+    """Render method rows for one section, sorted by descending skill score.
+
+    ``meta`` maps csv_key -> (display_name, mtype); ``sectionRank`` and the
+    array position are derived from ``skill`` at render time so a CSV refresh
+    automatically reflows the leaderboard.
+    """
+    ordered_keys = sorted(meta, key=lambda k: -skill[k])
+    if section_label:
+        pretty = ", ".join(f"{k}={skill[k]:+.3f}" for k in ordered_keys)
+        print(f"[section] {section_label}: {pretty}", file=sys.stderr)
 
     rows: list[dict] = []
-    for i, (key, display, mtype) in enumerate(section_methods, start=1):
+    for i, key in enumerate(ordered_keys, start=1):
+        display, mtype = meta[key]
         sg = subs.get(key, {})
         rows.append({
             "type": "method",
@@ -177,13 +184,13 @@ def _build_imputation(
     out: list[dict] = []
     out.append({"type": "h1", "text": DAILY_HEADER})
     out.extend(_build_section(
-        DAILY, skill=skill, fair=fair, rank=rank, subs=subs,
-        submitted_on=submitted_on,
+        DAILY_META, skill=skill, fair=fair, rank=rank, subs=subs,
+        submitted_on=submitted_on, section_label="daily",
     ))
     out.append({"type": "h1", "text": PERSONALIZED_HEADER})
     out.extend(_build_section(
-        PERSONALIZED, skill=skill, fair=fair, rank=rank, subs=subs,
-        submitted_on=submitted_on,
+        PERSONALIZED_META, skill=skill, fair=fair, rank=rank, subs=subs,
+        submitted_on=submitted_on, section_label="personalized",
     ))
     return out
 
@@ -232,7 +239,7 @@ def main() -> None:
     rank  = _load_overall(paper_dir / "avg_rankings_bootstrap.csv")
     subs  = _load_subgroups(paper_dir / "skill_scores_bootstrap.csv")
 
-    missing = [k for k, _, _ in DAILY + PERSONALIZED if k not in skill]
+    missing = [k for k in (*DAILY_META, *PERSONALIZED_META) if k not in skill]
     if missing:
         raise SystemExit(f"Missing methods in skill_scores CSV: {missing}")
 
