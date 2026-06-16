@@ -1412,8 +1412,20 @@ def aggregate_skill_rank_fairness(
                         ]
                         if sub.empty:
                             continue
+                        # Drop the per-cell ``R`` column here so
+                        # ``_skill_for_draw`` falls through to the legacy
+                        # E + ``baseline_errors`` path: the documented
+                        # semantics of this deprecated fairness loop are
+                        # "subgroup method E vs **global** baseline E"
+                        # (``bl_global``), and Phase 1's ``R`` was paired
+                        # per-user *inside* the subgroup cell — a different
+                        # pairing. The leaderboard's fair_skill_score is the
+                        # disparity-ratio path in
+                        # ``compute_fair_skill_scores`` and is unaffected
+                        # (it consumes ``E`` directly).
+                        sub_no_R = sub.drop(columns=["R"], errors="ignore")
                         skill_sg = _skill_for_draw(
-                            sub,
+                            sub_no_R,
                             baseline_errors=bl_global,
                             clip_lower=clip_lower,
                             clip_upper=clip_upper,
