@@ -36,7 +36,6 @@ import numpy as np
 import pandas as pd
 
 from data.processing.hf_config import CONTINUOUS_CHANNEL_INDICES, N_CHANNELS
-
 from imputation_evaluation.evaluation.pair_aggregator import (
     aggregate_pairs,
     aggregate_pairs_by_subgroup,
@@ -206,11 +205,14 @@ def _per_channel_to_rows(
             "channel_type": _channel_type(ch),
             "subgroup_attr": subgroup_attr,
             "subgroup_value": subgroup_value,
-            # extract_errors() defaults to RMSE (skill-input metric); nRMSE
-            # is preserved alongside for cross-channel-comparable
-            # absolute-value reporting in human-read tables (raw RMSE has
-            # heterogeneous units — bpm vs steps — and isn't comparable
-            # across channels). roc_auc drives E = 1 - AUC for binary tasks.
+            # extract_errors() defaults to MAE (skill-input metric, parity
+            # with Track 3 forecasting); nMAE/RMSE/nRMSE are preserved
+            # alongside for cross-channel-comparable absolute-value reporting
+            # in human-read tables (raw RMSE/MAE have heterogeneous units —
+            # bpm vs steps — and aren't comparable across channels). roc_auc
+            # drives E = 1 - AUC for binary tasks.
+            "MAE": float(m.get("mae", np.nan)),
+            "nMAE": float(m.get("normalized_mae", np.nan)),
             "RMSE": float(m.get("rmse", np.nan)),
             "nRMSE": float(m.get("normalized_rmse", np.nan)),
             "roc_auc": float(m.get("roc_auc", np.nan)),

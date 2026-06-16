@@ -43,7 +43,6 @@ from data.processing.hf_config import CONTINUOUS_CHANNEL_INDICES, N_CHANNELS
 # Importing from bootstrap.py — these helpers are battle-tested.
 from imputation_evaluation.evaluation.bootstrap import (
     _bootstrap_indices,
-    _continuous_metrics_from_sums,
     _summarize,
 )
 from imputation_evaluation.evaluation.disparity_metrics import (
@@ -52,6 +51,7 @@ from imputation_evaluation.evaluation.disparity_metrics import (
     disparity_higher_is_better,
 )
 from imputation_evaluation.evaluation.paper_metrics_core import (
+    BASELINE_CONTINUOUS,
     BINARY_CATEGORIES_ORDERED,
     EXCLUDE_BINARY_SCENARIOS,
     build_baseline_errors,
@@ -67,6 +67,16 @@ logger = logging.getLogger(__name__)
 # --------------------------------------------------------------------------
 
 ALL_KEY = ("all", "all")  # sentinel cell for the global / non-subgroup metrics
+
+# Skill-score constants — mirror forecasting_evaluation/metrics/metric_spec.py
+# so the two tracks share an estimand. ``BINARY_ERROR_FLOOR`` is the ε on
+# binary E = 1 − AUC so a perfect-AUC user contributes a finite paired ratio
+# instead of being dropped by the ``baseline > 0`` filter. Continuous E is
+# unfloored. Clip bounds apply to the paired ratio, not to E directly.
+SKILL_CLIP_LOWER = 0.01
+SKILL_CLIP_UPPER = 100.0
+SKILL_MIN_PAIRS = 1
+BINARY_ERROR_FLOOR = 0.005
 
 
 # --------------------------------------------------------------------------
@@ -488,17 +498,24 @@ def _per_method_cell_errors(
     faster than the prior cell-micro path's per-draw Mann–Whitney AUC
     recomputation.
 
-    Continuous channels: ``E = RMSE`` (per-user macro mean of per-user RMSE).
-    nRMSE was the previous default, but per-channel
-    ``RMSE_method / RMSE_baseline = nRMSE_method / nRMSE_baseline`` exactly
+    Continuous channels: ``E = MAE`` (per-user macro mean of per-user MAE).
+    Per-user MAE is ``sae_u / n_u`` — sum of absolute errors over all the
+    user's cells, divided by the cell count, then converted once. This is
+    equivalent to forecasting's ``within_user_aggregation="micro"`` by
+    construction; imputation has no per-window intermediary, so no
+    aggregation-mode knob is needed. Per-channel
+    ``MAE_method / MAE_baseline = nMAE_method / nMAE_baseline`` exactly
     (``channel_std`` cancels in the per-task ratio), so the skill score is
-    numerically identical and reporting RMSE keeps the leaderboard columns
-    in their natural units. ``channel_stds`` is retained on the signature
-    for backward compatibility but no longer affects the returned E.
+    numerically identical to the normalized version. ``channel_stds`` is
+    retained on the signature for backward compatibility but no longer
+    affects the returned E.
 
     Binary channels: ``E = 1 − AUC`` where AUC is the per-user AUC macro
     mean. Per-(user, channel) AUC requires both classes within that user;
     single-class users contribute NaN and drop from the per-task mean.
+    Unfloored here — the absolute metric. The
+    :data:`BINARY_ERROR_FLOOR` is applied only inside the paired-ratio
+    reducer (see :func:`_per_method_cell_paired_ratios`).
 
     Channels with no data anywhere (``cell_stats.has_data[ch] == False``) are
     NaN columns.
@@ -507,12 +524,11 @@ def _per_method_cell_errors(
     n_boot = boot_idx.shape[0]
     E = np.full((n_boot, n_channels), np.nan, dtype=np.float64)
 
-    # --- Continuous: per-(user, channel) RMSE, then per-draw user-macro -----
+    # --- Continuous: per-(user, channel) MAE, then per-draw user-macro -----
     n_u_ch = cell_stats.n  # (U, C) int64
-    sse_u_ch = cell_stats.sse  # (U, C) float64
+    sae_u_ch = cell_stats.sae  # (U, C) float64
     with np.errstate(divide="ignore", invalid="ignore"):
-        per_user_mse = np.where(n_u_ch > 0, sse_u_ch / np.maximum(n_u_ch, 1), np.nan)
-    per_user_rmse = np.sqrt(per_user_mse)  # (U, C); NaN where N==0
+        per_user_mae = np.where(n_u_ch > 0, sae_u_ch / np.maximum(n_u_ch, 1), np.nan)
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", RuntimeWarning)  # silence all-NaN slice warnings
@@ -520,7 +536,7 @@ def _per_method_cell_errors(
             if not cell_stats.has_data[ch]:
                 continue
             # boot_idx: (n_boot, n_users_per_draw). Fancy-index user axis.
-            per_draw_rows = per_user_rmse[boot_idx, ch]  # (n_boot, n_users_per_draw)
+            per_draw_rows = per_user_mae[boot_idx, ch]  # (n_boot, n_users_per_draw)
             E[:, ch] = np.nanmean(per_draw_rows, axis=1)
 
     # --- Binary: per-(user, channel) AUC, then per-draw user-macro ---------
@@ -539,6 +555,168 @@ def _per_method_cell_errors(
                 E[:, ch] = 1.0 - mean_auc
 
     return E
+
+
+def _per_user_log_ratio_column(e_m: np.ndarray, e_b: np.ndarray) -> np.ndarray:
+    """Per-user clipped log-ratio column; NaN where the pair filter fails.
+
+    Mirrors ``forecasting_evaluation.metrics.skill_score_summary
+    .compute_skill_from_errors``'s per-pair filtering for a single
+    ``(model, baseline)`` per-user error vector — returns a per-user array
+    of length ``n_users`` with ``log(clip(e_m / e_b, lo, hi))`` where the
+    pair is valid, NaN elsewhere.
+    """
+    n = e_m.shape[0]
+    out = np.full(n, np.nan, dtype=np.float64)
+    valid = np.isfinite(e_m) & np.isfinite(e_b) & (e_b > 0.0)
+    if not np.any(valid):
+        return out
+    ratios = e_m[valid] / e_b[valid]
+    ratios = np.clip(ratios, SKILL_CLIP_LOWER, SKILL_CLIP_UPPER)
+    finite = np.isfinite(ratios) & (ratios > 0.0)
+    valid_idx = np.flatnonzero(valid)
+    keep = valid_idx[finite]
+    out[keep] = np.log(ratios[finite])
+    return out
+
+
+def _per_method_cell_paired_ratios(
+    cell_stats_method: CellStats,
+    cell_stats_baseline: CellStats,
+    boot_idx: np.ndarray,
+    *,
+    include_auc: bool,
+    per_user_auc_method: np.ndarray | None = None,
+    per_user_auc_baseline: np.ndarray | None = None,
+) -> np.ndarray:
+    """Compute ``(n_boot, n_channels)`` per-draw geometric-mean ratio R.
+
+    ``R[b, ch] = exp(nanmean(log(clip(e^M_u / e^B_u, lo, hi))))`` over the
+    surviving resampled users, mirroring ``forecasting_evaluation.metrics
+    .skill_score_summary.compute_skill_from_errors`` at the per-user grain.
+
+    - Continuous per-user error: ``e_u = sae_u / n_u`` (unfloored), NaN where
+      ``n_u == 0``. Same micro-by-construction reasoning as
+      :func:`_per_method_cell_errors`.
+    - Binary per-user error: ``e_u = max(1 − AUC_u, BINARY_ERROR_FLOOR)``.
+      Single-class users have NaN ``AUC_u``; ``np.maximum`` preserves NaN
+      so they drop from the join.
+    - Inner-join on the canonical user index (both ``CellStats`` share the
+      ordering from :func:`compute_user_stats_per_cell`). Drop users where
+      either side is non-finite or ``e^B_u ≤ 0``; clip the ratio to
+      ``[SKILL_CLIP_LOWER, SKILL_CLIP_UPPER]``; drop non-finite or
+      non-positive clipped ratios.
+    - Baseline ≡ self → R ≡ 1, so skill = 1 − R = 0 by construction.
+
+    Channels with no data on either side return NaN columns. Per-draw
+    cells with fewer than :data:`SKILL_MIN_PAIRS` finite log-ratios are
+    NaN.
+    """
+    n_users = cell_stats_method.n.shape[0]
+    n_channels = cell_stats_method.n.shape[1]
+    n_boot = boot_idx.shape[0]
+    R = np.full((n_boot, n_channels), np.nan, dtype=np.float64)
+    log_r = np.full((n_users, n_channels), np.nan, dtype=np.float64)
+
+    # --- Continuous: per-user MAE both sides, then per-user log-ratio -------
+    n_m = cell_stats_method.n
+    sae_m = cell_stats_method.sae
+    n_b = cell_stats_baseline.n
+    sae_b = cell_stats_baseline.sae
+    with np.errstate(divide="ignore", invalid="ignore"):
+        e_m_cont = np.where(n_m > 0, sae_m / np.maximum(n_m, 1), np.nan)
+        e_b_cont = np.where(n_b > 0, sae_b / np.maximum(n_b, 1), np.nan)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        for ch in CONTINUOUS_CHANNEL_INDICES:
+            if not cell_stats_method.has_data[ch] or not cell_stats_baseline.has_data[ch]:
+                continue
+            log_r[:, ch] = _per_user_log_ratio_column(e_m_cont[:, ch], e_b_cont[:, ch])
+
+    # --- Binary: per-user AUC both sides, ε-floored, then per-user log-ratio -
+    if include_auc:
+        if per_user_auc_method is None:
+            per_user_auc_method = _per_user_auc_from_cell_stats(cell_stats_method, n_channels)
+        if per_user_auc_baseline is None:
+            per_user_auc_baseline = _per_user_auc_from_cell_stats(
+                cell_stats_baseline, n_channels
+            )
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            for ch in range(n_channels):
+                if ch in CONTINUOUS_CHANNEL_INDICES:
+                    continue
+                if not cell_stats_method.has_data[ch] or not cell_stats_baseline.has_data[ch]:
+                    continue
+                e_m_bin = np.maximum(1.0 - per_user_auc_method[:, ch], BINARY_ERROR_FLOOR)
+                e_b_bin = np.maximum(1.0 - per_user_auc_baseline[:, ch], BINARY_ERROR_FLOOR)
+                log_r[:, ch] = _per_user_log_ratio_column(e_m_bin, e_b_bin)
+
+    # --- Reduce per-user log-ratios over each draw to per-draw R -----------
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        for ch in range(n_channels):
+            if np.all(np.isnan(log_r[:, ch])):
+                continue
+            per_draw_rows = log_r[boot_idx, ch]  # (n_boot, n_users_per_draw)
+            n_valid_per_draw = np.sum(np.isfinite(per_draw_rows), axis=1)
+            mean_log = np.nanmean(per_draw_rows, axis=1)
+            R[:, ch] = np.where(
+                n_valid_per_draw >= SKILL_MIN_PAIRS, np.exp(mean_log), np.nan
+            )
+
+    return R
+
+
+def _per_method_cell_paired_collapsed_ratios(
+    per_user_auc_method: np.ndarray,
+    per_user_auc_baseline: np.ndarray,
+    boot_idx: np.ndarray,
+    binary_categories: tuple[tuple[str, tuple[int, ...]], ...],
+) -> np.ndarray:
+    """Compute ``(n_boot, n_binary_categories)`` per-draw paired-ratio R.
+
+    Mirrors :func:`_per_method_cell_collapsed_errors` (per-method absolute
+    E for collapsed binary categories) at the paired-ratio level:
+
+    1. Per-(user, category) E for each side = ``nanmean`` over the
+       category's channels of ``max(1 − AUC_u, BINARY_ERROR_FLOOR)``. Users
+       with NaN per-(user, channel) AUC on every channel of the category →
+       NaN per-(user, category) E → drop from the join.
+    2. Inner-join on user, filter ``e^B > 0`` and finiteness, clip the
+       ratio to ``[SKILL_CLIP_LOWER, SKILL_CLIP_UPPER]`` →
+       per-(user, category) log-ratio column.
+    3. Per draw: ``R[b, cat] = exp(nanmean(log_r[boot_idx[b], cat]))`` over
+       the surviving resampled users.
+
+    Returned array preserves the column order of ``binary_categories``.
+    """
+    n_users = per_user_auc_method.shape[0]
+    n_boot = boot_idx.shape[0]
+    n_cats = len(binary_categories)
+    R = np.full((n_boot, n_cats), np.nan, dtype=np.float64)
+    log_r_cat = np.full((n_users, n_cats), np.nan, dtype=np.float64)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        for cat_idx, (_cat_name, ch_indices) in enumerate(binary_categories):
+            cols = np.asarray(ch_indices, dtype=np.int64)
+            sub_m = per_user_auc_method[:, cols]
+            sub_b = per_user_auc_baseline[:, cols]
+            e_u_m = np.nanmean(np.maximum(1.0 - sub_m, BINARY_ERROR_FLOOR), axis=1)
+            e_u_b = np.nanmean(np.maximum(1.0 - sub_b, BINARY_ERROR_FLOOR), axis=1)
+            log_r_cat[:, cat_idx] = _per_user_log_ratio_column(e_u_m, e_u_b)
+
+        for cat_idx in range(n_cats):
+            per_draw_rows = log_r_cat[boot_idx, cat_idx]
+            n_valid_per_draw = np.sum(np.isfinite(per_draw_rows), axis=1)
+            mean_log = np.nanmean(per_draw_rows, axis=1)
+            R[:, cat_idx] = np.where(
+                n_valid_per_draw >= SKILL_MIN_PAIRS, np.exp(mean_log), np.nan
+            )
+
+    return R
 
 
 def _channel_type(ch: int) -> str:
@@ -674,6 +852,7 @@ def compute_per_draw_errors(
     n_boot: int,
     seed: int,
     *,
+    baseline_method: str = BASELINE_CONTINUOUS,
     subgroup_mappings: dict[str, dict[int, dict[str, str]]] | None = None,
     channel_stds: np.ndarray | None = None,
     channel_stds_path: Path | None = None,
@@ -682,7 +861,18 @@ def compute_per_draw_errors(
     n_channels: int = N_CHANNELS,
     progress_logger: Callable[[str], None] = logger.info,
 ) -> pd.DataFrame:
-    """Phase-1 core: build a long-format DataFrame of per-draw errors.
+    """Phase-1 core: build a long-format DataFrame of per-draw errors and ratios.
+
+    Two value columns are emitted per row:
+
+    - ``E`` — per-method absolute, user-macro MAE (continuous) or ``1 − AUC``
+      (binary). This is what :func:`compute_average_rankings` ranks on.
+    - ``R`` — paired geometric-mean ratio of per-user error vs the baseline
+      (``baseline_method``), formed from per-user arrays inside
+      :func:`_per_method_cell_paired_ratios`. This is what
+      :func:`compute_skill_scores` consumes: ``skill = 1 − exp(mean(log R))``
+      over tasks in scope. Baseline-vs-self → R = 1 by construction (each
+      user's ratio is 1), so the baseline's skill is 0.
 
     Args:
         method_dirs: ``{method: pairs_root}`` where ``pairs_root`` contains
@@ -692,6 +882,10 @@ def compute_per_draw_errors(
         splits: split names to process (e.g. ``["test"]``).
         n_boot: number of bootstrap draws.
         seed: master RNG seed; per-split seeds are derived deterministically.
+        baseline_method: name of the method whose ``CellStats`` is used as the
+            paired denominator when forming ``R``. Defaults to
+            :data:`BASELINE_CONTINUOUS` (= ``"locf"``). Rows with no baseline
+            CellStats in their (scenario, cell) keep ``R = NaN``.
         subgroup_mappings: optional ``{split_name: {sample_idx: {attr: val}}}``
             built externally (mirrors ``aggregate_imputation_pairs.py``).
             When provided, per-method manifests are required to agree on the
@@ -709,7 +903,7 @@ def compute_per_draw_errors(
     Returns:
         Long-format DataFrame with columns
         ``[method, scenario, split, channel, channel_type, subgroup_attr,
-        subgroup_value, draw, E]``.
+        subgroup_value, draw, E, R]``.
     """
     methods = list(method_dirs.keys())
     if not methods:
@@ -803,6 +997,21 @@ def compute_per_draw_errors(
             for cell in cells:
                 attr, value = cell
 
+                # Precompute baseline-side per_user_auc once per cell (NaN if
+                # the baseline is missing from this scenario/split). The
+                # baseline's CellStats shares the canonical user index with
+                # every method, so a single cache entry serves all methods.
+                baseline_cs = method_cell_stats.get(baseline_method, {}).get(cell)
+                if baseline_cs is not None and baseline_cs.has_data.any():
+                    if include_auc:
+                        baseline_per_user_auc = _per_user_auc_from_cell_stats(
+                            baseline_cs, n_channels
+                        )
+                    else:
+                        baseline_per_user_auc = None
+                else:
+                    baseline_per_user_auc = None
+
                 for method, cell_stats_map in method_cell_stats.items():
                     cs = cell_stats_map[cell]
                     if not cs.has_data.any():
@@ -811,10 +1020,13 @@ def compute_per_draw_errors(
                     # (method, scenario, cell); reused by both the per-channel
                     # reducer (for binary task E) and the Part D collapsed
                     # reducer below.
-                    if include_auc:
+                    if method == baseline_method:
+                        per_user_auc = baseline_per_user_auc
+                    elif include_auc:
                         per_user_auc = _per_user_auc_from_cell_stats(cs, n_channels)
                     else:
                         per_user_auc = None
+
                     E = _per_method_cell_errors(
                         cs,
                         idx_b,
@@ -822,6 +1034,21 @@ def compute_per_draw_errors(
                         include_auc=include_auc,
                         per_user_auc=per_user_auc,
                     )
+
+                    # Paired ratio R vs baseline. NaN matrix if baseline is
+                    # missing for this cell (paired skill undefined).
+                    if baseline_cs is not None:
+                        R = _per_method_cell_paired_ratios(
+                            cell_stats_method=cs,
+                            cell_stats_baseline=baseline_cs,
+                            boot_idx=idx_b,
+                            include_auc=include_auc,
+                            per_user_auc_method=per_user_auc,
+                            per_user_auc_baseline=baseline_per_user_auc,
+                        )
+                    else:
+                        R = np.full((n_boot, n_channels), np.nan, dtype=np.float64)
+
                     for ch in range(n_channels):
                         if not cs.has_data[ch]:
                             continue
@@ -829,10 +1056,12 @@ def compute_per_draw_errors(
                         if ch_type == "binary" and scenario in EXCLUDE_BINARY_SCENARIOS:
                             continue
                         col_E = E[:, ch].astype(np.float32)
+                        col_R = R[:, ch].astype(np.float32)
                         for b in range(n_boot):
-                            val = col_E[b]
-                            if not np.isfinite(val):
+                            val_E = col_E[b]
+                            if not np.isfinite(val_E):
                                 continue
+                            val_R = col_R[b]
                             rows.append(
                                 {
                                     "method": method,
@@ -843,7 +1072,8 @@ def compute_per_draw_errors(
                                     "subgroup_attr": attr,
                                     "subgroup_value": value,
                                     "draw": int(b),
-                                    "E": float(val),
+                                    "E": float(val_E),
+                                    "R": float(val_R) if np.isfinite(val_R) else float("nan"),
                                 }
                             )
 
@@ -858,12 +1088,27 @@ def compute_per_draw_errors(
                         E_cat = _per_method_cell_collapsed_errors(
                             per_user_auc, idx_b, BINARY_CATEGORIES_ORDERED,
                         )
+                        if baseline_per_user_auc is not None:
+                            R_cat = _per_method_cell_paired_collapsed_ratios(
+                                per_user_auc_method=per_user_auc,
+                                per_user_auc_baseline=baseline_per_user_auc,
+                                boot_idx=idx_b,
+                                binary_categories=BINARY_CATEGORIES_ORDERED,
+                            )
+                        else:
+                            R_cat = np.full(
+                                (n_boot, len(BINARY_CATEGORIES_ORDERED)),
+                                np.nan,
+                                dtype=np.float64,
+                            )
                         for cat_idx, (cat_name, _) in enumerate(BINARY_CATEGORIES_ORDERED):
                             col_E = E_cat[:, cat_idx].astype(np.float32)
+                            col_R = R_cat[:, cat_idx].astype(np.float32)
                             for b in range(n_boot):
-                                val = col_E[b]
-                                if not np.isfinite(val):
+                                val_E = col_E[b]
+                                if not np.isfinite(val_E):
                                     continue
+                                val_R = col_R[b]
                                 rows.append(
                                     {
                                         "method": method,
@@ -874,7 +1119,8 @@ def compute_per_draw_errors(
                                         "subgroup_attr": attr,
                                         "subgroup_value": value,
                                         "draw": int(b),
-                                        "E": float(val),
+                                        "E": float(val_E),
+                                        "R": float(val_R) if np.isfinite(val_R) else float("nan"),
                                     }
                                 )
 
@@ -890,6 +1136,7 @@ def compute_per_draw_errors(
                 "subgroup_value",
                 "draw",
                 "E",
+                "R",
             ]
         )
     return pd.DataFrame(rows)
@@ -909,6 +1156,7 @@ DRAWS_PARQUET_COLUMNS = [
     "subgroup_value",
     "draw",
     "E",
+    "R",
 ]
 
 
@@ -923,6 +1171,7 @@ def write_draws_parquet(
     df = df[DRAWS_PARQUET_COLUMNS].copy()
     df["draw"] = df["draw"].astype("int32")
     df["E"] = df["E"].astype("float32")
+    df["R"] = df["R"].astype("float32")
     for col in (
         "method",
         "scenario",
@@ -958,16 +1207,36 @@ def read_draws_parquet(path: Path) -> tuple[pd.DataFrame, dict | None]:
 def _skill_for_draw(
     draw_errors: pd.DataFrame,
     *,
-    baseline_errors: pd.DataFrame,
+    baseline_errors: pd.DataFrame | None = None,
     clip_lower: float,
     clip_upper: float,
 ) -> pd.DataFrame:
     """Skill score for one draw slice.
 
-    ``baseline_errors`` is the global baseline (e.g. LOCF on the "all" cell
-    at the same draw).
+    Preferred path: ``draw_errors`` carries the per-task ``R`` column emitted
+    by :func:`compute_per_draw_errors` (paired user-bootstrap geomean ratio
+    vs LOCF baseline at the per-user grain). ``compute_skill_scores``
+    consumes ``R`` directly when present and ``baseline_errors`` is ignored.
+
+    Legacy path: when ``R`` is absent (e.g. the deprecated fairness
+    ``S − λ·D`` loop's subgroup-vs-global pairing), pass the global
+    ``baseline_errors`` and the function falls back to forming ``E_M /
+    E_B`` per task.
     """
+    if "R" in draw_errors.columns:
+        cols = ["method", "scenario", "channel", "channel_type", "E", "R"]
+        return compute_skill_scores(
+            draw_errors[cols],
+            None,
+            clip_lower=clip_lower,
+            clip_upper=clip_upper,
+        )
     cols = ["method", "scenario", "channel", "channel_type", "E"]
+    if baseline_errors is None:
+        raise ValueError(
+            "_skill_for_draw: draw_errors has no 'R' column and "
+            "baseline_errors is None — cannot form the skill ratio."
+        )
     return compute_skill_scores(
         draw_errors[cols],
         baseline_errors[cols],

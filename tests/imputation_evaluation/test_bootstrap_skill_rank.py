@@ -44,6 +44,7 @@ def _synthetic_draws(
     """
     if base_error is None:
         base_error = {"locf": 1.0, "mean": 2.0, "linear": 0.5}
+    baseline_mu = float(base_error.get("locf", 1.0))
     rng = np.random.default_rng(seed)
     rows: list[dict] = []
     for method in methods:
@@ -52,6 +53,12 @@ def _synthetic_draws(
                 mu = base_error[method]
                 noise = rng.normal(0, 0.05, size=n_boot)
                 for b, eps in enumerate(noise):
+                    e_val = float(max(1e-6, mu + eps))
+                    # R is the paired ratio against the (idealised) baseline
+                    # error ``base_error["locf"]``; locf-vs-self → R ≈ 1, so
+                    # locf overall skill ≈ 0. ``compute_skill_scores`` consumes
+                    # this directly under the R-mode path.
+                    r_val = e_val / baseline_mu
                     rows.append(
                         {
                             "method": method,
@@ -62,7 +69,8 @@ def _synthetic_draws(
                             "subgroup_attr": "all",
                             "subgroup_value": "all",
                             "draw": int(b),
-                            "E": float(max(1e-6, mu + eps)),
+                            "E": e_val,
+                            "R": r_val,
                         }
                     )
     return pd.DataFrame(rows)

@@ -3,7 +3,9 @@
 The reducer aggregates per-(user, channel) sums into per-channel error E
 under the "users-then-channels" framing: per-task E is the macroaverage
 over users (rather than the cell-pooled micro mean of the prior
-implementation).
+implementation). Continuous E is MAE = ``sae_u / n_u`` (Track-3 parity);
+the helper computes SAE from SSE/N assuming uniform-magnitude per-cell
+errors so the existing fixtures' RMSE-style numbers still apply.
 """
 
 from __future__ import annotations
@@ -27,12 +29,25 @@ def _make_cell_stats(
     n_u_ch: np.ndarray | None = None,
     sse_u_ch: np.ndarray | None = None,
     has_data_channels: list[int] | None = None,
+    sae_u_ch: np.ndarray | None = None,
 ) -> CellStats:
-    """Build a CellStats with the given (U, C) sums; binary channels empty."""
+    """Build a CellStats with the given (U, C) sums; binary channels empty.
+
+    When ``sae_u_ch`` is omitted, it defaults to ``sqrt(sse_u_ch * n_u_ch)``.
+    For a per-cell fixture where every cell has the same ``|error|`` (which
+    is what these tests assume — they specify SSE and N as a stand-in for a
+    uniform-magnitude error vector), that formula recovers the implied SAE
+    so that per-user MAE = per-user RMSE numerically. Reducer switched from
+    RMSE to MAE in the Track-3 parity work, but the fixtures' implicit
+    "RMSE story" still reads correctly.
+    """
     if n_u_ch is None:
         n_u_ch = np.zeros((n_users, N_CHANNELS), dtype=np.int64)
     if sse_u_ch is None:
         sse_u_ch = np.zeros((n_users, N_CHANNELS), dtype=np.float64)
+    if sae_u_ch is None:
+        # SAE = sqrt(SSE * N) under uniform-magnitude error per cell.
+        sae_u_ch = np.sqrt(sse_u_ch * n_u_ch.astype(np.float64))
     has_data = np.zeros(N_CHANNELS, dtype=bool)
     for ch in has_data_channels or []:
         has_data[ch] = True
@@ -40,7 +55,7 @@ def _make_cell_stats(
         user_ids=[f"u{i}" for i in range(n_users)],
         n=n_u_ch,
         sse=sse_u_ch,
-        sae=np.zeros_like(sse_u_ch),
+        sae=sae_u_ch,
         tp=np.zeros((n_users, N_CHANNELS), dtype=np.int64),
         tn=np.zeros((n_users, N_CHANNELS), dtype=np.int64),
         fp=np.zeros((n_users, N_CHANNELS), dtype=np.int64),

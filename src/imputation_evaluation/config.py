@@ -253,6 +253,12 @@ class EvalConfig:
     # ``num_eval_workers > 1`` — meaningful headroom on memory-tight
     # allocations.
     eval_splits: list[str] = field(default_factory=lambda: ["val", "test"])
+    # Headline continuous metric for the leaderboard. ``"MAE"`` mirrors the
+    # forecasting track (commit 79c8628). ``compute_skill_scores`` and the
+    # live ``results.json`` aggregator both quote against this metric;
+    # per-channel normalization cancels in the skill ratio so the choice
+    # is purely a reporting-units decision.
+    continuous_metric: str = "MAE"
 
 
 @dataclass

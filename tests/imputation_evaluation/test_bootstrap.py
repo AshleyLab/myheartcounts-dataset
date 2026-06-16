@@ -6,7 +6,6 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
-from sklearn.metrics import roc_auc_score
 
 from data.processing.hf_config import N_CHANNELS
 from imputation_evaluation.evaluation.bootstrap import (
@@ -97,10 +96,20 @@ def _write_synthetic_pairs(tmp_path, rng_seed: int = 0):
 
 
 def test_sufficient_stats_match_aggregator_point(tmp_path):
-    """The bootstrap point estimate should match aggregate_pairs() exactly."""
+    """The bootstrap point estimate should match aggregate_pairs() exactly.
+
+    Both sides are pinned to ``aggregation="cell_micro"`` here: ``bootstrap.py``'s
+    participant-cluster point estimate pools per-user (SSE, SAE, N) sums before
+    dividing (cell-micro), so this parity is meaningful only against the
+    cell-micro path of ``aggregate_pairs``. The default is now ``"user_macro"``
+    (matching the bootstrap-skill-rank leaderboard estimand); a separate
+    ``test_live_equals_bootstrap_identity`` (see ``test_skill_score_parity``)
+    pins that the user-macro live path equals the
+    ``bootstrap_skill_rank`` identity-draw point.
+    """
     pairs_dir, manifest, split_dir, stds = _write_synthetic_pairs(tmp_path, rng_seed=1)
 
-    point = aggregate_pairs(split_dir, stds)
+    point = aggregate_pairs(split_dir, stds, aggregation="cell_micro")
     res = bootstrap_split(split_dir, manifest, stds, n_boot=10, seed=0, include_auc=True)
 
     assert res["per_channel"]["ch_0"]["rmse"]["point"] == pytest.approx(

@@ -117,7 +117,7 @@ body = results.to_submission_yaml(
 print(body)
 ```
 
-`to_submission_yaml` returns a paste-ready body matching the textareas in the [submission issue template](../../issues/new?template=submission.yml). For Track 2 imputation, skill scores and per-category subgroup scores are computed locally against the frozen LOCF baseline; for Tracks 1 and 3, those fields are filled in by the maintainers from `raw_metrics` during ingestion (Linear + Seasonal Naive baseline files aren't shipped yet). The HuggingFace Space ingests merged submissions and the public leaderboard rebuilds automatically.
+`to_submission_yaml` returns a paste-ready body matching the textareas in the [submission issue template](../../issues/new?template=submission.yml). Skill scores, fair skill scores, and average ranks are filled in by the maintainers from `raw_metrics` during ingestion for **all three tracks** (Track 1 vs Linear, Track 2 vs LOCF, Track 3 vs Seasonal Naive). The maintainer-side reducer is a paired per-user geomean of clipped error ratios — MAE for continuous channels, `max(1 − AUC_u, 0.005)` for binary — matching the formula in `forecasting_evaluation/metrics/skill_score_summary.py::compute_skill_from_errors` so the same word means the same thing across tracks. Submitters only paste the absolute per-channel MAE / AUC. The HuggingFace Space ingests merged submissions and the public leaderboard rebuilds automatically.
 
 Submissions must follow the standard evaluation protocol — same split file, masking config, and label-validity criterion as the paper. The submission template enforces required fields.
 

@@ -301,6 +301,28 @@ To reproduce the paper's headline table (skill score vs. LOCF, average rank,
 the three-phase pipeline below. It is fully optional and lives entirely in this
 repo — no external dependencies on the private MHC-benchmark scripts.
 
+**Estimand (matches Track 3 forecasting, commit `79c8628`).** Skill score
+is the paired user-bootstrap form:
+
+```
+skill = 1 − exp( mean_tasks( log( clip( geomean_users(e^M_u / e^B_u), 0.01, 100 ) ) ) )
+```
+
+with per-user error `e_u = sae_u / n_u` (MAE) for continuous channels and
+`e_u = max(1 − AUC_u, 0.005)` (ε-floored 1 − AUC) for binary channels.
+Continuous `e_u` is unfloored — the floor only applies to binary so a
+perfect-AUC user contributes a finite paired ratio instead of being
+dropped by the `baseline > 0` filter. Baseline = LOCF on the same cell.
+The paper-pipeline point estimate
+(`scripts/paper_results/compute_imputation_paper_metrics.py`, which calls
+`evaluation/pair_aggregator.py::aggregate_pairs(..., aggregation="user_macro")`)
+matches the n_boot=1 bootstrap identity-draw point by construction.
+The live `mhc-impute-eval` CLI's `results.json` is still cell-micro
+via the streaming `MetricAccumulator`; that path doesn't feed the
+leaderboard — maintainers re-derive skill from the absolute per-channel
+MAE / AUC values pasted in the submission, running the same reducer on
+their side.
+
 ```bash
 # Phase 0: sweep all 12 methods (each writes a pairs/ subdir)
 mhc-impute-eval --multirun \

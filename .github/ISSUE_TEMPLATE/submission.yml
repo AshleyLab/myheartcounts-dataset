@@ -136,7 +136,10 @@ body:
         **Track 1:** AUPRC for binary outcomes, Spearman ρ for ordinal,
         R² for real-valued
 
-        **Track 2:** RMSE per continuous channel, ROC AUC per binary channel
+        **Track 2:** MAE per continuous channel (mean over users), ROC AUC
+        per binary channel (mean over users). nMAE / RMSE / nRMSE may be
+        included alongside MAE for reference but MAE is the leaderboard
+        metric (parity with Track 3).
 
         **Track 3:** MAE, MASE, QL, sQL for continuous channels;
         AUPRC, AUROC for binary channels

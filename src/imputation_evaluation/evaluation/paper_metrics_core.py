@@ -90,19 +90,20 @@ def extract_errors(
     split: str,
     subgroup_attr: str = "all",
     subgroup_value: str = "all",
-    continuous_metric: str = "RMSE",
+    continuous_metric: str = "MAE",
 ) -> pd.DataFrame:
     """Extract per-task error E for each method from a registry-shaped DF.
 
     Returns columns ``[method, scenario, channel, channel_type, E]``.
 
-    ``continuous_metric`` defaults to ``"RMSE"`` (changed from ``"nRMSE"`` in
-    the user-macro refactor). At per-channel scope the per-task skill ratio
-    ``E_method / E_baseline`` is identical under RMSE and nRMSE — the
-    ``channel_std`` factor cancels exactly — so the skill score is unchanged.
-    Switching to RMSE keeps the leaderboard absolute-value columns in their
-    natural units. Callers may still pass ``continuous_metric="nRMSE"`` to
-    read the legacy column if their registry DataFrame carries both.
+    ``continuous_metric`` defaults to ``"MAE"`` to match the forecasting
+    track (Track 3 commit 79c8628). At per-channel scope the per-task skill
+    ratio ``E_method / E_baseline`` is identical under MAE, RMSE, nMAE, and
+    nRMSE — per-channel ``channel_std`` cancels exactly — so the skill score
+    is unchanged. Switching to MAE keeps the leaderboard absolute-value
+    columns aligned across the two tracks. Callers may still pass
+    ``continuous_metric="RMSE"`` or ``"nRMSE"`` to read those columns if
+    their registry DataFrame carries them.
     """
     mask = (
         (df["split"] == split)
@@ -141,13 +142,30 @@ def extract_errors(
 
 def compute_skill_scores(
     errors: pd.DataFrame,
-    baseline_errors: pd.DataFrame,
+    baseline_errors: pd.DataFrame | None = None,
     clip_lower: float = CLIP_LOWER,
     clip_upper: float = CLIP_UPPER,
 ) -> pd.DataFrame:
     """Skill score per method × scope.
 
-    Emits these scopes:
+    Two input modes are supported:
+
+    1. **Paired-R mode (preferred, used by the leaderboard).** If ``errors``
+       carries an ``R`` column (the per-task paired geometric-mean ratio
+       emitted by
+       :func:`bootstrap_skill_rank.compute_per_draw_errors`), consume it
+       directly:
+       ``S = 1 − exp(nanmean(log(clip(R, clip_lower, clip_upper))))``
+       over tasks in scope. ``baseline_errors`` is ignored (R is already
+       paired against the baseline at the per-user grain inside
+       :func:`bootstrap_skill_rank._per_method_cell_paired_ratios`).
+    2. **Legacy E + baseline_errors mode.** If ``R`` is not present, fall
+       back to the old behaviour: form ``E_method / E_baseline`` per task,
+       clip, geomean. Used by the deprecated ``S − λ·D`` fairness path,
+       which pairs subgroup-method E against a global-baseline E (a
+       different pairing than the leaderboard's subgroup-internal R).
+
+    Emits these scopes (identical layout in both modes):
 
     Per-channel (the historical layout):
       - ``<scenario>`` (one per scenario)
@@ -163,34 +181,54 @@ def compute_skill_scores(
         binary categories × scenarios — same task layout as ``overall``
         with the 12 binary channels replaced by 2 collapsed-category tasks)
 
-    Skill score: ``S = 1 − exp(mean(log(clip(E_method / E_baseline))))``.
-
     The collapsed scopes consume rows where ``channel`` starts with
     ``cat_collapsed:`` (produced upstream by
     ``bootstrap_skill_rank._per_method_cell_collapsed_errors``). The legacy
     per-channel scopes explicitly exclude those rows so they don't
     double-count the binary information.
     """
-    bl = baseline_errors.set_index(["scenario", "channel"])["E"]
-
-    ratios = []
-    for _, row in errors.iterrows():
-        key = (row["scenario"], row["channel"])
-        if key not in bl.index:
-            continue
-        e_baseline = bl[key]
-        if e_baseline <= 0 or np.isnan(e_baseline):
-            continue
-        ratio = row["E"] / e_baseline
-        clipped = np.clip(ratio, clip_lower, clip_upper)
-        ratios.append({
-            "method": row["method"],
-            "scenario": row["scenario"],
-            "channel": row["channel"],
-            "category": channel_category(row["channel"]),
-            "clipped_ratio": clipped,
-            "is_collapsed": is_collapsed_channel(row["channel"]),
-        })
+    if "R" in errors.columns:
+        # Paired-R mode — R is pre-clipped at Phase 1, but re-clip here so
+        # the result is invariant to whether callers pre-process.
+        ratios = []
+        for _, row in errors.iterrows():
+            r = row["R"]
+            if pd.isna(r) or r <= 0:
+                continue
+            clipped = float(np.clip(r, clip_lower, clip_upper))
+            ratios.append({
+                "method": row["method"],
+                "scenario": row["scenario"],
+                "channel": row["channel"],
+                "category": channel_category(row["channel"]),
+                "clipped_ratio": clipped,
+                "is_collapsed": is_collapsed_channel(row["channel"]),
+            })
+    else:
+        if baseline_errors is None:
+            raise ValueError(
+                "compute_skill_scores: ``errors`` lacks an 'R' column and no "
+                "``baseline_errors`` provided — cannot form the skill ratio."
+            )
+        bl = baseline_errors.set_index(["scenario", "channel"])["E"]
+        ratios = []
+        for _, row in errors.iterrows():
+            key = (row["scenario"], row["channel"])
+            if key not in bl.index:
+                continue
+            e_baseline = bl[key]
+            if e_baseline <= 0 or np.isnan(e_baseline):
+                continue
+            ratio = row["E"] / e_baseline
+            clipped = np.clip(ratio, clip_lower, clip_upper)
+            ratios.append({
+                "method": row["method"],
+                "scenario": row["scenario"],
+                "channel": row["channel"],
+                "category": channel_category(row["channel"]),
+                "clipped_ratio": clipped,
+                "is_collapsed": is_collapsed_channel(row["channel"]),
+            })
 
     ratio_df = pd.DataFrame(ratios)
     if ratio_df.empty:
