@@ -241,7 +241,16 @@ def _build_continuous_user_rows(
     metrics: list[str],
     channel_indices: tuple[int, ...],
     within_user_aggregation: str = "micro",
+    groups: list[tuple[str, tuple[int, ...]]] | None = None,
 ) -> pd.DataFrame:
+    # Device-pair scopes (steps, distance) aggregate their per-channel rows the
+    # same way binary groups (sleep/workout) do, giving per-task device pairs a
+    # group-level rank scope. Defaults to metric_spec.CONTINUOUS_GROUPS.
+    continuous_groups = (
+        [(name, tuple(idx)) for name, idx in _spec.CONTINUOUS_GROUPS]
+        if groups is None
+        else groups
+    )
     frames: list[pd.DataFrame] = []
     for model_name, model_spec in models.items():
         for metric_name in metrics:
@@ -253,8 +262,42 @@ def _build_continuous_user_rows(
                 scope_type="continuous_channel",
                 within_user_aggregation=within_user_aggregation,
             )
-            if not frame.empty:
-                frames.append(frame)
+            if frame.empty:
+                continue
+            frames.append(frame)
+            for group_name, group_channels in continuous_groups:
+                if not set(group_channels).issubset(set(channel_indices)):
+                    continue
+                group_slice = frame.loc[frame["channel_idx"].isin(group_channels)].copy()
+                if group_slice.empty:
+                    continue
+                grouped = group_slice.groupby(
+                    ["model", "user_id", "metric", "metric_display"],
+                    as_index=False,
+                ).agg(
+                    metric_value=("metric_value", "mean"),
+                    n_values=("n_values", "sum"),
+                )
+                grouped["scope_type"] = "continuous_group"
+                grouped["scope"] = group_name
+                grouped["scope_label"] = group_name
+                grouped["channel_idx"] = -1
+                frames.append(
+                    grouped[
+                        [
+                            "model",
+                            "scope_type",
+                            "scope",
+                            "scope_label",
+                            "metric",
+                            "metric_display",
+                            "channel_idx",
+                            "user_id",
+                            "metric_value",
+                            "n_values",
+                        ]
+                    ]
+                )
     if not frames:
         return pd.DataFrame()
     return pd.concat(frames, ignore_index=True)

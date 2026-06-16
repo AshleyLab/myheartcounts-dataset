@@ -304,10 +304,13 @@ via the same readers → `mean / se / 95% CI`.
 
 ### Interpreting metrics
 
-Main scores **combine** the paired phone/watch channels (step count `(0, 3)` and
-distance `(1, 4)`) before scoring; the 19 raw channels are kept separate only for
-appendix tables. Binary-channel metrics (sleep, workout) are AUROC/AUPRC/F1
-pooled within each user. The math is in
+Main scores treat the paired phone/watch channels **per task**: each device
+channel (step count `(0, 3)`, distance `(1, 4)`) keeps its own skill ratio, and
+the `steps`/`distance` scopes combine the pair with a geometric mean — the same
+way the sleep/workout scopes and the imputation track aggregate channels. Pass
+`--combine-channels` (legacy) to instead nan-mean the paired signals before
+scoring, as used for some appendix tables. Binary-channel metrics (sleep,
+workout) are AUROC/AUPRC/F1 pooled within each user. The math is in
 [INTERNALS.md](INTERNALS.md#7-offline-metric-computation).
 
 > **Memory:** the binary-metric pass and the bootstrap load all users' contexts

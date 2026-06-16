@@ -7,7 +7,7 @@ def test_defaults_are_full_sets():
     m = MetricsConfig()
     assert m.point_metrics == ["mae", "mse", "mase", "mase_all", "ql", "sql"]
     assert m.binary_metrics == ["auprc", "auroc", "f1"]
-    assert m.combine_channels is True
+    assert m.combine_channels is False
     assert m.f1_threshold == 0.5
 
 

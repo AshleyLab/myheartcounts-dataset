@@ -72,15 +72,16 @@ export MHC_FORECAST_TOTO_RELEASE_DIR=/path/to/openmhc-toto-forecast
 
 ## Metrics Modes
 
-The main paper skill and fairness summaries use combined metrics by default:
-phone/watch step count and distance are merged before scoring.
+The main skill and fairness summaries use per-task metrics by default: phone/watch
+step count and distance are scored as separate channels and combined into
+`steps`/`distance` scopes by geometric mean (consistent with the imputation track).
 
-The raw appendix hour-group tables use no-combine metrics, where all 19
-channels remain separate. Generate those with:
+Pass `--combine-channels` for the legacy signal-merge mode (phone/watch nan-meaned
+before scoring), used for some appendix hour-group tables:
 
 ```bash
 python src/forecasting_evaluation/metrics/offline_calculate.py \
   --evaluation-result-paths seasonal_naive_0=/path/to/predictions/seasonal_naive \
-  --metrics-output-path results/metrics_nocombine \
-  --no-combine-channels
+  --metrics-output-path results/metrics_combined \
+  --combine-channels
 ```

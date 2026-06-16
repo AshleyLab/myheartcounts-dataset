@@ -122,9 +122,10 @@ mhc-forecast-eval --multirun model=seasonal_naive,autoARIMA,autoETS
 ```
 
 Sherlock SLURM wrappers live in `jobs/sherlock/forecasting_eval/`. The
-forecasting implementation supports both metrics modes used in the paper:
-combined phone/watch channels for main skill/fairness summaries, and
-no-combine metrics for the raw appendix hour-group tables.
+forecasting implementation supports both device-channel scoring modes: per-task
+(default) — phone/watch channels scored separately and combined into
+steps/distance scopes by geometric mean, consistent with the imputation track —
+and the legacy signal-merge (`--combine-channels`) used for some appendix tables.
 
 See [`src/forecasting_evaluation/README.md`](src/forecasting_evaluation/README.md)
 for the full guide (Hydra overrides, release checkpoints, full-data Seasonal

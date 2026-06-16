@@ -68,6 +68,15 @@ BINARY_GROUPS: tuple[tuple[str, tuple[int, ...]], ...] = (
     ("sleep", SLEEP_CHANNELS),
     ("workout", WORKOUT_CHANNELS),
 )
+# Device-pair collections over continuous channels (phone + watch for the same
+# physical quantity). Scored per-task — each device channel keeps its own skill
+# ratio and the two are combined with a geometric mean, exactly like BINARY_GROUPS
+# (sleep/workout) and the imputation track's per-channel categories — rather than
+# averaging the two device signals before the metric (combine_channels=True).
+CONTINUOUS_GROUPS: tuple[tuple[str, tuple[int, ...]], ...] = (
+    ("steps", (0, 3)),      # iphone_steps + watch_steps
+    ("distance", (1, 4)),   # iphone_distance + watch_distance
+)
 
 _METRIC_DISPLAY = {
     "mae": "MAE",

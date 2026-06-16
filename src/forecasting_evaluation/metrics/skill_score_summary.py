@@ -397,6 +397,28 @@ def _aggregate_binary_collection_score(
     return _aggregate_rows_score(collection_rows)
 
 
+def _aggregate_continuous_collection_score(
+    long_df: pd.DataFrame,
+    model_name: str,
+    channel_indices: tuple[int, ...],
+) -> tuple[float, int]:
+    """Per-task device-pair skill: geomean of the per-channel ratios (continuous).
+
+    The continuous analogue of ``_aggregate_binary_collection_score``. On
+    ``combine_channels=False`` trees both device channels carry a real ratio, so
+    this yields the per-task (task-level) skill; on ``combine_channels=True`` trees
+    the merged-away channel's ratio is NaN, so it collapses to the merged channel's
+    skill — letting one code path report either scheme depending on the input tree.
+    """
+    collection_rows = long_df.loc[
+        (long_df["model"] == model_name)
+        & (long_df["group"] == "continuous")
+        & (long_df["channel_idx"].isin(channel_indices))
+        & np.isfinite(long_df["geometric_mean_ratio"])
+    ]
+    return _aggregate_rows_score(collection_rows)
+
+
 def _build_model_summary(
     *,
     long_df: pd.DataFrame,
@@ -434,6 +456,12 @@ def _build_model_summary(
                 "workout_n_units": n_workout,
             }
         )
+        for group_name, channel_indices in _spec.CONTINUOUS_GROUPS:
+            score, n_units = _aggregate_continuous_collection_score(
+                long_df, model_name, channel_indices
+            )
+            row[f"{group_name}_score"] = score
+            row[f"{group_name}_n_units"] = n_units
         rows.append(row)
     return pd.DataFrame(rows)
 

@@ -197,8 +197,11 @@ class MetricsConfig:
         default_factory=lambda: ["mae", "mse", "mase", "mase_all", "ql", "sql"]
     )
     binary_metrics: list[str] = field(default_factory=lambda: ["auprc", "auroc", "f1"])
-    # Merge paired phone/watch channels (e.g. step count, distance) before scoring.
-    combine_channels: bool = True
+    # Device-pair scoring. Default False = per-task: phone/watch channels keep
+    # separate skill ratios (the steps/distance scopes geomean them), matching the
+    # sleep/workout scopes and the imputation track. Set True for the legacy
+    # signal-merge (nan-mean the paired channels before scoring; appendix tables).
+    combine_channels: bool = False
     # Threshold to binarize continuous scores for F1.
     f1_threshold: float = 0.5
 

@@ -60,11 +60,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--combine-channels",
         action=argparse.BooleanOptionalAction,
-        default=True,
+        default=False,
         help=(
-            "Whether to merge paired phone/watch step and distance channels before "
-            "computing offline metrics. Use --no-combine-channels for appendix raw "
-            "hour-group tables."
+            "Merge paired phone/watch step and distance channels (nan-mean) before "
+            "computing offline metrics. Default is per-task (channels kept separate, "
+            "scored like sleep/workout); pass --combine-channels for the legacy "
+            "signal-merged behaviour (appendix raw hour-group tables)."
         ),
     )
     return parser
