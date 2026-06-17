@@ -3,8 +3,9 @@
 ``run_eval`` sets up the data provider and data loader, hands them to a
 :class:`DownstreamEvaluator`, and attaches run provenance. External models and the
 bundled baselines run through one engine on one contract, ``openmhc.Method``:
-``fit(data, labels, task_type)`` / ``predict(data)``, per-participant arrays in and
-predictions out. Encoder-style methods run the uniform ``openmhc.LinearProbe``
+``predict(data)`` (required) with an optional ``fit(data, labels, task_type)``,
+per-participant arrays in and predictions out. A model that omits ``fit`` (zero-shot /
+pretrained) is scored as-is. Encoder-style methods run the uniform ``openmhc.LinearProbe``
 inside ``fit`` / ``predict``; end-to-end methods own their head.
 
 All cohort / temporal / label logic comes from :class:`TaskDataProvider` (the

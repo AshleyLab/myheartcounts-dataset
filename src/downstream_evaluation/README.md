@@ -1,6 +1,6 @@
 # Downstream Prediction Evaluation
 
-Evaluate any wearable-sensor model on the 32 MyHeart Counts health-prediction tasks. One contract for every model — bundled baseline and external submission alike: `fit(data, labels, task_type)` / `predict(data)` on per-participant arrays.
+Evaluate any wearable-sensor model on the 32 MyHeart Counts health-prediction tasks. One contract for every model — bundled baseline and external submission alike: `predict(data)` on per-participant arrays, with an optional `fit(data, labels, task_type)`.
 
 - [How it works](#how-it-works)
 - [Reproduce the paper results](#reproduce-the-paper-results)
@@ -16,25 +16,27 @@ openmhc.evaluate_prediction(model, tasks)
   └─ per task:
        TaskDataProvider   who & what — cohort user_ids, labels, eligible days
        DataLoader         the bytes — raw segments, one dataset read per run
-       model.fit(train data, labels, task_type)
+       model.fit(train data, labels, task_type)   # optional — skipped if undefined
        model.predict(test data)  →  scored on the held-out cohort
 ```
 
 **Data layer** (`src/downstream_evaluation/data/`):
 
-- **`provider.py` — who and what.** `TaskDataProvider` reads the labels lookup (one parquet per granularity) and derives, per `(task, split)`: the cohort, their labels, and the dates of each user's eligible days.
-- **`loader.py` — the bytes.** `DataLoader` reads `daily_hourly_hf` once per run (lazily, on first access), indexes it by `(user_id, date)`, and serves every access pattern: `bind()` (a task cohort's eligible segments), `segment_store()` (the whole store, for global-fit models), `user_days()` (date-ascending days, for timeline builders), `as_daily_rows()` (raw-form rows, for window-index consumers).
-- **`splits.py`** reads the frozen train/validation/test user split.
+- `**provider.py` — who and what.** `TaskDataProvider` reads the labels lookup (one parquet per granularity) and derives, per `(task, split)`: the cohort, their labels, and the dates of each user's eligible days.
+- `**loader.py` — the bytes.** `DataLoader` reads `daily_hourly_hf` once per run (lazily, on first access), indexes it by `(user_id, date)`, and serves every access pattern: `bind()` (a task cohort's eligible segments), `segment_store()` (the whole store, for global-fit models), `user_days()` (date-ascending days, for timeline builders), `as_daily_rows()` (raw-form rows, for window-index consumers).
+- `**splits.py`** reads the frozen train/validation/test user split.
 
-Quality gating happens once, upstream, when `daily_hourly_hf` is built; eligibility is whatever the lookup names. The loader selects those `(user, date)` rows and never re-filters — no model decides its own cohort. (`mae`/`xgboost` read at minute resolution through the loader's `participant_minute` path over the `daily_hf` store — the same single-read discipline, no separate extraction.)
+Quality gating happens once, upstream, when `daily_hourly_hf` is built; eligibility is whatever the lookup file names. The loader selects those `(user, date)` rows and never re-filters — no model decides its own cohort. (`mae`/`xgboost` read at minute resolution through the loader's `participant_minute` path over the `daily_hf` store — the same single-read discipline, no separate extraction.)
 
-**Scoring.** For each task the benchmark fits your model on the train cohort and scores its predictions on the held-out test cohort. Encoder-style models all run the *same* probe (`openmhc.LinearProbe`: PCA-50 + a linear head) inside `fit`/`predict`, so the comparison isolates representation quality; end-to-end models own their head. Primary metric per task type:
+**Scoring.** For each task the benchmark fits your model on the train cohort (when it defines `fit`) and scores its predictions on the held-out test cohort. Encoder-style models all run the *same* probe (`openmhc.LinearProbe`: PCA-50 + a linear head) inside `fit`/`predict`, so the comparison isolates representation quality; end-to-end models own their head. Primary metric per task type:
 
-| Task type  | Metric     | Example tasks                          |
-|------------|------------|----------------------------------------|
-| Binary     | AUPRC      | Diabetes, Hypertension, BiologicalSex  |
-| Ordinal    | Spearman ρ | BMI_categories, feel_worthwhile1-4     |
-| Regression | Pearson r  | age, BMI_values, WeightKilograms       |
+
+| Task type  | Metric     | Example tasks                         |
+| ---------- | ---------- | ------------------------------------- |
+| Binary     | AUPRC      | Diabetes, Hypertension, BiologicalSex |
+| Ordinal    | Spearman ρ | BMI_categories, feel_worthwhile1-4    |
+| Regression | Pearson r  | age, BMI_values, WeightKilograms      |
+
 
 ## Reproduce the paper results
 
@@ -53,15 +55,17 @@ for M in linear multirocket gru_d xgboost mae toto chronos2 wbm; do
 done
 ```
 
-| METHOD          | Model                                          | Notes                          |
-|-----------------|------------------------------------------------|--------------------------------|
-| linear          | per-channel mean/std (+ demographics)          | CPU                            |
-| multirocket     | random convolutional kernels                   | CPU                            |
-| gru_d           | end-to-end GRU-D (trains per run)              | GPU; see reproducibility below |
-| xgboost         | gradient-boosted trees on minute-level features| CPU; needs `daily_hf`          |
-| mae             | masked-autoencoder embeddings                  | GPU on cache miss; `daily_hf`  |
-| toto / chronos2 | time-series foundation-model embeddings        | GPU on cache miss              |
-| wbm             | self-supervised weekly encoder + Linear hybrid | GPU on cache miss              |
+
+| METHOD          | Model                                           | Notes                          |
+| --------------- | ----------------------------------------------- | ------------------------------ |
+| linear          | per-channel mean/std (+ demographics)           | CPU                            |
+| multirocket     | random convolutional kernels                    | CPU                            |
+| gru_d           | end-to-end GRU-D (trains per run)               | GPU; see reproducibility below |
+| xgboost         | gradient-boosted trees on minute-level features | CPU; needs `daily_hf`          |
+| mae             | masked-autoencoder embeddings                   | GPU on cache miss; `daily_hf`  |
+| toto / chronos2 | time-series foundation-model embeddings         | GPU on cache miss              |
+| wbm             | self-supervised weekly encoder + Linear hybrid  | GPU on cache miss              |
+
 
 **3. Run the paper pipeline** (bootstrap CIs, skill/rank/fairness aggregates) — one config drives every phase:
 
@@ -83,7 +87,7 @@ mhc-downstream-eval method=xgboost
 PYTHONPATH=src python -m downstream_evaluation.hydra.cli method=xgboost
 ```
 
-**Configs.** Composable YAML under [`configs/downstream/`](../../configs/downstream/), one group per axis; override any field on the command line:
+**Configs.** Composable YAML under `[configs/downstream/](../../configs/downstream/)`, one group per axis; override any field on the command line:
 
 ```
 configs/downstream/
@@ -120,11 +124,11 @@ qsub -v METHOD=xgboost,MHC_DATA_DIR=$HOME/mhc-data jobs/imperial/pbs/run_eval.pb
 
 GPU methods use `run_eval_gpu.pbs` (`:ngpus=1`): `gru_d` (trains every run), and `toto`/`chronos2`/`wbm`/`mae` for embedding extraction on a cache miss (a warm cache runs them CPU-only). CPU jobs request `mem=64gb` — the hourly loader materializes the `daily_hourly_hf` cohort in RAM (~32 GB peak), so they do not fit an interactive login session.
 
-**Add a method.** Register a builder in [`hydra/registry.py`](hydra/registry.py) and drop a `configs/downstream/method/<name>.yaml` with `type: <name>`. The builder takes `(method_cfg, data_cfg)` and returns `(model, None)` — the same model object you would otherwise hand to `openmhc.evaluate_prediction`.
+**Add a method.** Register a builder in `[hydra/registry.py](hydra/registry.py)` and drop a `configs/downstream/method/<name>.yaml` with `type: <name>`. The builder takes `(method_cfg, data_cfg)` and returns `(model, None)` — the same model object you would otherwise hand to `openmhc.evaluate_prediction`.
 
 ## Evaluate your own model
 
-Implement `fit` / `predict` and hand the model to the benchmark — no base class, no config files. The one contract supports two styles; pick by **who owns the classification head**:
+Implement `predict` (and, if your model trains, `fit`) and hand the model to the benchmark — no base class, no config files. `predict` is the only required method; `fit` is optional, so a zero-shot / pretrained model just leaves it out and is scored as-is. The one contract supports two styles; pick by **who owns the classification head**:
 
 - **Encoder-style** — your model produces a representation; the benchmark's uniform head (`openmhc.LinearProbe`) turns it into predictions. Your score reflects the *representation* and is directly comparable with the paper's encoder rows (mae, toto, chronos2, multirocket).
 - **End-to-end** — your model owns its head and returns predictions directly, scored as-is. Comparable with the paper's end-to-end rows (gru_d, xgboost).
@@ -187,31 +191,35 @@ class MyEndToEndMethod:
 
 **Input shapes.** Declare what each participant's data looks like with `data_spec`:
 
-| `data_spec` | each participant |
-|---|---|
-| `DataSpec("hourly", "day")` | `(n_days, 24, 38)` |
+
+| `data_spec`                       | each participant                  |
+| --------------------------------- | --------------------------------- |
+| `DataSpec("hourly", "day")`       | `(n_days, 24, 38)`                |
 | `DataSpec("hourly", "series", N)` | `(N, 38)` — one continuous window |
-| `DataSpec("minute", "day")` | `(n_days, 1440, 38)` |
+| `DataSpec("minute", "day")`       | `(n_days, 1440, 38)`              |
+
 
 Channels 0-18 are sensor values (NaN at missing), 19-37 the missingness mask. Iterate `data` for one participant at a time — `minute` (and other large) specs stream, so don't index `data[i]` or stack the whole cohort.
 
 **Memory.** Why iterate instead of stacking? For `hourly` specs the whole cohort is small (a few GB), so `data` is just a list. For `minute` (and other large) specs the full cohort is hundreds of GB — far past RAM — so the benchmark *streams* it: `data` is a `CohortView` that hands you one participant at a time and never holds the whole cohort at once. Peak memory then stays at roughly one participant (plus whatever you accumulate), **independent of cohort size** — as long as you iterate and don't stack the raw `data`.
 
-**The contract.** You implement two methods.
+**What you implement:** 
 
-`fit(data, labels, task_type)` — train on the cohort:
+`predict(data)` *(required)* — return one prediction per participant, in `data` order. What to return depends on the task:
+
+
+| `task_type`              | return per participant                                                                     |
+| ------------------------ | ------------------------------------------------------------------------------------------ |
+| `binary`                 | score / probability of the positive class — a ranking, **not** 0/1 labels (AUPRC needs it) |
+| `multiclass` / `ordinal` | the class level                                                                            |
+| `regression`             | the value                                                                                  |
+
+
+`fit(data, labels, task_type)` *(optional)* — train on the cohort. Omit it for a zero-shot / pretrained model and the benchmark skips training:
 
 - `data` — iterate it, one participant's array at a time (a list; a streamed `CohortView` for large specs — see *Input shapes*).
 - `labels` — one per participant, aligned with the cohort.
 - `task_type` — `"binary"`, `"multiclass"`, `"ordinal"`, or `"regression"`.
-
-`predict(data)` — return one prediction per participant, in `data` order. What to return depends on the task:
-
-| `task_type` | return per participant |
-|---|---|
-| `binary` | score / probability of the positive class — a ranking, **not** 0/1 labels (AUPRC needs it) |
-| `multiclass` / `ordinal` | the class level |
-| `regression` | the value |
 
 The benchmark owns the cohort and eligibility — who's included, and which of each participant's dates count (full history by default) — so your model only ever sees eligible data and can't get the cohort wrong. Encoder vs end-to-end may train, pretrain, or be training-free; the style only decides which paper rows you're comparable with.
 

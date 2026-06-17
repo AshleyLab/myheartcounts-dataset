@@ -51,7 +51,9 @@ results = openmhc.evaluate_prediction(MeanPoolMethod())
 print(results.summary())
 ```
 
-The full Track-1 guide (data contract, baselines, paper reproduction) is in
+`predict` is the only required method; `fit` is optional — a zero-shot / pretrained
+model omits it and is scored as-is. The full Track-1 guide (data contract, baselines,
+paper reproduction) is in
 [`src/downstream_evaluation/README.md`](src/downstream_evaluation/README.md).
 
 ### Track 2 — imputation (`Imputer`)

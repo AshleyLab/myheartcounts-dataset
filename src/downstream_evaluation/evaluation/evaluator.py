@@ -2,8 +2,8 @@
 
 ``run_eval`` sets up the data provider + data loader and the model, then hands
 them here. For each task this binds the cohort's eligible data, runs the model
-through the :class:`~openmhc.Method` contract (``fit`` on the train cohort,
-``predict`` on test), and scores the test split.
+through the :class:`~openmhc.Method` contract (the optional ``fit`` on the train
+cohort, then ``predict`` on test), and scores the test split.
 """
 
 from __future__ import annotations
@@ -139,19 +139,32 @@ class DownstreamEvaluator:
         The model sees clean per-participant arrays + labels + ``task_type`` (the
         :class:`~openmhc.Method` contract). With a ``spec`` the data arrives via a
         :class:`~downstream_evaluation.data.cohort.CohortView` (streamed, or drained to a
-        list); without one it is the legacy bound ``_public_inputs``. The optional
-        ``set_context`` hook hands bundled baselines their cohort identity (``user_ids`` /
-        ``task``) before each call; external methods omit it.
+        list); without one it is the legacy bound ``_public_inputs``. ``fit`` is optional —
+        a model that omits it (zero-shot / pretrained) skips fitting, and the train inputs
+        are never built. The optional ``set_context`` hook hands bundled baselines their
+        cohort identity (``user_ids`` / ``task``) before each call; external methods omit it.
         """
         ttype = get_task_type(task)
+        # ``fit`` is an OPTIONAL hook: this is an evaluation suite, not training
+        # infrastructure, so a zero-shot / pretrained model may implement only
+        # ``predict``. When ``fit`` is absent we skip fitting entirely — and never
+        # build the train inputs, so a predict-only model never streams the train
+        # cohort for nothing. Every bundled baseline defines ``fit``, so its path is
+        # unchanged (build train → build test → fit → predict, in this exact order).
+        has_fit = hasattr(model, "fit")
         if spec is None:
-            train_data = _public_inputs(train_td)
+            train_data = _public_inputs(train_td) if has_fit else None
             test_data = _public_inputs(test_td)
         else:
-            train_data = _spec_inputs(loader, spec, train_td, ttype, streaming, with_labels=True)
+            train_data = (
+                _spec_inputs(loader, spec, train_td, ttype, streaming, with_labels=True)
+                if has_fit
+                else None
+            )
             test_data = _spec_inputs(loader, spec, test_td, ttype, streaming, with_labels=False)
-        _set_context(model, train_td)
-        model.fit(train_data, train_td.labels, ttype)
+        if has_fit:
+            _set_context(model, train_td)
+            model.fit(train_data, train_td.labels, ttype)
         _set_context(model, test_td)
         y_pred = np.asarray(model.predict(test_data))
         return test_td.labels, y_pred

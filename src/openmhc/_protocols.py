@@ -45,15 +45,18 @@ class EvalContext:
 
 @runtime_checkable
 class Method(Protocol):
-    """The prediction-track model contract — **fit on arrays + labels, return predictions**.
+    """The prediction-track model contract — **return one prediction per participant**.
 
-    One shape for every model, external submissions and bundled baselines alike: a
-    method fits on the train cohort's per-participant data and labels, then returns
-    one prediction per participant on a held-out cohort. Representation isolation is
-    preserved by *convention*: an encoder-style method runs its own representation
-    and then the benchmark's uniform head, :class:`openmhc.LinearProbe`, inside
-    ``fit`` / ``predict`` — so its score still reflects the representation, not the
-    choice of classifier — while an end-to-end method owns its head directly.
+    One shape for every model, external submissions and bundled baselines alike.
+    ``predict`` is the only **required** method: it returns one prediction per
+    participant on a held-out cohort. ``fit`` is **optional** — this is an evaluation
+    suite, not training infrastructure, so a zero-shot or pretrained model simply omits
+    it; when present, the engine calls it on the train cohort before ``predict`` (see
+    *Optional hooks* below). Representation isolation is preserved by *convention*: an
+    encoder-style method runs its own representation and then the benchmark's uniform
+    head, :class:`openmhc.LinearProbe`, inside ``fit`` / ``predict`` — so its score
+    still reflects the representation, not the choice of classifier — while an
+    end-to-end method owns its head directly.
 
     **Choose your input shape** with ``data_spec = DataSpec(resolution, window)``
     (see :class:`~openmhc.DataSpec`):
@@ -77,9 +80,16 @@ class Method(Protocol):
     (``np.stack(data)``): those force everything into RAM and break streaming. Encoding each
     participant and stacking the small results (as below) is always safe.
 
-    A model may also define the optional ``set_context(ctx: EvalContext)`` hook, called
-    before ``fit`` and ``predict`` (bundled baselines only — see :class:`EvalContext`). A
-    model without a ``data_spec`` falls back to the legacy ``input_granularity = "daily"``
+    **Optional hooks** — omit any of these and the engine simply skips that step:
+
+    - ``fit(data, labels, task_type) -> None`` — train on the train cohort. ``data`` is
+      the per-participant arrays (iterate it) shaped to your ``data_spec``; ``labels`` is a
+      ``(n,)`` array aligned with the cohort; ``task_type`` is as above. Omit it for a
+      zero-shot / pretrained model — the engine then never even builds the train inputs.
+    - ``set_context(ctx: EvalContext)`` — called before ``fit`` and ``predict`` (bundled
+      baselines only — see :class:`EvalContext`).
+
+    A model without a ``data_spec`` falls back to the legacy ``input_granularity = "daily"``
     (equivalent to ``DataSpec("hourly", "day")``).
 
     Example (encoder-style, via the uniform probe — streaming-safe as written)::
@@ -99,12 +109,12 @@ class Method(Protocol):
                 return self._probe.predict(np.stack([self._encode(x) for x in data]))
     """
 
-    def fit(self, data: Iterable[np.ndarray], labels: np.ndarray, task_type: str) -> None:
-        """Fit on the train cohort: per-participant ``data`` (iterate it) + aligned ``labels``."""
-        ...
-
     def predict(self, data: Iterable[np.ndarray]) -> np.ndarray:
-        """Return one prediction per participant, in ``data`` order."""
+        """Return one prediction per participant, in ``data`` order (the only required method).
+
+        The optional ``fit(data, labels, task_type)`` / ``set_context(ctx)`` hooks are
+        documented in the class docstring above; the engine calls each only if defined.
+        """
         ...
 
 
