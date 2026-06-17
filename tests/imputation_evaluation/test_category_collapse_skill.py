@@ -189,21 +189,23 @@ class TestCollapsedSkillScopes:
         assert len(sleep_row) == 1
         assert int(sleep_row["n_tasks"].iloc[0]) == 1
 
-        # overall_binary_collapsed: B.2 two-stage form — n_tasks now counts
-        # **buckets**, not constituent tasks. The fixture has data for:
-        #   activity (from ch_0, ch_1) + sleep (collapsed) + workouts (collapsed)
-        # — 3 buckets, no physiology data. Per-channel ch_7 is binary and is
-        # NOT consumed by overall_binary_collapsed (binary side uses the
-        # collapsed scope).
+        # overall_binary_collapsed: 3-level B.2 form — n_tasks counts
+        # **scenarios** present (L1 axis). The fixture has data for only one
+        # scenario (random_noise), so n_tasks == 1. Per-channel ch_7 is
+        # binary and is NOT consumed (binary side enters via the collapsed
+        # rows only).
         collapsed_overall = result[
             (result["method"] == "A") & (result["scope"] == "overall_binary_collapsed")
         ]
         assert len(collapsed_overall) == 1
-        assert int(collapsed_overall["n_tasks"].iloc[0]) == 3
+        assert int(collapsed_overall["n_tasks"].iloc[0]) == 1
 
-    def test_no_collapsed_rows_means_no_collapsed_scopes(self):
-        """Backwards compat: when caller passes only per-channel rows, no
-        ``cat_collapsed:*`` / ``overall_binary_collapsed`` scopes appear.
+    def test_no_collapsed_rows_omits_cat_collapsed_scopes(self):
+        """Without ``cat_collapsed:*`` rows, the ``cat_collapsed:*`` per-
+        category scopes do not appear. ``overall_binary_collapsed`` and
+        per-scenario scopes are still emitted from the continuous side
+        only (sleep / workouts buckets are simply absent in those
+        scenarios).
         """
         rows = [
             {"method": "A", "scenario": "random_noise", "channel": "ch_0",
@@ -217,9 +219,14 @@ class TestCollapsedSkillScopes:
             _build_errors_df(rows), _build_errors_df(bl_rows), mode="pooled",
         )
         scopes = set(result["scope"])
-        assert "overall" in scopes
+        # Per-channel cat_collapsed:* scopes only fire when collapsed rows
+        # exist in the input.
         assert not any(s.startswith("cat_collapsed:") for s in scopes)
-        assert "overall_binary_collapsed" not in scopes
+        # Legacy per-channel ``overall`` and the 3-level
+        # ``overall_binary_collapsed`` both still emit — the latter from the
+        # activity bucket only (no sleep/workouts buckets to add).
+        assert "overall" in scopes
+        assert "overall_binary_collapsed" in scopes
 
 
 class TestCollapsedChannelHelper:
@@ -294,15 +301,18 @@ class TestOverallBinaryCollapsedTwoStage:
                                     channel_type="binary_collapsed", E=1.0))
         return _build_errors_df(rows), _build_errors_df(bl_rows)
 
-    def test_n_tasks_equals_number_of_buckets(self):
-        """n_tasks counts buckets, not constituent tasks. All 4 present → 4."""
+    def test_n_tasks_equals_number_of_scenarios(self):
+        """n_tasks counts scenarios present at L1, not constituent tasks
+        or buckets. The fixture has 2 scenarios (random_noise +
+        temporal_slice), each populating all 4 buckets, so n_tasks == 2.
+        """
         errors, bl = self._build_balanced_fixture()
         result = compute_skill_scores(errors, bl, mode="pooled")
         for method in ("A", "B"):
             row = result[(result["method"] == method) &
                          (result["scope"] == "overall_binary_collapsed")]
             assert len(row) == 1
-            assert int(row["n_tasks"].iloc[0]) == 4
+            assert int(row["n_tasks"].iloc[0]) == 2
 
     def test_skill_equals_mean_of_bucket_log_ratios(self):
         """Closed-form check: log ratios cleanly average to a known value.
@@ -364,6 +374,169 @@ class TestOverallBinaryCollapsedTwoStage:
             ["skill_score"].iloc[0]
         )
         np.testing.assert_allclose(augmented, baseline, rtol=1e-9)
+
+
+class TestThreeLevelB2Form:
+    """Per-scenario / semantic / overall_binary_collapsed all use the
+    universal 3-level B.2 form (L3 within-bucket × scenario task mean →
+    L2 mean over buckets within scenario → L1 log-space mean over
+    scenarios in scope). Each scope tested below pins one closed-form
+    aspect of that operator.
+    """
+
+    def _build_3level_fixture(self):
+        """Single-method fixture with constant per-task R per bucket so the
+        bucket geomean and the per-scenario L2 mean are closed-form.
+
+        Bucket R values:
+          activity   = 0.4    (5 channels)
+          physiology = 0.5    (2 channels)
+          sleep      = 0.6    (1 collapsed task)
+          workouts   = 0.7    (1 collapsed task)
+
+        Each scenario gets the same per-bucket R, so L2 within every
+        scenario yields the same ``log_R_scenario``. That makes L1 over
+        any subset of scenarios a no-op — useful for checking that the
+        formula is right, separately from scenario-weighting effects.
+        """
+        all_scens = [
+            "random_noise", "temporal_slice", "signal_slice",
+            "sleep_gap", "workout_gap", "intensity_failure",
+        ]
+        rows: list[dict] = []
+        for sc in all_scens:
+            # activity ch_0..ch_4 — present in 4 scenarios (sleep_gap too).
+            if sc != "workout_gap" and sc != "intensity_failure":
+                for c in range(5):
+                    rows.append(dict(method="A", scenario=sc,
+                                     channel=f"ch_{c}",
+                                     channel_type="continuous", E=0.4))
+            # physiology ch_5, ch_6 — present in every scenario.
+            for c in (5, 6):
+                rows.append(dict(method="A", scenario=sc,
+                                 channel=f"ch_{c}",
+                                 channel_type="continuous", E=0.5))
+            # sleep/workouts collapsed — structural scenarios only.
+            if sc in ("random_noise", "temporal_slice", "signal_slice"):
+                rows.append(dict(method="A", scenario=sc,
+                                 channel="cat_collapsed:sleep",
+                                 channel_type="binary_collapsed", E=0.6))
+                rows.append(dict(method="A", scenario=sc,
+                                 channel="cat_collapsed:workouts",
+                                 channel_type="binary_collapsed", E=0.7))
+        bl_rows: list[dict] = []
+        for sc in all_scens:
+            if sc != "workout_gap" and sc != "intensity_failure":
+                for c in range(5):
+                    bl_rows.append(dict(method="LOCF", scenario=sc,
+                                        channel=f"ch_{c}",
+                                        channel_type="continuous", E=1.0))
+            for c in (5, 6):
+                bl_rows.append(dict(method="LOCF", scenario=sc,
+                                    channel=f"ch_{c}",
+                                    channel_type="continuous", E=1.0))
+            if sc in ("random_noise", "temporal_slice", "signal_slice"):
+                bl_rows.append(dict(method="LOCF", scenario=sc,
+                                    channel="cat_collapsed:sleep",
+                                    channel_type="binary_collapsed", E=1.0))
+                bl_rows.append(dict(method="LOCF", scenario=sc,
+                                    channel="cat_collapsed:workouts",
+                                    channel_type="binary_collapsed", E=1.0))
+        return _build_errors_df(rows), _build_errors_df(bl_rows)
+
+    def test_per_scenario_4bucket_structural_skill(self):
+        """random_noise has all 4 buckets present → S = 1 − exp((log 0.4 +
+        log 0.5 + log 0.6 + log 0.7) / 4). Same for temporal_slice and
+        signal_slice.
+        """
+        errors, bl = self._build_3level_fixture()
+        result = compute_skill_scores(errors, bl, mode="pooled")
+        expected = 1.0 - np.exp(
+            (np.log(0.4) + np.log(0.5) + np.log(0.6) + np.log(0.7)) / 4
+        )
+        for sc in ("random_noise", "temporal_slice", "signal_slice"):
+            row = result[(result["method"] == "A") & (result["scope"] == sc)]
+            assert len(row) == 1
+            np.testing.assert_allclose(
+                float(row["skill_score"].iloc[0]), expected, rtol=1e-9,
+            )
+            # n_tasks counts buckets within the scenario (= 4).
+            assert int(row["n_tasks"].iloc[0]) == 4
+
+    def test_sleep_gap_two_bucket_skill(self):
+        """sleep_gap has activity + physiology only (no sleep/workouts
+        buckets because binary channels aren't masked in sleep_gap).
+        S = 1 − exp((log 0.4 + log 0.5) / 2).
+        """
+        errors, bl = self._build_3level_fixture()
+        result = compute_skill_scores(errors, bl, mode="pooled")
+        expected = 1.0 - np.exp((np.log(0.4) + np.log(0.5)) / 2)
+        row = result[(result["method"] == "A") & (result["scope"] == "sleep_gap")]
+        assert len(row) == 1
+        np.testing.assert_allclose(
+            float(row["skill_score"].iloc[0]), expected, rtol=1e-9,
+        )
+        assert int(row["n_tasks"].iloc[0]) == 2
+
+    def test_workout_gap_and_intensity_failure_single_bucket_unchanged(self):
+        """workout_gap and intensity_failure have only ch_5, ch_6 (physiology
+        bucket only). B.2 degenerates to the bucket value, which is just
+        the per-channel geomean over ch_5, ch_6. S = 1 − 0.5 = 0.5.
+        """
+        errors, bl = self._build_3level_fixture()
+        result = compute_skill_scores(errors, bl, mode="pooled")
+        for sc in ("workout_gap", "intensity_failure"):
+            row = result[(result["method"] == "A") & (result["scope"] == sc)]
+            assert len(row) == 1
+            np.testing.assert_allclose(
+                float(row["skill_score"].iloc[0]), 0.5, rtol=1e-9,
+            )
+            assert int(row["n_tasks"].iloc[0]) == 1
+
+    def test_semantic_log_space_mean_over_3_scenarios(self):
+        """semantic = 1 − exp(mean over {sleep_gap, workout_gap,
+        intensity_failure} of log_R_scenario).
+
+          log_R_sleep_gap       = (log 0.4 + log 0.5) / 2  (activity + physiology)
+          log_R_workout_gap     = log 0.5                  (physiology only)
+          log_R_intensity_fail. = log 0.5                  (physiology only)
+        """
+        errors, bl = self._build_3level_fixture()
+        result = compute_skill_scores(errors, bl, mode="pooled")
+        log_sg = (np.log(0.4) + np.log(0.5)) / 2
+        log_wg = np.log(0.5)
+        log_if = np.log(0.5)
+        expected = 1.0 - np.exp((log_sg + log_wg + log_if) / 3)
+        row = result[(result["method"] == "A") & (result["scope"] == "semantic")]
+        assert len(row) == 1
+        np.testing.assert_allclose(
+            float(row["skill_score"].iloc[0]), expected, rtol=1e-9,
+        )
+        # n_tasks counts semantic scenarios present (= 3).
+        assert int(row["n_tasks"].iloc[0]) == 3
+
+    def test_overall_binary_collapsed_log_space_mean_over_6_scenarios(self):
+        """overall_binary_collapsed = 1 − exp(mean over all 6 scenarios of
+        log_R_scenario).
+        """
+        errors, bl = self._build_3level_fixture()
+        result = compute_skill_scores(errors, bl, mode="pooled")
+        log_struct = (
+            np.log(0.4) + np.log(0.5) + np.log(0.6) + np.log(0.7)
+        ) / 4
+        log_sg = (np.log(0.4) + np.log(0.5)) / 2
+        log_wg = np.log(0.5)
+        log_if = np.log(0.5)
+        expected = 1.0 - np.exp(
+            (3 * log_struct + log_sg + log_wg + log_if) / 6
+        )
+        row = result[(result["method"] == "A") &
+                     (result["scope"] == "overall_binary_collapsed")]
+        assert len(row) == 1
+        np.testing.assert_allclose(
+            float(row["skill_score"].iloc[0]), expected, rtol=1e-9,
+        )
+        assert int(row["n_tasks"].iloc[0]) == 6
 
 
 class TestTaskScopeWithCollapsedRows:

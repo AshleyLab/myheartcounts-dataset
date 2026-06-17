@@ -117,6 +117,214 @@ def b2_bucket_for_channel(channel: str, channel_type: str) -> str | None:
 
 
 # --------------------------------------------------------------------------
+# 3-level B.2 helpers (skill + rank kernels)
+# --------------------------------------------------------------------------
+
+def _bucket_log_R_per_scenario(
+    legacy_df: pd.DataFrame, collapsed_df: pd.DataFrame,
+) -> pd.DataFrame:
+    """L3 of the 3-level B.2 form: per-(method, scenario, bucket) mean of
+    log(clip(R)) over the bucket's constituent tasks in that scenario.
+
+    Continuous legacy rows (category in {activity, physiology})
+    contribute to their named bucket; collapsed rows contribute to
+    sleep/workouts via the suffix of their synthetic
+    ``cat_collapsed:<cat>`` channel key. Per-channel binary rows
+    (ch_7..ch_18) are dropped — those reach the headline only via the
+    collapsed rows so per-channel binary would double-count.
+
+    Returns ``[method, scenario, bucket, bucket_log_R]`` with one row
+    per present (method, scenario, bucket).
+    """
+    pieces: list[pd.DataFrame] = []
+    cont = legacy_df[legacy_df["category"].isin({"activity", "physiology"})]
+    if not cont.empty:
+        pieces.append(cont.assign(bucket=cont["category"]))
+    if not collapsed_df.empty:
+        pieces.append(
+            collapsed_df.assign(
+                bucket=collapsed_df["channel"].str.split(":", n=1, expand=True)[1],
+            )
+        )
+    if not pieces:
+        return pd.DataFrame(
+            columns=["method", "scenario", "bucket", "bucket_log_R"]
+        )
+    buckets_df = pd.concat(pieces, ignore_index=True)
+    return (
+        buckets_df.groupby(["method", "scenario", "bucket"], observed=True)["clipped_ratio"]
+        .apply(lambda r: float(np.mean(np.log(r.values))))
+        .reset_index(name="bucket_log_R")
+    )
+
+
+def _scenario_log_R_per_method(bucket_log_R: pd.DataFrame) -> pd.DataFrame:
+    """L2 of the 3-level B.2 form: per-(method, scenario) arithmetic mean
+    over buckets-present of ``bucket_log_R``.
+
+    Returns ``[method, scenario, log_R_scenario, n_buckets]`` with one
+    row per present (method, scenario).
+    """
+    if bucket_log_R.empty:
+        return pd.DataFrame(
+            columns=["method", "scenario", "log_R_scenario", "n_buckets"]
+        )
+    return (
+        bucket_log_R.groupby(["method", "scenario"], observed=True)
+        .agg(
+            log_R_scenario=("bucket_log_R", "mean"),
+            n_buckets=("bucket_log_R", "size"),
+        )
+        .reset_index()
+    )
+
+
+def _multi_scenario_skill(
+    scen_log_R: pd.DataFrame,
+    scenarios: Iterable[str],
+    *,
+    scope_label: str,
+) -> list[dict]:
+    """L1 of the 3-level B.2 form: per-method log-space mean over a chosen
+    set of scenarios of ``log_R_scenario``.
+
+    Emits one row per method with skill = ``1 − exp(mean of log_R_scenario
+    over scenarios-present)``. ``n_tasks`` is the number of scenarios
+    that actually contributed (≤ ``len(scenarios)``).
+    """
+    scenarios = set(scenarios)
+    if scen_log_R.empty or not scenarios:
+        return []
+    in_scope = scen_log_R[scen_log_R["scenario"].isin(scenarios)]
+    if in_scope.empty:
+        return []
+    out: list[dict] = []
+    for method, grp in in_scope.groupby("method", observed=True):
+        vals = grp["log_R_scenario"].to_numpy(dtype=np.float64)
+        if vals.size == 0:
+            continue
+        out.append({
+            "method":      method,
+            "scope":       scope_label,
+            "skill_score": 1.0 - float(np.exp(float(np.mean(vals)))),
+            "n_tasks":     int(vals.size),
+        })
+    return out
+
+
+def _scenario_rank_per_method(
+    per_task: pd.DataFrame,
+    has_n_users: bool,
+) -> pd.DataFrame:
+    """L2 of the 3-level rank form: per-(method, scenario) arithmetic
+    mean over buckets-present of ``bucket_rank``.
+
+    Stage L3 (per-bucket task mean) and L2 (mean over buckets) fold
+    into a single groupby pair below because mean-of-means with equal
+    inner weight equals the weighted mean of bucket-level means — but
+    we materialize the L3 step explicitly so the bucket weights are
+    equal regardless of how many tasks live in each bucket within a
+    scenario.
+
+    Returns ``[method, scenario, scenario_rank, n_buckets,
+    (scenario_users)]``.
+    """
+    if per_task.empty:
+        cols = ["method", "scenario", "scenario_rank", "n_buckets"]
+        if has_n_users:
+            cols.append("scenario_users")
+        return pd.DataFrame(columns=cols)
+
+    # Map (channel, channel_type) → bucket via b2_bucket_for_channel.
+    # b2_bucket_for_channel needs channel_type; the per-task frames
+    # produced by the rank kernel carry it implicitly through
+    # ``channel`` (per-channel ch_K) and the collapsed ``cat_collapsed:*``
+    # synthetic key — so we can recover the bucket from the channel
+    # name alone (no channel_type column is needed for the lookup since
+    # the kernel decides bucket by channel-suffix or by category
+    # membership). To stay symmetric with the skill kernel and the
+    # ``b2_bucket_for_channel`` contract we synthesize a channel_type:
+    # collapsed channels → "binary_collapsed"; everything else falls back
+    # to continuous-vs-binary via ``channel_category``.
+    df = per_task.copy()
+    chan_str = df["channel"].astype(str)
+    cat = chan_str.map(channel_category)
+
+    def _bucket(ch: str, c: str | None) -> str | None:
+        if ch.startswith("cat_collapsed:"):
+            return ch.split(":", 1)[1]
+        if c in {"activity", "physiology"}:
+            return c
+        return None  # per-channel binary → dropped
+
+    df["bucket"] = [
+        _bucket(ch, c) for ch, c in zip(chan_str, cat)
+    ]
+    df = df[df["bucket"].notna()]
+    if df.empty:
+        cols = ["method", "scenario", "scenario_rank", "n_buckets"]
+        if has_n_users:
+            cols.append("scenario_users")
+        return pd.DataFrame(columns=cols)
+
+    # L3: per (method, scenario, bucket) mean of task_rank over tasks.
+    l3_agg: dict = {"bucket_rank": ("task_rank", "mean")}
+    if has_n_users:
+        l3_agg["bucket_users"] = ("n_users", "max")
+    bucket_lvl = (
+        df.groupby(["method", "scenario", "bucket"], observed=True)
+        .agg(**l3_agg)
+        .reset_index()
+    )
+
+    # L2: per (method, scenario) mean over buckets present.
+    l2_agg: dict = {
+        "scenario_rank": ("bucket_rank", "mean"),
+        "n_buckets":     ("bucket_rank", "size"),
+    }
+    if has_n_users:
+        l2_agg["scenario_users"] = ("bucket_users", "max")
+    return (
+        bucket_lvl.groupby(["method", "scenario"], observed=True)
+        .agg(**l2_agg)
+        .reset_index()
+    )
+
+
+def _multi_scenario_rank(
+    scen_rank: pd.DataFrame,
+    scenarios: Iterable[str],
+    *,
+    scope_label: str,
+    has_n_users: bool,
+) -> list[dict]:
+    """L1 of the 3-level rank form: per-method arithmetic mean over a
+    chosen set of scenarios of ``scenario_rank``.
+    """
+    scenarios = set(scenarios)
+    if scen_rank.empty or not scenarios:
+        return []
+    in_scope = scen_rank[scen_rank["scenario"].isin(scenarios)]
+    if in_scope.empty:
+        return []
+    out: list[dict] = []
+    for method, grp in in_scope.groupby("method", observed=True):
+        vals = grp["scenario_rank"].to_numpy(dtype=np.float64)
+        if vals.size == 0:
+            continue
+        row: dict = {
+            "method":   method,
+            "scope":    scope_label,
+            "avg_rank": float(np.mean(vals)),
+            "n_tasks":  int(vals.size),
+        }
+        if has_n_users:
+            row["n_users"] = int(grp["scenario_users"].max())
+        out.append(row)
+    return out
+
+
+# --------------------------------------------------------------------------
 # Error extraction (registry-DataFrame variant)
 # --------------------------------------------------------------------------
 
@@ -296,17 +504,46 @@ def compute_skill_scores(
 
     results = []
 
-    # --- Per-scenario (per-channel) -----------------------------------
-    for (method, scenario), group in legacy_df.groupby(["method", "scenario"], observed=True):
+    # --- Universal 3-level B.2 (per-scenario / semantic / overall) ----
+    # L3 (within bucket × scenario): per-(method, scenario, bucket) mean
+    #   of log(clip(R_task)).
+    # L2 (within scenario):           per-(method, scenario) mean over
+    #   buckets-present of L3 values.
+    # L1 (across scenarios):          per-method mean over scenarios-in-scope
+    #   of L2 values. ``S_scope = 1 − exp(L1)``.
+    #
+    # Bucket sourcing (matches ``b2_bucket_for_channel`` and the fairness
+    # kernel):
+    #   activity   ← continuous category=="activity" rows (ch_0..ch_4)
+    #   physiology ← continuous category=="physiology" rows (ch_5..ch_6)
+    #   sleep      ← cat_collapsed:sleep rows (Part D)
+    #   workouts   ← cat_collapsed:workouts rows (Part D)
+    # Per-channel binary rows (category in {sleep, workouts}, ch_7..ch_18)
+    # are NOT consumed by per-scenario / semantic / overall — they reach
+    # those scopes via the cat_collapsed:* rows. They still emit as
+    # ``task:<sc>:ch_K`` leaves and as the per-channel ``cat:sleep`` /
+    # ``cat:workouts`` scopes below.
+    bucket_log_R_per_scen = _bucket_log_R_per_scenario(legacy_df, collapsed_df)
+    scen_log_R = _scenario_log_R_per_method(bucket_log_R_per_scen)
+
+    # Per-scenario scopes: one row per (method, scenario) present.
+    for _, row in scen_log_R.iterrows():
         results.append({
-            "method": method, "scope": scenario,
-            "skill_score": _skill(np.log(group["clipped_ratio"].values)),
-            "n_tasks": len(group),
+            "method":      row["method"],
+            "scope":       row["scenario"],
+            "skill_score": 1.0 - float(np.exp(float(row["log_R_scenario"]))),
+            "n_tasks":     int(row["n_buckets"]),   # buckets in this scenario
         })
 
-    # --- cat:<cat> (structural scenarios only, per-channel) -----------
-    structural = legacy_df[~legacy_df["scenario"].isin(SEMANTIC_SCENARIOS)]
-    for (method, cat), group in structural.groupby(["method", "category"], observed=True):
+    # cat:<cat> (structural scenarios only, per-channel) — continuous
+    # categories only. The per-channel binary cat:sleep / cat:workouts
+    # are deliberately dropped: the collapsed variants below are the
+    # equal-weighted binary categories that feed the headline.
+    structural_cont = legacy_df[
+        (~legacy_df["scenario"].isin(SEMANTIC_SCENARIOS))
+        & (legacy_df["category"].isin({"activity", "physiology"}))
+    ]
+    for (method, cat), group in structural_cont.groupby(["method", "category"], observed=True):
         if cat is None:
             continue
         results.append({
@@ -315,24 +552,9 @@ def compute_skill_scores(
             "n_tasks": len(group),
         })
 
-    # --- semantic (semantic scenarios only, per-channel) --------------
-    semantic = legacy_df[legacy_df["scenario"].isin(SEMANTIC_SCENARIOS)]
-    for method, group in semantic.groupby("method", observed=True):
-        results.append({
-            "method": method, "scope": "semantic",
-            "skill_score": _skill(np.log(group["clipped_ratio"].values)),
-            "n_tasks": len(group),
-        })
-
-    # --- overall (per-channel; historical leaderboard column) ----------
-    for method, group in legacy_df.groupby("method", observed=True):
-        results.append({
-            "method": method, "scope": "overall",
-            "skill_score": _skill(np.log(group["clipped_ratio"].values)),
-            "n_tasks": len(group),
-        })
-
-    # --- cat_collapsed:<cat> (one per binary category) ----------------
+    # cat_collapsed:<cat> (one per binary category) — unchanged
+    # log-space geomean of per-scenario R values (3 structural
+    # scenarios × 1 collapsed task each).
     if not collapsed_df.empty:
         for (method, channel), group in collapsed_df.groupby(["method", "channel"], observed=True):
             cat_name = str(channel).split(":", 1)[1]
@@ -342,45 +564,32 @@ def compute_skill_scores(
                 "n_tasks": len(group),
             })
 
-        # --- overall_binary_collapsed: category-balanced two-stage geomean.
-        #     Stage 1: per (method, bucket) mean of log(R) over the bucket's
-        #     constituent tasks — exactly the same quantity that the
-        #     ``cat:activity`` / ``cat:physiology`` / ``cat_collapsed:sleep``
-        #     / ``cat_collapsed:workouts`` scopes report.
-        #     Stage 2: per method, arithmetic mean over buckets, so each
-        #     category contributes equally regardless of how many underlying
-        #     tasks it has.
-        #
-        #     The four buckets are:
-        #       activity   — continuous per-channel rows in ``cat:activity``
-        #       physiology — continuous per-channel rows in ``cat:physiology``
-        #       sleep      — ``cat_collapsed:sleep`` rows (NOT ``cat:sleep``)
-        #       workouts   — ``cat_collapsed:workouts`` rows (NOT ``cat:workouts``)
-        #
-        #     Per-channel binary scopes (``cat:sleep`` / ``cat:workouts``) are
-        #     deliberately not consumed here — the whole point of the
-        #     collapsed variant is to give each binary category equal weight
-        #     with the continuous ones rather than 10×/2× per-channel weight.
-        continuous_legacy = legacy_df[legacy_df["category"].isin({"activity", "physiology"})]
-        cat_buckets = continuous_legacy.assign(bucket=continuous_legacy["category"])
-        collapsed_buckets = collapsed_df.assign(
-            bucket=collapsed_df["channel"].str.split(":", n=1, expand=True)[1],
-        )
-        buckets_df = pd.concat([cat_buckets, collapsed_buckets], ignore_index=True)
-        if not buckets_df.empty:
-            per_bucket = (
-                buckets_df.groupby(["method", "bucket"], observed=True)["clipped_ratio"]
-                .apply(lambda r: float(np.mean(np.log(r.values))))
-                .reset_index(name="mean_log_R")
-            )
-            for method, group in per_bucket.groupby("method", observed=True):
-                overall_log = float(group["mean_log_R"].mean())
-                results.append({
-                    "method": method,
-                    "scope": "overall_binary_collapsed",
-                    "skill_score": 1.0 - float(np.exp(overall_log)),
-                    "n_tasks": int(len(group)),   # number of buckets used (≤ 4)
-                })
+    # --- semantic: L1 log-space mean over the 3 semantic scenarios ----
+    sem_rows = _multi_scenario_skill(
+        scen_log_R, SEMANTIC_SCENARIOS, scope_label="semantic",
+    )
+    results.extend(sem_rows)
+
+    # --- overall (legacy per-channel; historical column kept for C2) --
+    # Flat geomean over every per-channel legacy task. Removed in C3
+    # when ``overall_binary_collapsed`` is renamed to ``overall``.
+    for method, group in legacy_df.groupby("method", observed=True):
+        results.append({
+            "method": method, "scope": "overall",
+            "skill_score": _skill(np.log(group["clipped_ratio"].values)),
+            "n_tasks": len(group),
+        })
+
+    # --- overall_binary_collapsed: L1 log-space mean over all 6 ------
+    # scenarios. Rename to ``overall`` in C3.
+    all_scenarios = (
+        set(scen_log_R["scenario"].unique())
+        if not scen_log_R.empty else set()
+    )
+    obc_rows = _multi_scenario_skill(
+        scen_log_R, all_scenarios, scope_label="overall_binary_collapsed",
+    )
+    results.extend(obc_rows)
 
     # --- task:<scenario>:<channel> (degenerate single-task scope) -----
     # Per-(method, scenario, channel) leaf scope. Skill is the single-task
@@ -448,57 +657,62 @@ def aggregate_task_ranks_to_scopes(per_task: pd.DataFrame) -> pd.DataFrame:
         return out
 
     results: list[dict] = []
-    for (method, scenario), group in legacy.groupby(["method", "scenario"], observed=True):
-        results.append(_row(method, scenario, group))
 
-    structural = legacy[~legacy["scenario"].isin(SEMANTIC_SCENARIOS)]
-    for (method, cat), group in structural.groupby(["method", "category"], observed=True):
+    # 3-level rank form — mirrors compute_skill_scores. The per-scenario
+    # and overall_binary_collapsed scopes (plus semantic) collapse to one
+    # ``scenario_rank`` value per (method, scenario), then L1 averages
+    # over scenarios in scope. Bucket sourcing (activity/physiology from
+    # continuous, sleep/workouts from cat_collapsed:*) is shared with the
+    # skill kernel via ``_scenario_rank_per_method``.
+    scen_rank = _scenario_rank_per_method(df, has_n_users)
+
+    # Per-scenario scopes: one row per (method, scenario) present.
+    for _, row in scen_rank.iterrows():
+        rdict = {
+            "method":   row["method"],
+            "scope":    row["scenario"],
+            "avg_rank": float(row["scenario_rank"]),
+            "n_tasks":  int(row["n_buckets"]),
+        }
+        if has_n_users:
+            rdict["n_users"] = int(row["scenario_users"])
+        results.append(rdict)
+
+    # cat:<cat> (structural scenarios only, continuous-only)
+    structural_cont = legacy[
+        (~legacy["scenario"].isin(SEMANTIC_SCENARIOS))
+        & (legacy["category"].isin({"activity", "physiology"}))
+    ]
+    for (method, cat), group in structural_cont.groupby(["method", "category"], observed=True):
         if cat is None:
             continue
         results.append(_row(method, f"cat:{cat}", group))
 
-    sem = legacy[legacy["scenario"].isin(SEMANTIC_SCENARIOS)]
-    for method, group in sem.groupby("method", observed=True):
-        results.append(_row(method, "semantic", group))
-
-    for method, group in legacy.groupby("method", observed=True):
-        results.append(_row(method, "overall", group))
-
+    # cat_collapsed:<cat> — log-space mean of per-scenario task_ranks
+    # (unchanged from today: per-scenario collapsed tasks already share
+    # the same arithmetic mean rule as the cat:* continuous scopes).
     if not collapsed.empty:
         for (method, channel), group in collapsed.groupby(["method", "channel"], observed=True):
             cat_name = str(channel).split(":", 1)[1]
             results.append(_row(method, f"cat_collapsed:{cat_name}", group))
 
-        # --- overall_binary_collapsed: category-balanced two-stage mean.
-        # Mirrors the skill-side B.2 form: each of the 4 buckets contributes
-        # one rank value (its own ``avg_rank`` = mean of constituent task_ranks)
-        # and the overall is the arithmetic mean across buckets. See
-        # ``compute_skill_scores`` for the rationale.
-        continuous_legacy = legacy[legacy["category"].isin({"activity", "physiology"})]
-        cat_buckets = continuous_legacy.assign(bucket=continuous_legacy["category"])
-        collapsed_buckets = collapsed.assign(
-            bucket=collapsed["channel"].str.split(":", n=1, expand=True)[1],
-        )
-        buckets_df = pd.concat([cat_buckets, collapsed_buckets], ignore_index=True)
-        if not buckets_df.empty:
-            agg_dict = {"bucket_rank": ("task_rank", "mean")}
-            if has_n_users:
-                agg_dict["bucket_users"] = ("n_users", "max")
-            per_bucket = (
-                buckets_df.groupby(["method", "bucket"], observed=True)
-                .agg(**agg_dict)
-                .reset_index()
-            )
-            for method, grp in per_bucket.groupby("method", observed=True):
-                out = {
-                    "method": method,
-                    "scope": "overall_binary_collapsed",
-                    "avg_rank": float(grp["bucket_rank"].mean()),
-                    "n_tasks": int(len(grp)),
-                }
-                if has_n_users:
-                    out["n_users"] = int(grp["bucket_users"].max())
-                results.append(out)
+    # semantic: L1 mean over the 3 semantic scenarios.
+    results.extend(_multi_scenario_rank(
+        scen_rank, SEMANTIC_SCENARIOS,
+        scope_label="semantic", has_n_users=has_n_users,
+    ))
+
+    # overall (legacy per-channel; deleted in C3).
+    for method, group in legacy.groupby("method", observed=True):
+        results.append(_row(method, "overall", group))
+
+    # overall_binary_collapsed: L1 mean over all 6 scenarios. Renamed to
+    # ``overall`` in C3.
+    all_scenarios_rank = set(scen_rank["scenario"].unique()) if not scen_rank.empty else set()
+    results.extend(_multi_scenario_rank(
+        scen_rank, all_scenarios_rank,
+        scope_label="overall_binary_collapsed", has_n_users=has_n_users,
+    ))
 
     # --- task:<scenario>:<channel> (degenerate single-task rank scope) -
     # Pass each per-task row through unchanged: ``avg_rank`` is the
