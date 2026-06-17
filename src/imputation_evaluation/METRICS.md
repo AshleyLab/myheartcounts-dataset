@@ -225,13 +225,50 @@ not the per-channel `cat:sleep` / `cat:workouts`
 |---|---|---|
 | `semantic` | `{sleep_gap, workout_gap, intensity_failure}` × applicable channels | 7 + 2 + 2 = 11 |
 | `overall` | all 6 scenarios × all per-channel tasks (binary excluded from semantic) | 19·3 + 7 + 2 + 2 = **68** |
-| `overall_binary_collapsed` | overall with the 12 per-channel binary tasks replaced by the 6 `cat_collapsed:*` tasks | 7·3 + 2·3 + 6 = **33** |
+| `overall_binary_collapsed` | category-balanced two-stage geomean over **4 buckets** | **4** |
 
 `overall_binary_collapsed` is the headline skill / rank quoted on the
 leaderboard JSON (`build_leaderboard_json.OVERALL_SKILL_SCOPE`).
 `overall` is kept as a secondary per-channel reference and is the scope
 the fairness CSV's macro row uses (it has no collapsed variant — only
 one disparity per attribute).
+
+### 5.4.1 The B.2 two-stage form for `overall_binary_collapsed`
+
+Each of the four sensor categories contributes **once** to the headline,
+regardless of how many constituent (channel × scenario) tasks live inside it:
+
+```
+S_overall_binary_collapsed  =  1  −  exp(  (1/K) · Σ_{c ∈ C}  log(R_c)  )
+```
+
+where `C = {activity, physiology, sleep, workouts}`, `K = |C ∩ buckets present|`,
+and the per-bucket geomeaned ratio is
+
+```
+R_c  =  exp(  (1/n_c) · Σ_{r ∈ tasks(c)}  log(R_task_r)  )
+```
+
+— exactly the value that `cat:<c>` (continuous) or `cat_collapsed:<c>`
+(binary) already report.
+
+The **bucket source** is fixed:
+- `activity` and `physiology` come from `cat:<c>` (continuous per-channel
+  scopes, structural scenarios only).
+- `sleep` and `workouts` come from `cat_collapsed:<c>` (Part D — collapsed
+  per-scenario tasks). The per-channel `cat:sleep` / `cat:workouts` scopes
+  are **deliberately not consumed** here — that's the whole point of the
+  binary collapse.
+
+Why two-stage: a flat geomean over the underlying ~38 tasks would weight
+activity (20 tasks) ~6.7× heavier than sleep (3 collapsed tasks). The
+two-stage form removes that imbalance and gives each modality equal voice
+in the headline.
+
+Rank side mirrors the skill side: the per-bucket value is the bucket's
+arithmetic mean of `task_rank` (i.e. the `avg_rank` of the corresponding
+`cat:*` / `cat_collapsed:*` scope), and the headline rank is the arithmetic
+mean across the 4 buckets — `n_tasks` again counts buckets present.
 
 ### 5.5 Per-task leaf scopes (`task:<s>:<c>`)
 

@@ -189,12 +189,17 @@ class TestCollapsedSkillScopes:
         assert len(sleep_row) == 1
         assert int(sleep_row["n_tasks"].iloc[0]) == 1
 
-        # overall_binary_collapsed: continuous (ch_0, ch_1) + 2 collapsed = 4 tasks.
+        # overall_binary_collapsed: B.2 two-stage form — n_tasks now counts
+        # **buckets**, not constituent tasks. The fixture has data for:
+        #   activity (from ch_0, ch_1) + sleep (collapsed) + workouts (collapsed)
+        # — 3 buckets, no physiology data. Per-channel ch_7 is binary and is
+        # NOT consumed by overall_binary_collapsed (binary side uses the
+        # collapsed scope).
         collapsed_overall = result[
             (result["method"] == "A") & (result["scope"] == "overall_binary_collapsed")
         ]
         assert len(collapsed_overall) == 1
-        assert int(collapsed_overall["n_tasks"].iloc[0]) == 4
+        assert int(collapsed_overall["n_tasks"].iloc[0]) == 3
 
     def test_no_collapsed_rows_means_no_collapsed_scopes(self):
         """Backwards compat: when caller passes only per-channel rows, no
@@ -229,6 +234,136 @@ class TestCollapsedChannelHelper:
 # ---------------------------------------------------------------------------
 # Part D + task-grain emission interaction
 # ---------------------------------------------------------------------------
+
+
+class TestOverallBinaryCollapsedTwoStage:
+    """``overall_binary_collapsed`` is the category-balanced two-stage form.
+
+    Stage 1 (per-bucket): mean of log(R) over the bucket's constituent tasks
+    — exactly what ``cat:activity`` / ``cat:physiology`` /
+    ``cat_collapsed:*`` already report.
+
+    Stage 2 (per method): arithmetic mean over the 4 buckets {activity,
+    physiology, sleep, workouts}, so each category contributes equally
+    regardless of how many constituent tasks it has.
+    """
+
+    def _build_balanced_fixture(self):
+        """Two methods, all 4 buckets populated, two scenarios for the
+        continuous side (so activity / physiology have multiple tasks)."""
+        scenarios = ["random_noise", "temporal_slice"]
+        rows = []
+        # Method A: per-channel continuous (ch_0..ch_4 activity, ch_5..ch_6
+        # physiology). Use known E values to make the bucket geomeans
+        # closed-form.
+        for sc in scenarios:
+            # activity (5 channels, E=0.4 → R=0.4 vs baseline E=1.0)
+            for c in range(5):
+                rows.append(dict(method="A", scenario=sc, channel=f"ch_{c}",
+                                 channel_type="continuous", E=0.4))
+            # physiology (2 channels, E=0.5 → R=0.5)
+            for c in (5, 6):
+                rows.append(dict(method="A", scenario=sc, channel=f"ch_{c}",
+                                 channel_type="continuous", E=0.5))
+            # cat_collapsed:sleep (E=0.6 → R=0.6)
+            rows.append(dict(method="A", scenario=sc,
+                             channel="cat_collapsed:sleep",
+                             channel_type="binary_collapsed", E=0.6))
+            # cat_collapsed:workouts (E=0.7 → R=0.7)
+            rows.append(dict(method="A", scenario=sc,
+                             channel="cat_collapsed:workouts",
+                             channel_type="binary_collapsed", E=0.7))
+        # Method B: same shape but E=0.5 for every task so its overall = 0.5.
+        for sc in scenarios:
+            for c in range(7):
+                rows.append(dict(method="B", scenario=sc, channel=f"ch_{c}",
+                                 channel_type="continuous", E=0.5))
+            for cat in ("sleep", "workouts"):
+                rows.append(dict(method="B", scenario=sc,
+                                 channel=f"cat_collapsed:{cat}",
+                                 channel_type="binary_collapsed", E=0.5))
+        # Baseline E=1.0 everywhere → ratios = method's E (in-bounds).
+        bl_rows = []
+        for sc in scenarios:
+            for c in range(7):
+                bl_rows.append(dict(method="LOCF", scenario=sc, channel=f"ch_{c}",
+                                    channel_type="continuous", E=1.0))
+            for cat in ("sleep", "workouts"):
+                bl_rows.append(dict(method="LOCF", scenario=sc,
+                                    channel=f"cat_collapsed:{cat}",
+                                    channel_type="binary_collapsed", E=1.0))
+        return _build_errors_df(rows), _build_errors_df(bl_rows)
+
+    def test_n_tasks_equals_number_of_buckets(self):
+        """n_tasks counts buckets, not constituent tasks. All 4 present → 4."""
+        errors, bl = self._build_balanced_fixture()
+        result = compute_skill_scores(errors, bl, mode="pooled")
+        for method in ("A", "B"):
+            row = result[(result["method"] == method) &
+                         (result["scope"] == "overall_binary_collapsed")]
+            assert len(row) == 1
+            assert int(row["n_tasks"].iloc[0]) == 4
+
+    def test_skill_equals_mean_of_bucket_log_ratios(self):
+        """Closed-form check: log ratios cleanly average to a known value.
+
+        Method A bucket log(R)s:
+          activity   = log(0.4)
+          physiology = log(0.5)
+          sleep      = log(0.6)
+          workouts   = log(0.7)
+        mean = (log(0.4) + log(0.5) + log(0.6) + log(0.7)) / 4
+        S    = 1 - exp(mean)
+        """
+        errors, bl = self._build_balanced_fixture()
+        result = compute_skill_scores(errors, bl, mode="pooled")
+        mean_log = (np.log(0.4) + np.log(0.5) + np.log(0.6) + np.log(0.7)) / 4
+        expected_S = 1.0 - np.exp(mean_log)
+        got = float(
+            result[(result["method"] == "A") &
+                   (result["scope"] == "overall_binary_collapsed")]
+            ["skill_score"].iloc[0]
+        )
+        np.testing.assert_allclose(got, expected_S, rtol=1e-9)
+
+    def test_per_channel_binary_scope_not_consumed(self):
+        """Adding ``cat:sleep`` / ``cat:workouts`` per-channel rows must NOT
+        change ``overall_binary_collapsed`` — the bucket priority rule is
+        "collapsed wins for sleep / workouts".
+        """
+        errors, bl = self._build_balanced_fixture()
+        baseline = float(
+            compute_skill_scores(errors, bl, mode="pooled")
+            .pipe(lambda d: d[(d["method"] == "A") &
+                              (d["scope"] == "overall_binary_collapsed")])
+            ["skill_score"].iloc[0]
+        )
+        # Now sneak in catastrophic per-channel binary rows; they belong to
+        # ``cat:sleep`` / ``cat:workouts`` (ch_7..ch_18), NOT the collapsed
+        # scopes. The new overall must be unchanged because it consumes the
+        # collapsed values, not the per-channel binary ones.
+        extra = []
+        for sc in ("random_noise", "temporal_slice"):
+            for c in (7, 8):                       # sleep per-channel
+                extra.append(dict(method="A", scenario=sc, channel=f"ch_{c}",
+                                  channel_type="binary", E=99.0))
+            for c in range(9, 19):                 # workouts per-channel
+                extra.append(dict(method="A", scenario=sc, channel=f"ch_{c}",
+                                  channel_type="binary", E=99.0))
+        bl_extra = []
+        for sc in ("random_noise", "temporal_slice"):
+            for c in (7, 8, *range(9, 19)):
+                bl_extra.append(dict(method="LOCF", scenario=sc, channel=f"ch_{c}",
+                                     channel_type="binary", E=1.0))
+        errors_aug = pd.concat([errors, _build_errors_df(extra)], ignore_index=True)
+        bl_aug     = pd.concat([bl,     _build_errors_df(bl_extra)], ignore_index=True)
+        augmented = float(
+            compute_skill_scores(errors_aug, bl_aug, mode="pooled")
+            .pipe(lambda d: d[(d["method"] == "A") &
+                              (d["scope"] == "overall_binary_collapsed")])
+            ["skill_score"].iloc[0]
+        )
+        np.testing.assert_allclose(augmented, baseline, rtol=1e-9)
 
 
 class TestTaskScopeWithCollapsedRows:

@@ -307,18 +307,45 @@ def compute_skill_scores(
                 "n_tasks": len(group),
             })
 
-        # --- overall_binary_collapsed: continuous per-channel tasks +
-        #     collapsed-binary tasks (the binary side of "overall" replaced).
-        #     Excludes per-channel binary rows so each binary task is counted
-        #     once.
+        # --- overall_binary_collapsed: category-balanced two-stage geomean.
+        #     Stage 1: per (method, bucket) mean of log(R) over the bucket's
+        #     constituent tasks — exactly the same quantity that the
+        #     ``cat:activity`` / ``cat:physiology`` / ``cat_collapsed:sleep``
+        #     / ``cat_collapsed:workouts`` scopes report.
+        #     Stage 2: per method, arithmetic mean over buckets, so each
+        #     category contributes equally regardless of how many underlying
+        #     tasks it has.
+        #
+        #     The four buckets are:
+        #       activity   — continuous per-channel rows in ``cat:activity``
+        #       physiology — continuous per-channel rows in ``cat:physiology``
+        #       sleep      — ``cat_collapsed:sleep`` rows (NOT ``cat:sleep``)
+        #       workouts   — ``cat_collapsed:workouts`` rows (NOT ``cat:workouts``)
+        #
+        #     Per-channel binary scopes (``cat:sleep`` / ``cat:workouts``) are
+        #     deliberately not consumed here — the whole point of the
+        #     collapsed variant is to give each binary category equal weight
+        #     with the continuous ones rather than 10×/2× per-channel weight.
         continuous_legacy = legacy_df[legacy_df["category"].isin({"activity", "physiology"})]
-        merged = pd.concat([continuous_legacy, collapsed_df], ignore_index=True)
-        for method, group in merged.groupby("method", observed=True):
-            results.append({
-                "method": method, "scope": "overall_binary_collapsed",
-                "skill_score": _skill(np.log(group["clipped_ratio"].values)),
-                "n_tasks": len(group),
-            })
+        cat_buckets = continuous_legacy.assign(bucket=continuous_legacy["category"])
+        collapsed_buckets = collapsed_df.assign(
+            bucket=collapsed_df["channel"].str.split(":", n=1, expand=True)[1],
+        )
+        buckets_df = pd.concat([cat_buckets, collapsed_buckets], ignore_index=True)
+        if not buckets_df.empty:
+            per_bucket = (
+                buckets_df.groupby(["method", "bucket"], observed=True)["clipped_ratio"]
+                .apply(lambda r: float(np.mean(np.log(r.values))))
+                .reset_index(name="mean_log_R")
+            )
+            for method, group in per_bucket.groupby("method", observed=True):
+                overall_log = float(group["mean_log_R"].mean())
+                results.append({
+                    "method": method,
+                    "scope": "overall_binary_collapsed",
+                    "skill_score": 1.0 - float(np.exp(overall_log)),
+                    "n_tasks": int(len(group)),   # number of buckets used (≤ 4)
+                })
 
     # --- task:<scenario>:<channel> (degenerate single-task scope) -----
     # Per-(method, scenario, channel) leaf scope. Skill is the single-task
@@ -406,10 +433,37 @@ def aggregate_task_ranks_to_scopes(per_task: pd.DataFrame) -> pd.DataFrame:
         for (method, channel), group in collapsed.groupby(["method", "channel"], observed=True):
             cat_name = str(channel).split(":", 1)[1]
             results.append(_row(method, f"cat_collapsed:{cat_name}", group))
+
+        # --- overall_binary_collapsed: category-balanced two-stage mean.
+        # Mirrors the skill-side B.2 form: each of the 4 buckets contributes
+        # one rank value (its own ``avg_rank`` = mean of constituent task_ranks)
+        # and the overall is the arithmetic mean across buckets. See
+        # ``compute_skill_scores`` for the rationale.
         continuous_legacy = legacy[legacy["category"].isin({"activity", "physiology"})]
-        merged = pd.concat([continuous_legacy, collapsed], ignore_index=True)
-        for method, group in merged.groupby("method", observed=True):
-            results.append(_row(method, "overall_binary_collapsed", group))
+        cat_buckets = continuous_legacy.assign(bucket=continuous_legacy["category"])
+        collapsed_buckets = collapsed.assign(
+            bucket=collapsed["channel"].str.split(":", n=1, expand=True)[1],
+        )
+        buckets_df = pd.concat([cat_buckets, collapsed_buckets], ignore_index=True)
+        if not buckets_df.empty:
+            agg_dict = {"bucket_rank": ("task_rank", "mean")}
+            if has_n_users:
+                agg_dict["bucket_users"] = ("n_users", "max")
+            per_bucket = (
+                buckets_df.groupby(["method", "bucket"], observed=True)
+                .agg(**agg_dict)
+                .reset_index()
+            )
+            for method, grp in per_bucket.groupby("method", observed=True):
+                out = {
+                    "method": method,
+                    "scope": "overall_binary_collapsed",
+                    "avg_rank": float(grp["bucket_rank"].mean()),
+                    "n_tasks": int(len(grp)),
+                }
+                if has_n_users:
+                    out["n_users"] = int(grp["bucket_users"].max())
+                results.append(out)
 
     # --- task:<scenario>:<channel> (degenerate single-task rank scope) -
     # Pass each per-task row through unchanged: ``avg_rank`` is the
