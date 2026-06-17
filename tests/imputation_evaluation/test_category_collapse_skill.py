@@ -177,7 +177,7 @@ class TestCollapsedSkillScopes:
 
         errors = _build_errors_df(rows)
         bl = _build_errors_df(bl_rows)
-        result = compute_skill_scores(errors, bl)
+        result = compute_skill_scores(errors, bl, mode="pooled")
 
         overall_row = result[(result["method"] == "A") & (result["scope"] == "overall")]
         assert len(overall_row) == 1
@@ -208,7 +208,9 @@ class TestCollapsedSkillScopes:
             {"method": "LOCF", "scenario": "random_noise", "channel": "ch_0",
              "channel_type": "continuous", "E": 1.0}
         ]
-        result = compute_skill_scores(_build_errors_df(rows), _build_errors_df(bl_rows))
+        result = compute_skill_scores(
+            _build_errors_df(rows), _build_errors_df(bl_rows), mode="pooled",
+        )
         scopes = set(result["scope"])
         assert "overall" in scopes
         assert not any(s.startswith("cat_collapsed:") for s in scopes)

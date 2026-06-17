@@ -143,27 +143,31 @@ def extract_errors(
 def compute_skill_scores(
     errors: pd.DataFrame,
     baseline_errors: pd.DataFrame | None = None,
+    *,
+    mode: str = "paired",
     clip_lower: float = CLIP_LOWER,
     clip_upper: float = CLIP_UPPER,
 ) -> pd.DataFrame:
     """Skill score per method × scope.
 
-    Two input modes are supported:
+    Two input modes are supported. The previous silent switch on the ``R``
+    column has been removed: the mode must be selected explicitly.
 
-    1. **Paired-R mode (preferred, used by the leaderboard).** If ``errors``
-       carries an ``R`` column (the per-task paired geometric-mean ratio
-       emitted by
-       :func:`bootstrap_skill_rank.compute_per_draw_errors`), consume it
-       directly:
-       ``S = 1 − exp(nanmean(log(clip(R, clip_lower, clip_upper))))``
-       over tasks in scope. ``baseline_errors`` is ignored (R is already
-       paired against the baseline at the per-user grain inside
-       :func:`bootstrap_skill_rank._per_method_cell_paired_ratios`).
-    2. **Legacy E + baseline_errors mode.** If ``R`` is not present, fall
-       back to the old behaviour: form ``E_method / E_baseline`` per task,
-       clip, geomean. Used by the deprecated ``S − λ·D`` fairness path,
-       which pairs subgroup-method E against a global-baseline E (a
-       different pairing than the leaderboard's subgroup-internal R).
+    1. ``mode="paired"`` (default — the leaderboard estimand). ``errors``
+       must carry an ``R`` column (the per-task paired geometric-mean ratio
+       at the per-user grain). Emit
+       ``S = 1 − exp(nanmean(log(clip(R, clip_lower, clip_upper))))`` over
+       tasks in scope. ``baseline_errors`` is ignored (R is already paired
+       against the baseline). The R column is produced by either the
+       point-flow helper
+       :func:`bootstrap_skill_rank.compute_per_task_paired_R` or the
+       bootstrap kernel
+       :func:`bootstrap_skill_rank._per_method_cell_paired_ratios`.
+    2. ``mode="pooled"`` (legacy opt-in). Form ``E_method / E_baseline`` per
+       task from ``errors`` and ``baseline_errors``, clip, geomean. Used
+       only by the deprecated ``S − λ·D`` fairness path, which pairs
+       subgroup-method E against a global-baseline E (a different pairing
+       than the leaderboard's subgroup-internal R).
 
     Emits these scopes (identical layout in both modes):
 
@@ -187,9 +191,17 @@ def compute_skill_scores(
     per-channel scopes explicitly exclude those rows so they don't
     double-count the binary information.
     """
-    if "R" in errors.columns:
-        # Paired-R mode — R is pre-clipped at Phase 1, but re-clip here so
-        # the result is invariant to whether callers pre-process.
+    if mode == "paired":
+        if "R" not in errors.columns:
+            raise ValueError(
+                "compute_skill_scores: mode='paired' requires an 'R' column "
+                "in ``errors``. Build R via "
+                "``bootstrap_skill_rank.compute_per_task_paired_R`` "
+                "(point-flow) or via ``compute_per_draw_errors`` (bootstrap), "
+                "or pass mode='pooled' for the legacy E + baseline_errors path."
+            )
+        # R is pre-clipped at Phase 1, but re-clip here so the result is
+        # invariant to whether callers pre-process.
         ratios = []
         for _, row in errors.iterrows():
             r = row["R"]
@@ -204,11 +216,12 @@ def compute_skill_scores(
                 "clipped_ratio": clipped,
                 "is_collapsed": is_collapsed_channel(row["channel"]),
             })
-    else:
+    elif mode == "pooled":
         if baseline_errors is None:
             raise ValueError(
-                "compute_skill_scores: ``errors`` lacks an 'R' column and no "
-                "``baseline_errors`` provided — cannot form the skill ratio."
+                "compute_skill_scores: mode='pooled' requires "
+                "``baseline_errors`` to form the per-task E_method / "
+                "E_baseline ratio."
             )
         bl = baseline_errors.set_index(["scenario", "channel"])["E"]
         ratios = []
@@ -229,6 +242,11 @@ def compute_skill_scores(
                 "clipped_ratio": clipped,
                 "is_collapsed": is_collapsed_channel(row["channel"]),
             })
+    else:
+        raise ValueError(
+            f"compute_skill_scores: unknown mode={mode!r}; "
+            "expected 'paired' or 'pooled'."
+        )
 
     ratio_df = pd.DataFrame(ratios)
     if ratio_df.empty:
@@ -305,75 +323,199 @@ def compute_skill_scores(
     return pd.DataFrame(results)
 
 
-def compute_average_rankings(errors: pd.DataFrame) -> pd.DataFrame:
+def aggregate_task_ranks_to_scopes(per_task: pd.DataFrame) -> pd.DataFrame:
+    """Aggregate per-(method, scenario, channel) ``task_rank`` into per-(method, scope) ``avg_rank``.
+
+    ``per_task`` must carry columns ``[method, scenario, channel, task_rank]``.
+    Optionally, ``n_users`` is carried through as the scope-level
+    ``max(n_users)`` over tasks-in-scope.
+
+    Mirrors forecasting's cross-channel rank averaging in
+    ``paper_result_generator_all_channels.py:422-424`` — every task in
+    scope contributes one ``task_rank`` value, equally weighted, to the
+    scope arithmetic mean.
+
+    Emits the standard scope set used by :func:`compute_skill_scores` and
+    :func:`compute_average_rankings`:
+      - ``<scenario>`` (one per scenario)
+      - ``cat:<cat>`` (structural scenarios only, real channels only)
+      - ``semantic``
+      - ``overall`` (legacy per-channel; excludes ``cat_collapsed:*`` rows)
+      - ``cat_collapsed:<cat>`` (one per binary category)
+      - ``overall_binary_collapsed`` (continuous per-channel tasks +
+        collapsed-binary tasks)
+
+    Shared between the point-flow ``compute_average_rankings`` and the
+    bootstrap Phase-2 consumer in ``bootstrap_skill_rank.py``.
+    """
+    df = per_task.copy()
+    df["category"] = df["channel"].map(channel_category)
+    df["is_collapsed"] = df["channel"].map(is_collapsed_channel)
+
+    legacy = df[~df["is_collapsed"]]
+    collapsed = df[df["is_collapsed"]]
+    has_n_users = "n_users" in df.columns
+
+    def _row(method: str, scope: str, group: pd.DataFrame) -> dict:
+        out = {
+            "method": method,
+            "scope": scope,
+            "avg_rank": float(group["task_rank"].mean()),
+            "n_tasks": int(len(group)),
+        }
+        if has_n_users and len(group):
+            out["n_users"] = int(group["n_users"].max())
+        return out
+
+    results: list[dict] = []
+    for (method, scenario), group in legacy.groupby(["method", "scenario"], observed=True):
+        results.append(_row(method, scenario, group))
+
+    structural = legacy[~legacy["scenario"].isin(SEMANTIC_SCENARIOS)]
+    for (method, cat), group in structural.groupby(["method", "category"], observed=True):
+        if cat is None:
+            continue
+        results.append(_row(method, f"cat:{cat}", group))
+
+    sem = legacy[legacy["scenario"].isin(SEMANTIC_SCENARIOS)]
+    for method, group in sem.groupby("method", observed=True):
+        results.append(_row(method, "semantic", group))
+
+    for method, group in legacy.groupby("method", observed=True):
+        results.append(_row(method, "overall", group))
+
+    if not collapsed.empty:
+        for (method, channel), group in collapsed.groupby(["method", "channel"], observed=True):
+            cat_name = str(channel).split(":", 1)[1]
+            results.append(_row(method, f"cat_collapsed:{cat_name}", group))
+        continuous_legacy = legacy[legacy["category"].isin({"activity", "physiology"})]
+        merged = pd.concat([continuous_legacy, collapsed], ignore_index=True)
+        for method, group in merged.groupby("method", observed=True):
+            results.append(_row(method, "overall_binary_collapsed", group))
+
+    cols = ["method", "scope", "avg_rank", "n_tasks"]
+    if has_n_users:
+        cols.append("n_users")
+    if not results:
+        return pd.DataFrame(columns=cols)
+    return pd.DataFrame(results)[cols]
+
+
+def _average_rankings_pooled(errors: pd.DataFrame) -> pd.DataFrame:
+    """Legacy pooled-E ranking — one rank per (method, task) on pooled E.
+
+    Kept as opt-in (``mode="pooled"``) for the deprecated ``S − λ·D``
+    fairness loop in :func:`bootstrap_skill_rank.aggregate_skill_rank_fairness`.
+    The leaderboard rank path uses ``mode="per_user"``.
+    """
+    if errors.empty:
+        return pd.DataFrame(columns=["method", "scope", "avg_rank", "n_tasks"])
+    df = errors.copy()
+    df["task_rank"] = df.groupby(["scenario", "channel"], observed=True)["E"].rank(
+        method="average", ascending=True,
+    )
+    return aggregate_task_ranks_to_scopes(df)
+
+
+def _average_rankings_per_user(errors: pd.DataFrame) -> pd.DataFrame:
+    """Per-user ranking — forecasting-parity two-stage form.
+
+    Stage 1 (mirrors ``forecasting_evaluation.metrics.
+    grouped_metric_rank_summary._compute_mean_ranks`` applied at a
+    per-channel scope): per ``(scenario, channel)`` task, pivot
+    ``user_id × method`` on E, rank methods across each user
+    (``method="average"``, ``ascending=True``), then take the
+    ``nanmean`` over users → one ``task_rank`` per
+    ``(method, scenario, channel)``.
+
+    Stage 2 (mirrors forecasting's cross-channel rank mean in
+    ``paper_result_generator_all_channels.py:422-424``): mean
+    ``task_rank`` over tasks in scope.
+
+    Per-user ranks are scale-free (each user's row is ranked across
+    methods independently), so channel scale differences across tasks
+    don't bias the result.
+    """
+    if "user_id" not in errors.columns:
+        raise ValueError(
+            "compute_average_rankings: mode='per_user' requires a 'user_id' "
+            "column in ``errors``. Build the per-user long frame from "
+            "``pair_aggregator.aggregate_pairs(..., return_per_user=True)`` "
+            "or use mode='pooled' for the legacy pooled-E reducer."
+        )
+    df = errors[np.isfinite(errors["E"])].copy()
+    if df.empty:
+        return pd.DataFrame(
+            columns=["method", "scope", "avg_rank", "n_tasks", "n_users"]
+        )
+
+    task_rank_frames: list[pd.DataFrame] = []
+    for (scenario, channel), grp in df.groupby(["scenario", "channel"], observed=True):
+        pivot = grp.pivot(index="user_id", columns="method", values="E")
+        if pivot.empty:
+            continue
+        ranks = pivot.rank(axis=1, method="average", ascending=True)
+        long_rank = ranks.stack(future_stack=True).reset_index()
+        long_rank.columns = ["user_id", "method", "rank"]
+        long_rank["scenario"] = scenario
+        long_rank["channel"] = channel
+        task_rank_frames.append(long_rank)
+    if not task_rank_frames:
+        return pd.DataFrame(
+            columns=["method", "scope", "avg_rank", "n_tasks", "n_users"]
+        )
+
+    long_rank_all = pd.concat(task_rank_frames, ignore_index=True)
+    per_task = (
+        long_rank_all.groupby(["method", "scenario", "channel"], observed=True)
+        .agg(task_rank=("rank", "mean"), n_users=("user_id", "nunique"))
+        .reset_index()
+    )
+    return aggregate_task_ranks_to_scopes(per_task)
+
+
+def compute_average_rankings(
+    errors: pd.DataFrame,
+    *,
+    mode: str = "per_user",
+) -> pd.DataFrame:
     """Average rank per method × scope. Lower E → better → rank 1.
+
+    Two-stage form mirroring forecasting's full cross-task rank aggregation
+    (per-user rank per task → mean over users per task → mean over tasks
+    per scope). The bootstrap Phase-2 consumer in
+    ``bootstrap_skill_rank.py`` shares the same Stage-2 helper so the
+    point estimate matches the bootstrap identity-draw point estimate.
+
+    Args:
+        errors: long-format frame.
+
+            * ``mode="per_user"`` requires columns ``[method, scenario,
+              channel, user_id, E]`` — one row per (method, task, user).
+            * ``mode="pooled"`` requires columns ``[method, scenario,
+              channel, E]`` — one row per (method, task), with E already
+              user-macroaveraged upstream.
+
+        mode: ``"per_user"`` (default — the leaderboard estimand) or
+            ``"pooled"`` (legacy opt-in, kept for the deprecated
+            ``S − λ·D`` fairness loop). The previous silent switch on
+            ``user_id`` column presence has been removed; the mode must
+            be selected explicitly.
 
     Emits the same scope set as :func:`compute_skill_scores`: per-channel
     legacy scopes (``<scenario>``, ``cat:*``, ``semantic``, ``overall``)
     plus the Part D collapsed-binary scopes (``cat_collapsed:sleep``,
     ``cat_collapsed:workouts``, ``overall_binary_collapsed``) when
     ``cat_collapsed:*`` rows are present.
-
-    Ranks are computed within each ``(scenario, channel)`` task across
-    methods, so collapsed-binary tasks rank methods against each other
-    inside the collapsed scope without bleeding into per-channel rank
-    computations.
     """
-    errors = errors.copy()
-    errors["rank"] = errors.groupby(["scenario", "channel"], observed=True)["E"].rank(
-        method="average", ascending=True,
+    if mode == "per_user":
+        return _average_rankings_per_user(errors)
+    if mode == "pooled":
+        return _average_rankings_pooled(errors)
+    raise ValueError(
+        f"compute_average_rankings: unknown mode={mode!r}; "
+        "expected 'per_user' or 'pooled'."
     )
-    errors["category"] = errors["channel"].map(channel_category)
-    errors["is_collapsed"] = errors["channel"].map(is_collapsed_channel)
-
-    legacy_errors = errors[~errors["is_collapsed"]]
-    collapsed_errors = errors[errors["is_collapsed"]]
-
-    results = []
-    for (method, scenario), group in legacy_errors.groupby(["method", "scenario"], observed=True):
-        results.append({
-            "method": method, "scope": scenario,
-            "avg_rank": float(group["rank"].mean()), "n_tasks": len(group),
-        })
-    structural = legacy_errors[~legacy_errors["scenario"].isin(SEMANTIC_SCENARIOS)]
-    for (method, cat), group in structural.groupby(["method", "category"], observed=True):
-        if cat is None:
-            continue
-        results.append({
-            "method": method, "scope": f"cat:{cat}",
-            "avg_rank": float(group["rank"].mean()), "n_tasks": len(group),
-        })
-    sem = legacy_errors[legacy_errors["scenario"].isin(SEMANTIC_SCENARIOS)]
-    for method, group in sem.groupby("method", observed=True):
-        results.append({
-            "method": method, "scope": "semantic",
-            "avg_rank": float(group["rank"].mean()), "n_tasks": len(group),
-        })
-    for method, group in legacy_errors.groupby("method", observed=True):
-        results.append({
-            "method": method, "scope": "overall",
-            "avg_rank": float(group["rank"].mean()), "n_tasks": len(group),
-        })
-
-    # --- Part D scopes (collapsed binary categories) ------------------
-    if not collapsed_errors.empty:
-        for (method, channel), group in collapsed_errors.groupby(["method", "channel"], observed=True):
-            cat_name = str(channel).split(":", 1)[1]
-            results.append({
-                "method": method, "scope": f"cat_collapsed:{cat_name}",
-                "avg_rank": float(group["rank"].mean()), "n_tasks": len(group),
-            })
-        continuous_legacy = legacy_errors[
-            legacy_errors["category"].isin({"activity", "physiology"})
-        ]
-        merged = pd.concat([continuous_legacy, collapsed_errors], ignore_index=True)
-        for method, group in merged.groupby("method", observed=True):
-            results.append({
-                "method": method, "scope": "overall_binary_collapsed",
-                "avg_rank": float(group["rank"].mean()), "n_tasks": len(group),
-            })
-
-    return pd.DataFrame(results)
 
 
 # --------------------------------------------------------------------------

@@ -36,6 +36,9 @@ import numpy as np
 import pandas as pd
 
 from data.processing.hf_config import CONTINUOUS_CHANNEL_INDICES, N_CHANNELS
+from imputation_evaluation.evaluation.bootstrap_skill_rank import (
+    compute_per_task_paired_R,
+)
 from imputation_evaluation.evaluation.pair_aggregator import (
     aggregate_pairs,
     aggregate_pairs_by_subgroup,
@@ -122,6 +125,25 @@ def _parse_args() -> argparse.Namespace:
             "subgroup manifest, or missing method/scenario/split directory "
             "instead of warning-and-skipping. Required for runs whose numbers "
             "are published."
+        ),
+    )
+    p.add_argument(
+        "--rank-mode", choices=["per_user", "pooled"], default="per_user",
+        help=(
+            "Average-rank estimand. 'per_user' (default — leaderboard) is "
+            "the two-stage form-B reducer that matches the bootstrap and "
+            "forecasting; 'pooled' is the legacy single-stage reducer that "
+            "ranks methods on pooled-over-users E per task (kept as opt-in "
+            "for legacy comparisons)."
+        ),
+    )
+    p.add_argument(
+        "--skill-mode", choices=["paired", "pooled"], default="paired",
+        help=(
+            "Skill-score estimand. 'paired' (default — leaderboard) consumes "
+            "per-user paired ratios at the same grain as the bootstrap; "
+            "'pooled' is the legacy E_method / E_baseline ratio on user-macro "
+            "E (kept as opt-in for legacy comparisons)."
         ),
     )
     return p.parse_args()
@@ -220,6 +242,42 @@ def _per_channel_to_rows(
     return rows
 
 
+def _per_user_to_rows(
+    per_user: dict[str, dict[str, float]],
+    *,
+    method: str,
+    scenario: str,
+    split: str,
+) -> list[dict]:
+    """Flatten the ``per_user`` map from ``aggregate_pairs`` to long rows.
+
+    Each row is one ``(method, scenario, split, channel, channel_type,
+    user_id, E)`` record covering both the 19 real channels and the two
+    synthetic ``cat_collapsed:*`` tasks. Used by the per-user rank and
+    point-flow paired-R skill paths.
+    """
+    rows: list[dict] = []
+    for ch_key, user_map in per_user.items():
+        if ch_key.startswith("cat_collapsed:"):
+            ch_type = "binary_collapsed"
+        elif ch_key.startswith("ch_"):
+            ch_idx = int(ch_key.split("_", 1)[1])
+            ch_type = _channel_type(ch_idx)
+        else:
+            continue
+        for user_id, e in user_map.items():
+            rows.append({
+                "method": method,
+                "scenario": scenario,
+                "split": split,
+                "channel": ch_key,
+                "channel_type": ch_type,
+                "user_id": user_id,
+                "E": float(e),
+            })
+    return rows
+
+
 def _gather_registry(
     method_dirs: dict[str, Path],
     *,
@@ -229,8 +287,16 @@ def _gather_registry(
     exclude_unknown: bool,
     channel_stds_path: Path | None,
     strict: bool = False,
-) -> pd.DataFrame:
-    """Build the long-format errors registry for every (method, scenario, split, subgroup) cell."""
+    return_per_user: bool = False,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Build the long-format errors registry for every (method, scenario, split, subgroup) cell.
+
+    When ``return_per_user=True``, also calls ``aggregate_pairs`` with
+    ``return_per_user=True`` for the global ``(all, all)`` cell and
+    returns a parallel per-user long frame
+    ``[method, scenario, split, channel, channel_type, user_id, E]``
+    used by the aligned rank/skill modes.
+    """
     methods = list(method_dirs.keys())
 
     # ------------------ resolve channel_stds ------------------
@@ -243,6 +309,7 @@ def _gather_registry(
         )
 
     rows: list[dict] = []
+    per_user_rows: list[dict] = []
 
     # Subgroup mapping is per-split, scenario-independent; build once per split
     # from the first method's manifest (mirrors bootstrap_imputation_draws.py).
@@ -281,12 +348,19 @@ def _gather_registry(
                     continue
 
                 # "all / all" cell — deterministic per-channel metrics.
-                metrics_all = aggregate_pairs(ssd, channel_stds)
+                metrics_all = aggregate_pairs(
+                    ssd, channel_stds, return_per_user=return_per_user,
+                )
                 rows.extend(_per_channel_to_rows(
                     metrics_all.get("per_channel", {}),
                     method=method, scenario=scenario, split=split,
                     subgroup_attr="all", subgroup_value="all",
                 ))
+                if return_per_user and "per_user" in metrics_all:
+                    per_user_rows.extend(_per_user_to_rows(
+                        metrics_all["per_user"],
+                        method=method, scenario=scenario, split=split,
+                    ))
 
                 # Per-subgroup cells — keyed by (attr, subgroup_value).
                 if mapping:
@@ -301,7 +375,15 @@ def _gather_registry(
                                 subgroup_attr=attr, subgroup_value=group_name,
                             ))
 
-    return pd.DataFrame(rows)
+    per_user_cols = [
+        "method", "scenario", "split", "channel", "channel_type", "user_id", "E",
+    ]
+    per_user_df = (
+        pd.DataFrame(per_user_rows)
+        if per_user_rows
+        else pd.DataFrame(columns=per_user_cols)
+    )
+    return pd.DataFrame(rows), per_user_df
 
 
 def _build_errors_long(
@@ -399,7 +481,8 @@ def main() -> int:
     logger.info("Scenarios: %s", scenarios)
     logger.info("Splits: %s", args.splits)
 
-    registry = _gather_registry(
+    need_per_user = args.rank_mode == "per_user" or args.skill_mode == "paired"
+    registry, per_user_long = _gather_registry(
         method_dirs,
         scenarios=scenarios,
         splits=args.splits,
@@ -407,11 +490,22 @@ def main() -> int:
         exclude_unknown=args.exclude_unknown,
         channel_stds_path=args.channel_stds_path,
         strict=args.strict,
+        return_per_user=need_per_user,
     )
     logger.info("Registry rows: %d", len(registry))
     if registry.empty:
         logger.error("Registry is empty; aborting")
         return 2
+    if need_per_user:
+        logger.info("Per-user rows: %d", len(per_user_long))
+        if per_user_long.empty:
+            logger.error(
+                "rank_mode=%s / skill_mode=%s requested per-user data, but "
+                "no per-user rows were emitted. Check pair_aggregator's "
+                "return_per_user threading.",
+                args.rank_mode, args.skill_mode,
+            )
+            return 2
 
     errors_all, errors_sg = _build_errors_long(registry, splits=args.splits)
 
@@ -424,21 +518,63 @@ def main() -> int:
         ea = errors_all[errors_all["split"] == split].drop(columns=["split"], errors="ignore")
         if ea.empty:
             continue
-        baseline = build_baseline_errors(
-            ea,
-            baseline_continuous=args.baseline_method,
-            baseline_binary=args.baseline_method,
-        )
-        skill = compute_skill_scores(
-            ea, baseline,
-            clip_lower=args.clip_lower, clip_upper=args.clip_upper,
-        )
-        skill["split"] = split
-        skill_frames.append(skill)
+        eu = per_user_long[per_user_long["split"] == split].drop(
+            columns=["split"], errors="ignore",
+        ) if not per_user_long.empty else per_user_long
 
-        rank = compute_average_rankings(ea)
-        rank["split"] = split
-        rank_frames.append(rank)
+        # --- skill ---
+        if args.skill_mode == "paired":
+            if eu.empty:
+                logger.warning(
+                    "[split=%s] skill_mode=paired but per-user frame is empty — "
+                    "skipping skill for this split.",
+                    split,
+                )
+            else:
+                R_per_task = compute_per_task_paired_R(
+                    eu,
+                    baseline_method=args.baseline_method,
+                    clip_lower=args.clip_lower,
+                    clip_upper=args.clip_upper,
+                )
+                skill = compute_skill_scores(
+                    R_per_task,
+                    mode="paired",
+                    clip_lower=args.clip_lower,
+                    clip_upper=args.clip_upper,
+                )
+                skill["split"] = split
+                skill_frames.append(skill)
+        else:  # pooled
+            baseline = build_baseline_errors(
+                ea,
+                baseline_continuous=args.baseline_method,
+                baseline_binary=args.baseline_method,
+            )
+            skill = compute_skill_scores(
+                ea, baseline,
+                mode="pooled",
+                clip_lower=args.clip_lower, clip_upper=args.clip_upper,
+            )
+            skill["split"] = split
+            skill_frames.append(skill)
+
+        # --- rank ---
+        if args.rank_mode == "per_user":
+            if eu.empty:
+                logger.warning(
+                    "[split=%s] rank_mode=per_user but per-user frame is empty — "
+                    "skipping rank for this split.",
+                    split,
+                )
+            else:
+                rank = compute_average_rankings(eu, mode="per_user")
+                rank["split"] = split
+                rank_frames.append(rank)
+        else:  # pooled
+            rank = compute_average_rankings(ea, mode="pooled")
+            rank["split"] = split
+            rank_frames.append(rank)
 
     # ------------------------------------------------------------------
     # Fair skill score — per split, on the per-subgroup cells.

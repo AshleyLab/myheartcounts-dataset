@@ -25,6 +25,9 @@ import pyarrow.parquet as pq
 from sklearn.metrics import balanced_accuracy_score, roc_auc_score
 
 from data.processing.hf_config import CONTINUOUS_CHANNEL_INDICES, N_CHANNELS
+from imputation_evaluation.evaluation.paper_metrics_core import (
+    BINARY_CATEGORIES_ORDERED,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +87,7 @@ def _aggregate_user_macro_one_cell(
     full_u_rows: np.ndarray,
     keep_mask: np.ndarray | None = None,
     n_channels: int = N_CHANNELS,
+    return_per_user: bool = False,
 ) -> dict:
     """User-macro per-channel metrics for one cell (all rows, or a subgroup mask).
 
@@ -94,6 +98,21 @@ def _aggregate_user_macro_one_cell(
 
     ``keep_mask`` is a manifest-row-aligned boolean mask used by the subgroup
     variant. ``None`` means "keep every manifest row" (the ``ALL_KEY`` cell).
+
+    When ``return_per_user=True``, also emit ``metrics["per_user"]`` as a
+    ``{ch_key: {user_id: E_user}}`` map covering the 19 real per-channel
+    tasks and the two synthetic collapsed-binary tasks
+    (``cat_collapsed:sleep`` / ``cat_collapsed:workouts``). Per-user E is the
+    same unfloored quantity the bootstrap consumes:
+
+      * continuous: ``E_user = sae[user, ch] / n[user, ch]`` (per-user MAE).
+      * binary per-channel: ``E_user = 1 − AUC[user, ch]`` (unfloored — the
+        ``BINARY_ERROR_FLOOR`` applies only to paired skill ratios).
+      * binary collapsed (``cat_collapsed:sleep`` / ``cat_collapsed:workouts``):
+        ``E_user = nanmean`` over the category's real binary channels of
+        ``1 − AUC[user, ch]`` — mirrors
+        :func:`bootstrap_skill_rank._per_method_cell_collapsed_errors` at the
+        per-user grain.
     """
     n_channels = min(n_channels, len(channel_stds))
     U = len(canonical_user_ids)
@@ -213,6 +232,17 @@ def _aggregate_user_macro_one_cell(
     binary_balanced_accs: list[float] = []
     binary_roc_aucs: list[float] = []
 
+    # When return_per_user is set, keep the per-(user, channel) error matrices
+    # so we can emit the long ``per_user`` map and build collapsed-binary
+    # per-user E at the end. Continuous channels keep per_user_mae[U, ch];
+    # binary channels keep per_user_auc[U, ch] (used unfloored as 1−AUC for
+    # E and as the input to the collapsed-category nanmean).
+    per_user_mae_matrix: np.ndarray | None = None
+    per_user_auc_matrix: np.ndarray | None = None
+    if return_per_user:
+        per_user_mae_matrix = np.full((U, n_channels), np.nan, dtype=np.float64)
+        per_user_auc_matrix = np.full((U, n_channels), np.nan, dtype=np.float64)
+
     for ch in range(n_channels):
         ch_metrics: dict = {"channel_idx": ch}
         if not has_data[ch]:
@@ -230,6 +260,9 @@ def _aggregate_user_macro_one_cell(
                 per_user_mae = np.where(n[:, ch] > 0, sae[:, ch] / np.maximum(n[:, ch], 1), np.nan)
                 per_user_mse = np.where(n[:, ch] > 0, sse[:, ch] / np.maximum(n[:, ch], 1), np.nan)
             per_user_rmse = np.sqrt(per_user_mse)
+
+            if per_user_mae_matrix is not None:
+                per_user_mae_matrix[:, ch] = per_user_mae
 
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", RuntimeWarning)
@@ -294,6 +327,9 @@ def _aggregate_user_macro_one_cell(
                     except Exception:
                         pass
 
+            if per_user_auc_matrix is not None:
+                per_user_auc_matrix[:, ch] = per_user_auc
+
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", RuntimeWarning)
                 user_balanced_acc = float(np.nanmean(per_user_bal_acc))
@@ -338,6 +374,52 @@ def _aggregate_user_macro_one_cell(
     )
     metrics["binary"]["aggregation"] = "user_macro"
 
+    # --- Optional: per-user long emission for the aligned rank/skill flows -
+    if return_per_user:
+        per_user_map: dict[str, dict[str, float]] = {}
+        # Per-channel tasks — same E definition as bootstrap's
+        # ``_per_method_cell_errors``: continuous = MAE = sae/n, binary =
+        # 1 − AUC (unfloored).
+        for ch in range(n_channels):
+            if not has_data[ch]:
+                continue
+            ch_key = f"ch_{ch}"
+            user_map: dict[str, float] = {}
+            if ch in CONTINUOUS_CHANNEL_INDICES:
+                col = per_user_mae_matrix[:, ch]  # type: ignore[index]
+                for u_idx, val in enumerate(col):
+                    if np.isfinite(val):
+                        user_map[canonical_user_ids[u_idx]] = float(val)
+            else:
+                col = per_user_auc_matrix[:, ch]  # type: ignore[index]
+                for u_idx, val in enumerate(col):
+                    if np.isfinite(val):
+                        user_map[canonical_user_ids[u_idx]] = float(1.0 - val)
+            if user_map:
+                per_user_map[ch_key] = user_map
+
+        # Collapsed-binary tasks — mirror
+        # ``_per_method_cell_collapsed_errors`` at the per-user grain:
+        # ``E_user = nanmean over the category's channels of (1 − AUC[user, ch])``.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            for cat_name, ch_indices in BINARY_CATEGORIES_ORDERED:
+                cols = np.asarray(ch_indices, dtype=np.int64)
+                # Restrict to channels with any data in this cell.
+                cols = cols[has_data[cols]]
+                if cols.size == 0:
+                    continue
+                sub = per_user_auc_matrix[:, cols]  # type: ignore[index]
+                per_user_cat_E = np.nanmean(1.0 - sub, axis=1)
+                user_map = {}
+                for u_idx, val in enumerate(per_user_cat_E):
+                    if np.isfinite(val):
+                        user_map[canonical_user_ids[u_idx]] = float(val)
+                if user_map:
+                    per_user_map[f"cat_collapsed:{cat_name}"] = user_map
+
+        metrics["per_user"] = per_user_map
+
     return metrics
 
 
@@ -347,6 +429,7 @@ def aggregate_pairs(
     *,
     manifest_path: str | Path | None = None,
     aggregation: str = "user_macro",
+    return_per_user: bool = False,
 ) -> dict:
     """Compute metrics from saved per-channel pair Parquet files.
 
@@ -418,6 +501,7 @@ def aggregate_pairs(
             full_u_rows=full_u_rows,
             keep_mask=None,
             n_channels=n_channels,
+            return_per_user=return_per_user,
         )
 
     return _aggregate_cell_micro(pairs_dir, channel_stds)
@@ -430,6 +514,7 @@ def aggregate_pairs_by_subgroup(
     *,
     manifest_path: str | Path | None = None,
     aggregation: str = "user_macro",
+    return_per_user: bool = False,
 ) -> dict[str, dict[str, dict]]:
     """Per-subgroup metrics from saved per-channel pair Parquet files.
 
@@ -514,6 +599,7 @@ def aggregate_pairs_by_subgroup(
                     full_u_rows=full_u_rows,
                     keep_mask=keep_mask,
                     n_channels=n_channels,
+                    return_per_user=return_per_user,
                 )
         return result
 

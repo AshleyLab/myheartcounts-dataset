@@ -45,6 +45,14 @@ def _synthetic_draws(
     if base_error is None:
         base_error = {"locf": 1.0, "mean": 2.0, "linear": 0.5}
     baseline_mu = float(base_error.get("locf", 1.0))
+    # Per-task ranks the new Phase 1 would emit: methods ordered by base E,
+    # lowest → rank 1. The synthetic fixture's per-method base E is large
+    # relative to the noise, so the per-task rank is the same for every
+    # draw (no variance across draws). Real Phase 1 emits the per-draw
+    # nanmean over resampled-user ranks — but for an order test that
+    # constant per-method value is the right contract.
+    sorted_methods = sorted(base_error, key=lambda m: base_error[m])
+    rank_lookup = {m: float(i + 1) for i, m in enumerate(sorted_methods)}
     rng = np.random.default_rng(seed)
     rows: list[dict] = []
     for method in methods:
@@ -71,6 +79,7 @@ def _synthetic_draws(
                             "draw": int(b),
                             "E": e_val,
                             "R": r_val,
+                            "rank": rank_lookup[method],
                         }
                     )
     return pd.DataFrame(rows)

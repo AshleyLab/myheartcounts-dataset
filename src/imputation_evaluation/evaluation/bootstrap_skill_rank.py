@@ -54,6 +54,7 @@ from imputation_evaluation.evaluation.paper_metrics_core import (
     BASELINE_CONTINUOUS,
     BINARY_CATEGORIES_ORDERED,
     EXCLUDE_BINARY_SCENARIOS,
+    aggregate_task_ranks_to_scopes,
     build_baseline_errors,
     compute_average_rankings,
     compute_skill_scores,
@@ -481,6 +482,221 @@ def _per_method_cell_collapsed_errors(
     return out
 
 
+def _per_user_errors_for_cell(
+    cell_stats: CellStats,
+    *,
+    n_channels: int,
+    include_auc: bool,
+    per_user_auc: np.ndarray | None = None,
+) -> np.ndarray:
+    """Per-(user, channel) un-reduced error E for one (method, cell).
+
+    Mirrors the per-user inputs :func:`_per_method_cell_errors` consumes
+    before its ``nanmean``-over-users step. Used by the per-task rank
+    kernel :func:`_rank_per_draw_for_cell` so the bootstrap rank emission
+    shares the exact same per-user E with the bootstrap absolute-E.
+
+    Continuous channels: ``E = sae/n`` per (user, channel); NaN where
+    ``n == 0`` (no cells for that user/channel).
+    Binary channels: ``E = 1 − AUC[user, ch]`` from the precomputed
+    per-user AUC matrix; NaN for single-class users. **Un-floored** —
+    :data:`BINARY_ERROR_FLOOR` only applies in the paired-ratio path.
+
+    Channels with ``has_data[ch] == False`` and binary channels when
+    ``include_auc=False`` return as all-NaN columns.
+
+    Returns:
+        ``(n_users, n_channels)`` float64 array of per-(user, channel) E.
+    """
+    U = cell_stats.n.shape[0]
+    out = np.full((U, n_channels), np.nan, dtype=np.float64)
+
+    n_u_ch = cell_stats.n
+    sae_u_ch = cell_stats.sae
+    with np.errstate(divide="ignore", invalid="ignore"):
+        per_user_mae = np.where(
+            n_u_ch > 0, sae_u_ch / np.maximum(n_u_ch, 1), np.nan,
+        )
+
+    for ch in CONTINUOUS_CHANNEL_INDICES:
+        if ch >= n_channels:
+            continue
+        if not cell_stats.has_data[ch]:
+            continue
+        out[:, ch] = per_user_mae[:, ch]
+
+    if include_auc and per_user_auc is not None:
+        for ch in range(n_channels):
+            if ch in CONTINUOUS_CHANNEL_INDICES:
+                continue
+            if not cell_stats.has_data[ch]:
+                continue
+            out[:, ch] = 1.0 - per_user_auc[:, ch]
+
+    return out
+
+
+def _per_user_collapsed_errors_for_cell(
+    per_user_auc: np.ndarray | None,
+    binary_categories: tuple[tuple[str, tuple[int, ...]], ...],
+) -> np.ndarray:
+    """Per-(user, category) un-reduced collapsed-binary E.
+
+    Mirrors the per-user precompute step inside
+    :func:`_per_method_cell_collapsed_errors` (lines 467-476): per category,
+    ``nanmean`` over the category's channels of ``1 − AUC[user, ch]``.
+    Un-floored and un-reduced over users — used as the rank input for the
+    ``cat_collapsed:*`` and ``overall_binary_collapsed`` scopes.
+    """
+    n_cats = len(binary_categories)
+    if per_user_auc is None:
+        return np.zeros((0, n_cats), dtype=np.float64)
+    U = per_user_auc.shape[0]
+    out = np.full((U, n_cats), np.nan, dtype=np.float64)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        for cat_idx, (_cat_name, ch_indices) in enumerate(binary_categories):
+            cols = np.asarray(ch_indices, dtype=np.int64)
+            sub = per_user_auc[:, cols]
+            out[:, cat_idx] = np.nanmean(1.0 - sub, axis=1)
+    return out
+
+
+def _rank_columns_nan_safe(arr: np.ndarray, *, ascending: bool = True) -> np.ndarray:
+    """Per-column average-rank of a ``(M, K)`` array, NaN passthrough.
+
+    For each column independently, finite entries get the average rank
+    (matches pandas ``.rank(method="average")``); NaN entries stay NaN.
+    Used to compute per-user ranks across methods inside
+    :func:`_rank_per_draw_for_cell`.
+
+    ``ascending=True`` (the default) → lower value gets rank 1 (matches
+    "lower E is better" for imputation).
+    """
+    from scipy.stats import rankdata
+
+    M, K = arr.shape
+    out = np.full_like(arr, np.nan, dtype=np.float64)
+    for k in range(K):
+        col = arr[:, k]
+        finite = np.isfinite(col)
+        if not finite.any():
+            continue
+        vals = col[finite]
+        signed = vals if ascending else -vals
+        out[finite, k] = rankdata(signed, method="average")
+    return out
+
+
+def _rank_per_draw_for_cell(
+    per_user_E_by_method: dict[str, np.ndarray],
+    boot_idx: np.ndarray,
+    channel_indices: list[int] | tuple[int, ...] | range | None = None,
+) -> dict[str, np.ndarray]:
+    """Per-(method, channel, draw) ``task_rank`` for one cell (Stage 1).
+
+    Stage 1 of the two-stage form-B reducer (mirrors forecasting
+    ``_compute_mean_ranks`` applied at a per-channel scope):
+
+    1. Per channel, stack per-user E across methods → ``(M, U)``.
+    2. Rank methods across each user-column with NaN passthrough
+       (``method="average"``, ``ascending=True``). Per-user ranks are
+       independent of the bootstrap resample (they're an attribute of
+       the user's E vector across methods).
+    3. Per draw, fancy-index the user axis with ``boot_idx[b]`` and
+       ``nanmean`` over resampled users → one per-(method, channel) rank
+       per draw.
+
+    Scale-free per channel — ranks are computed within a single channel
+    column, so different per-channel E scales never appear in the same
+    comparison.
+
+    Phase 2 (:func:`aggregate_skill_rank_fairness`) consumes the emitted
+    ``rank`` column via :func:`aggregate_task_ranks_to_scopes` to do
+    Stage 2 (mean over tasks in scope).
+
+    Args:
+        per_user_E_by_method: ``{method: (n_users, n_channels) per-user E}``.
+            Empty dict short-circuits to ``{}``.
+        boot_idx: ``(n_boot, n_resampled_users)`` resample matrix shared
+            across methods so pairing/covariance is preserved.
+        channel_indices: optional subset of channels to compute. ``None``
+            (default) means all channels in ``n_channels``.
+
+    Returns:
+        ``{method: (n_boot, n_channels) float64}`` per-(method, channel, draw)
+        ``task_rank``. NaN where no users contributed a finite rank.
+    """
+    methods = list(per_user_E_by_method.keys())
+    if not methods:
+        return {}
+    sample = per_user_E_by_method[methods[0]]
+    _, n_channels = sample.shape
+    if channel_indices is None:
+        channel_indices = range(n_channels)
+    M = len(methods)
+    n_boot = boot_idx.shape[0]
+
+    stacked = np.stack(
+        [per_user_E_by_method[m] for m in methods], axis=0,
+    )  # (M, U, n_channels)
+    rank_out = np.full((M, n_boot, n_channels), np.nan, dtype=np.float64)
+
+    for ch in channel_indices:
+        E_ch = stacked[:, :, ch]  # (M, U)
+        per_user_rank = _rank_columns_nan_safe(E_ch, ascending=True)
+        if not np.isfinite(per_user_rank).any():
+            continue
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            # per_user_rank[:, boot_idx] -> (M, n_boot, n_resampled).
+            per_draw_ranks = per_user_rank[:, boot_idx]
+            rank_out[:, :, ch] = np.nanmean(per_draw_ranks, axis=2)
+
+    return {m: rank_out[i] for i, m in enumerate(methods)}
+
+
+def _rank_per_draw_collapsed_for_cell(
+    per_user_E_collapsed_by_method: dict[str, np.ndarray],
+    boot_idx: np.ndarray,
+) -> dict[str, np.ndarray]:
+    """Per-(method, category, draw) ``task_rank`` for collapsed-binary tasks.
+
+    Collapsed analog of :func:`_rank_per_draw_for_cell`. Consumes
+    per-(user, category) E precomputed by
+    :func:`_per_user_collapsed_errors_for_cell` and produces per-draw
+    rank for each binary category (``cat_collapsed:sleep`` /
+    ``cat_collapsed:workouts``).
+
+    Returns:
+        ``{method: (n_boot, n_categories) float64}``.
+    """
+    methods = list(per_user_E_collapsed_by_method.keys())
+    if not methods:
+        return {}
+    sample = per_user_E_collapsed_by_method[methods[0]]
+    _, n_cats = sample.shape
+    M = len(methods)
+    n_boot = boot_idx.shape[0]
+
+    stacked = np.stack(
+        [per_user_E_collapsed_by_method[m] for m in methods], axis=0,
+    )  # (M, U, n_cats)
+    rank_out = np.full((M, n_boot, n_cats), np.nan, dtype=np.float64)
+
+    for cat_idx in range(n_cats):
+        E_cat = stacked[:, :, cat_idx]
+        per_user_rank = _rank_columns_nan_safe(E_cat, ascending=True)
+        if not np.isfinite(per_user_rank).any():
+            continue
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            per_draw_ranks = per_user_rank[:, boot_idx]
+            rank_out[:, :, cat_idx] = np.nanmean(per_draw_ranks, axis=2)
+
+    return {m: rank_out[i] for i, m in enumerate(methods)}
+
+
 def _per_method_cell_errors(
     cell_stats: CellStats,
     boot_idx: np.ndarray,
@@ -667,6 +883,106 @@ def _per_method_cell_paired_ratios(
             )
 
     return R
+
+
+def compute_per_task_paired_R(
+    per_user_errors: pd.DataFrame,
+    *,
+    baseline_method: str,
+    binary_error_floor: float = BINARY_ERROR_FLOOR,
+    clip_lower: float = SKILL_CLIP_LOWER,
+    clip_upper: float = SKILL_CLIP_UPPER,
+) -> pd.DataFrame:
+    """Per-(method, scenario, channel) paired ratio R from per-user errors.
+
+    Point-flow companion to :func:`_per_method_cell_paired_ratios` —
+    consumes the long per-user errors frame produced by
+    :func:`pair_aggregator.aggregate_pairs(..., return_per_user=True)` and
+    emits the per-task R that :func:`paper_metrics_core.compute_skill_scores`
+    consumes under ``mode="paired"``.
+
+    Pipeline (mirrors the bootstrap kernel at the deterministic grain):
+
+    1. Floor binary E (per-channel binary + ``cat_collapsed:*``) at
+       ``binary_error_floor`` so a perfect-AUC user contributes a finite
+       paired ratio. Continuous E is unfloored.
+    2. Inner-join each method against the baseline on
+       ``(scenario, channel, user_id)``.
+    3. Per-user ratio = ``clip(E_method / E_baseline, clip_lower, clip_upper)``,
+       dropping users with non-finite or non-positive baseline E.
+    4. Per-task R = ``exp(nanmean(log(ratios)))`` over surviving users.
+
+    Args:
+        per_user_errors: long frame with columns
+            ``[method, scenario, channel, channel_type, user_id, E]``.
+            Must include rows for ``baseline_method``.
+        baseline_method: method name to use as the paired denominator.
+        binary_error_floor: ε applied to binary E before the ratio
+            (default :data:`BINARY_ERROR_FLOOR`). Matches the bootstrap.
+        clip_lower / clip_upper: bounds on the per-user ratio (defaults
+            :data:`SKILL_CLIP_LOWER` / :data:`SKILL_CLIP_UPPER`).
+
+    Returns:
+        Frame ``[method, scenario, channel, channel_type, R, n_users]``
+        with one row per (method, task). Excludes baseline-vs-self
+        (R ≡ 1 there). ``n_users`` = count of users with a finite paired
+        ratio for that task.
+    """
+    cols = ["method", "scenario", "channel", "channel_type", "R", "n_users"]
+    if per_user_errors.empty:
+        return pd.DataFrame(columns=cols)
+
+    df = per_user_errors.copy()
+
+    # Floor binary E (per-channel binary + collapsed-binary). Continuous
+    # stays unfloored — matches `_per_method_cell_paired_ratios`.
+    is_binary = df["channel_type"].isin(["binary", "binary_collapsed"])
+    if is_binary.any():
+        df.loc[is_binary, "E"] = np.maximum(
+            df.loc[is_binary, "E"].to_numpy(), binary_error_floor,
+        )
+
+    bl = (
+        df[df["method"] == baseline_method]
+        .rename(columns={"E": "E_b"})
+        [["scenario", "channel", "user_id", "E_b"]]
+    )
+    if bl.empty:
+        return pd.DataFrame(columns=cols)
+
+    methods_df = df[df["method"] != baseline_method].rename(columns={"E": "E_m"})
+    joined = methods_df.merge(
+        bl, on=["scenario", "channel", "user_id"], how="inner",
+    )
+    if joined.empty:
+        return pd.DataFrame(columns=cols)
+
+    e_m = joined["E_m"].to_numpy()
+    e_b = joined["E_b"].to_numpy()
+    valid = np.isfinite(e_m) & np.isfinite(e_b) & (e_b > 0.0)
+    if not valid.any():
+        return pd.DataFrame(columns=cols)
+    joined = joined.iloc[np.flatnonzero(valid)].copy()
+    ratios = np.clip(
+        joined["E_m"].to_numpy() / joined["E_b"].to_numpy(),
+        clip_lower, clip_upper,
+    )
+    finite = np.isfinite(ratios) & (ratios > 0.0)
+    if not finite.any():
+        return pd.DataFrame(columns=cols)
+    joined = joined.iloc[np.flatnonzero(finite)].copy()
+    joined["log_r"] = np.log(ratios[finite])
+
+    grouped = (
+        joined.groupby(
+            ["method", "scenario", "channel", "channel_type"], observed=True,
+        )["log_r"]
+        .agg(["mean", "size"])
+        .reset_index()
+    )
+    grouped["R"] = np.exp(grouped["mean"])
+    grouped["n_users"] = grouped["size"].astype(int)
+    return grouped[cols]
 
 
 def _per_method_cell_paired_collapsed_ratios(
@@ -903,7 +1219,11 @@ def compute_per_draw_errors(
     Returns:
         Long-format DataFrame with columns
         ``[method, scenario, split, channel, channel_type, subgroup_attr,
-        subgroup_value, draw, E, R]``.
+        subgroup_value, draw, E, R, rank]``. ``rank`` is the per-(method,
+        task, draw) Stage-1 task rank produced by
+        :func:`_rank_per_draw_for_cell`; Phase 2 aggregates it into
+        per-(method, scope) ``avg_rank`` via
+        :func:`paper_metrics_core.aggregate_task_ranks_to_scopes`.
     """
     methods = list(method_dirs.keys())
     if not methods:
@@ -1012,14 +1332,31 @@ def compute_per_draw_errors(
                 else:
                     baseline_per_user_auc = None
 
+                # First pass: per-method E / R / per-user E matrices.
+                # The cross-method rank kernel (computed below) needs every
+                # method's per-user E so it can rank methods against each
+                # other within each (user, task) cell.
+                per_method_E: dict[str, np.ndarray] = {}
+                per_method_R: dict[str, np.ndarray] = {}
+                per_method_per_user_E: dict[str, np.ndarray] = {}
+                per_method_E_cat: dict[str, np.ndarray] = {}
+                per_method_R_cat: dict[str, np.ndarray] = {}
+                per_method_per_user_E_cat: dict[str, np.ndarray] = {}
+                cell_method_cs: dict[str, CellStats] = {}
+
+                emit_collapsed = (
+                    include_auc and scenario not in EXCLUDE_BINARY_SCENARIOS
+                )
+
                 for method, cell_stats_map in method_cell_stats.items():
                     cs = cell_stats_map[cell]
                     if not cs.has_data.any():
                         continue
                     # Precompute the per-(user, channel) AUC matrix once per
-                    # (method, scenario, cell); reused by both the per-channel
-                    # reducer (for binary task E) and the Part D collapsed
-                    # reducer below.
+                    # (method, scenario, cell); reused by the per-channel
+                    # reducer (E), the paired-ratio reducer (R), the Part D
+                    # collapsed reducer, and the new per-user E / rank
+                    # kernels below.
                     if method == baseline_method:
                         per_user_auc = baseline_per_user_auc
                     elif include_auc:
@@ -1049,42 +1386,19 @@ def compute_per_draw_errors(
                     else:
                         R = np.full((n_boot, n_channels), np.nan, dtype=np.float64)
 
-                    for ch in range(n_channels):
-                        if not cs.has_data[ch]:
-                            continue
-                        ch_type = _channel_type(ch)
-                        if ch_type == "binary" and scenario in EXCLUDE_BINARY_SCENARIOS:
-                            continue
-                        col_E = E[:, ch].astype(np.float32)
-                        col_R = R[:, ch].astype(np.float32)
-                        for b in range(n_boot):
-                            val_E = col_E[b]
-                            if not np.isfinite(val_E):
-                                continue
-                            val_R = col_R[b]
-                            rows.append(
-                                {
-                                    "method": method,
-                                    "scenario": scenario,
-                                    "split": split,
-                                    "channel": f"ch_{ch}",
-                                    "channel_type": ch_type,
-                                    "subgroup_attr": attr,
-                                    "subgroup_value": value,
-                                    "draw": int(b),
-                                    "E": float(val_E),
-                                    "R": float(val_R) if np.isfinite(val_R) else float("nan"),
-                                }
-                            )
+                    per_user_E = _per_user_errors_for_cell(
+                        cs,
+                        n_channels=n_channels,
+                        include_auc=include_auc,
+                        per_user_auc=per_user_auc,
+                    )
 
-                    # --- Part D: emit per-(draw, binary_category) rows -----
-                    # Skip on semantic scenarios (same exclusion as the
-                    # per-channel binary path) and when AUC isn't requested.
-                    if (
-                        include_auc
-                        and per_user_auc is not None
-                        and scenario not in EXCLUDE_BINARY_SCENARIOS
-                    ):
+                    per_method_E[method] = E
+                    per_method_R[method] = R
+                    per_method_per_user_E[method] = per_user_E
+                    cell_method_cs[method] = cs
+
+                    if emit_collapsed and per_user_auc is not None:
                         E_cat = _per_method_cell_collapsed_errors(
                             per_user_auc, idx_b, BINARY_CATEGORIES_ORDERED,
                         )
@@ -1101,14 +1415,81 @@ def compute_per_draw_errors(
                                 np.nan,
                                 dtype=np.float64,
                             )
+                        per_user_E_cat = _per_user_collapsed_errors_for_cell(
+                            per_user_auc, BINARY_CATEGORIES_ORDERED,
+                        )
+                        per_method_E_cat[method] = E_cat
+                        per_method_R_cat[method] = R_cat
+                        per_method_per_user_E_cat[method] = per_user_E_cat
+
+                # Cross-method per-task rank — needs every method's per-user
+                # E together so the rank within each (user, task) cell is
+                # taken across methods. Empty dict when no methods have data.
+                rank_by_method = _rank_per_draw_for_cell(
+                    per_method_per_user_E, idx_b,
+                )
+                rank_collapsed_by_method = _rank_per_draw_collapsed_for_cell(
+                    per_method_per_user_E_cat, idx_b,
+                )
+
+                # Second pass: emit rows with E / R / rank.
+                for method, E in per_method_E.items():
+                    cs = cell_method_cs[method]
+                    R = per_method_R[method]
+                    rank_mat = rank_by_method.get(method)
+                    for ch in range(n_channels):
+                        if not cs.has_data[ch]:
+                            continue
+                        ch_type = _channel_type(ch)
+                        if ch_type == "binary" and scenario in EXCLUDE_BINARY_SCENARIOS:
+                            continue
+                        col_E = E[:, ch].astype(np.float32)
+                        col_R = R[:, ch].astype(np.float32)
+                        col_rank = (
+                            rank_mat[:, ch].astype(np.float32)
+                            if rank_mat is not None
+                            else np.full(n_boot, np.nan, dtype=np.float32)
+                        )
+                        for b in range(n_boot):
+                            val_E = col_E[b]
+                            if not np.isfinite(val_E):
+                                continue
+                            val_R = col_R[b]
+                            val_rank = col_rank[b]
+                            rows.append(
+                                {
+                                    "method": method,
+                                    "scenario": scenario,
+                                    "split": split,
+                                    "channel": f"ch_{ch}",
+                                    "channel_type": ch_type,
+                                    "subgroup_attr": attr,
+                                    "subgroup_value": value,
+                                    "draw": int(b),
+                                    "E": float(val_E),
+                                    "R": float(val_R) if np.isfinite(val_R) else float("nan"),
+                                    "rank": float(val_rank) if np.isfinite(val_rank) else float("nan"),
+                                }
+                            )
+
+                    if method in per_method_E_cat:
+                        E_cat = per_method_E_cat[method]
+                        R_cat = per_method_R_cat[method]
+                        rank_cat_mat = rank_collapsed_by_method.get(method)
                         for cat_idx, (cat_name, _) in enumerate(BINARY_CATEGORIES_ORDERED):
                             col_E = E_cat[:, cat_idx].astype(np.float32)
                             col_R = R_cat[:, cat_idx].astype(np.float32)
+                            col_rank = (
+                                rank_cat_mat[:, cat_idx].astype(np.float32)
+                                if rank_cat_mat is not None
+                                else np.full(n_boot, np.nan, dtype=np.float32)
+                            )
                             for b in range(n_boot):
                                 val_E = col_E[b]
                                 if not np.isfinite(val_E):
                                     continue
                                 val_R = col_R[b]
+                                val_rank = col_rank[b]
                                 rows.append(
                                     {
                                         "method": method,
@@ -1121,6 +1502,7 @@ def compute_per_draw_errors(
                                         "draw": int(b),
                                         "E": float(val_E),
                                         "R": float(val_R) if np.isfinite(val_R) else float("nan"),
+                                        "rank": float(val_rank) if np.isfinite(val_rank) else float("nan"),
                                     }
                                 )
 
@@ -1137,6 +1519,7 @@ def compute_per_draw_errors(
                 "draw",
                 "E",
                 "R",
+                "rank",
             ]
         )
     return pd.DataFrame(rows)
@@ -1157,6 +1540,7 @@ DRAWS_PARQUET_COLUMNS = [
     "draw",
     "E",
     "R",
+    "rank",
 ]
 
 
@@ -1172,6 +1556,7 @@ def write_draws_parquet(
     df["draw"] = df["draw"].astype("int32")
     df["E"] = df["E"].astype("float32")
     df["R"] = df["R"].astype("float32")
+    df["rank"] = df["rank"].astype("float32")
     for col in (
         "method",
         "scenario",
@@ -1228,6 +1613,7 @@ def _skill_for_draw(
         return compute_skill_scores(
             draw_errors[cols],
             None,
+            mode="paired",
             clip_lower=clip_lower,
             clip_upper=clip_upper,
         )
@@ -1240,14 +1626,49 @@ def _skill_for_draw(
     return compute_skill_scores(
         draw_errors[cols],
         baseline_errors[cols],
+        mode="pooled",
         clip_lower=clip_lower,
         clip_upper=clip_upper,
     )
 
 
-def _rank_for_draw(draw_errors: pd.DataFrame) -> pd.DataFrame:
-    cols = ["method", "scenario", "channel", "channel_type", "E"]
-    return compute_average_rankings(draw_errors[cols])
+def _rank_for_draw(
+    draw_errors: pd.DataFrame,
+    *,
+    mode: str = "per_user",
+) -> pd.DataFrame:
+    """Per-draw rank reducer.
+
+    ``mode="per_user"`` (default — the leaderboard estimand): consume the
+    per-task ``rank`` column emitted by Phase 1's
+    :func:`_rank_per_draw_for_cell` (Stage 1 already done at the draw
+    grain); Phase 2 just does Stage 2 (mean over tasks in scope) via
+    :func:`aggregate_task_ranks_to_scopes`. Raises if the column is
+    absent — no silent fallback to pooled ranking.
+
+    ``mode="pooled"`` (legacy opt-in): re-rank methods on pooled-E per
+    (scenario, channel) task within the draw, mirroring the pre-refactor
+    behavior. Used only by callers that explicitly pass ``rank_mode="pooled"``.
+    """
+    if mode == "per_user":
+        if "rank" not in draw_errors.columns:
+            raise ValueError(
+                "_rank_for_draw: mode='per_user' requires a 'rank' column on "
+                "the draws frame. Re-run Phase 1 (`bootstrap_imputation_draws.py`) "
+                "— the per-task rank is now emitted alongside E/R."
+            )
+        per_task = (
+            draw_errors[["method", "scenario", "channel", "rank"]]
+            .rename(columns={"rank": "task_rank"})
+            .copy()
+        )
+        return aggregate_task_ranks_to_scopes(per_task)
+    if mode == "pooled":
+        cols = ["method", "scenario", "channel", "channel_type", "E"]
+        return compute_average_rankings(draw_errors[cols], mode="pooled")
+    raise ValueError(
+        f"_rank_for_draw: unknown mode={mode!r}; expected 'per_user' or 'pooled'."
+    )
 
 
 def aggregate_skill_rank_fairness(
@@ -1260,6 +1681,7 @@ def aggregate_skill_rank_fairness(
     disparity_fns: dict[str, Callable[[dict[str, float]], float]] | None = None,
     fairness_combine_name: str = "linear_penalty",
     ci_level: float = 0.95,
+    rank_mode: str = "per_user",
 ) -> dict[str, pd.DataFrame]:
     """Phase-2 core: per-draw skill / rank / fairness, summarised across draws.
 
@@ -1358,7 +1780,7 @@ def aggregate_skill_rank_fairness(
                         "draw": int(draw),
                     }
                 )
-            rank = _rank_for_draw(df_draw)
+            rank = _rank_for_draw(df_draw, mode=rank_mode)
             for _, row in rank.iterrows():
                 rank_per_draw_records.append(
                     {
