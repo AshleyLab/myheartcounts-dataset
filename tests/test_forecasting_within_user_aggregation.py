@@ -206,39 +206,53 @@ def test_bootstrap_identity_matches_point_both_modes(tmp_path):
 
 
 def _fair_overall(error_df, demographics, model):
-    """Disparity-ratio fair skill score (``overall`` scope) for one model."""
+    """Worst-group fair skill score (``overall`` scope) for one model.
+
+    Single-user-per-subgroup test fixture, so we relax the
+    ``min_subgroup_users`` floor (which defaults to 50 in production).
+    """
     out = fair_skill_score.compute_fair_skill_scores_from_errors(
         error_df,
         demographics,
         attrs=("age_group",),
         baseline_method="baseline",
+        min_subgroup_users=1,
     )
     row = out[(out["model"] == model) & (out["scope"] == "overall")]
     return float(row["fair_skill_score"].iloc[0])
 
 
 def test_fair_skill_score_macro_vs_micro(tmp_path):
-    """End-to-end disparity-ratio fair skill score moves between micro and macro.
+    """End-to-end worst-group fair skill score moves between micro and macro.
 
-    Counterpart to ``test_skill_tables_macro_vs_micro`` for the fairness metric:
-    the uneven-count fixtures only differed at ``_build_error_table`` before; this
-    drives the full disparity-ratio score. ``age_group`` has two subgroups, and
-    only the model's *young* user has uneven per-window cell counts, so its
-    subgroup error — hence the model gap ``D_m``, hence the ratio against the
-    baseline gap ``D_b`` — depends on the mode:
+    Counterpart to ``test_skill_tables_macro_vs_micro`` for the fairness metric.
+    Both subgroups are given uneven per-window cell counts in the ``good`` model,
+    arranged so that macro and micro put the per-subgroup skill min on
+    *different* subgroups:
 
-        young model error: macro 2.0, micro 1.4   (windows [1,1,1,1] and [3])
-        old   model error: 4.0 (uniform, both modes)
-        baseline gap D_b = |4.0 - 2.0| = 2.0 (uniform, both modes)
-        macro: D_m = 2.0 -> ratio 1.0 -> S = 0.0
-        micro: D_m = 2.6 -> ratio 1.3 -> S = -0.3
+        young good: macro = mean(2.0, 1.0) = 1.5;
+                    micro = (2+2+2+2+1)/5 = 1.8         (windows [2,2,2,2] and [1])
+        old   good: macro = mean(2.0, 4.0) = 3.0;
+                    micro = (2+2+2+4)/4    = 2.5         (windows [2,2,2] and [4])
+        baseline:   young = 2.0, old = 4.0 (uniform)
+
+        macro: ratios 1.5/2.0 = 0.75 (young), 3.0/4.0 = 0.75 (old)
+            -> per-subgroup S = 0.25 each -> worst-group min = 0.25
+        micro: ratios 1.8/2.0 = 0.90 (young), 2.5/4.0 = 0.625 (old)
+            -> per-subgroup S = 0.10 / 0.375 -> worst-group min = 0.10 (young)
+
+    The min flips from being tied across subgroups (macro) to falling on the
+    young subgroup (micro), so the worst-group S differs in the two modes.
     """
     # u0 -> young, u1 -> old; both models score both users (paired cohort).
     _write_metric(tmp_path / "baseline", "mae", {"u0": [_ch0(2.0, 2.0)], "u1": [_ch0(4.0, 4.0)]})
     _write_metric(
         tmp_path / "good",
         "mae",
-        {"u0": [_ch0(1.0, 1.0, 1.0, 1.0), _ch0(3.0)], "u1": [_ch0(4.0, 4.0)]},
+        {
+            "u0": [_ch0(2.0, 2.0, 2.0, 2.0), _ch0(1.0)],
+            "u1": [_ch0(2.0, 2.0, 2.0), _ch0(4.0)],
+        },
     )
     models = _models(tmp_path, ["baseline", "good"])
     demographics = {"u0": {"age_group": "young"}, "u1": {"age_group": "old"}}
@@ -252,8 +266,8 @@ def test_fair_skill_score_macro_vs_micro(tmp_path):
     macro_err = fair._build_error_table(**common, within_user_aggregation="macro")
     micro_err = fair._build_error_table(**common, within_user_aggregation="micro")
 
-    assert _fair_overall(macro_err, demographics, "good") == pytest.approx(0.0, abs=1e-9)
-    assert _fair_overall(micro_err, demographics, "good") == pytest.approx(-0.3, abs=1e-9)
-    # The baseline's self-ratio is 1, so its fair skill score is 0 under both modes.
+    assert _fair_overall(macro_err, demographics, "good") == pytest.approx(0.25, abs=1e-9)
+    assert _fair_overall(micro_err, demographics, "good") == pytest.approx(0.10, abs=1e-9)
+    # Baseline vs itself -> per-subgroup ratio 1 -> worst-group min = 0 in both modes.
     assert _fair_overall(macro_err, demographics, "baseline") == pytest.approx(0.0, abs=1e-9)
     assert _fair_overall(micro_err, demographics, "baseline") == pytest.approx(0.0, abs=1e-9)
