@@ -301,6 +301,15 @@ To reproduce the paper's headline table (skill score vs. LOCF, average rank,
 the three-phase pipeline below. It is fully optional and lives entirely in this
 repo — no external dependencies on the private MHC-benchmark scripts.
 
+The full imputation splits (version `full`, `sharable_users_seed42_2026.json`,
+post-QA, pre-scenario-applicability) are **3,542 / 622 / 1,777 users** and
+**666,175 / 122,107 / 348,580 daily samples** for train / val / test — use
+these numbers as a sanity check on the Phase 0 sweep (each method's `pairs/`
+tree must enumerate the same test users; scenario-level counts will be lower
+where applicability filters bite, e.g. `sleep_gap` only applies to days with
+sleep data). Reproduce them from a fresh checkout with
+`openmhc.load_sample_metadata(split, version="full")`.
+
 **Estimand (matches Track 3 forecasting, commit `79c8628`).** Skill score
 is the paired user-bootstrap form:
 
