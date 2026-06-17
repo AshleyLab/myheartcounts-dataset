@@ -21,6 +21,36 @@ schema is the dataclass tree in `[config.py](config.py)`.
 
 ---
 
+## Dataset at a glance
+
+Numbers below are for the default forecasting sample index
+`sample_index_P_24_M_H_7_3_S_100.json` (24 h horizon; candidate days filtered by
+missing-mask + the `H_7_3` historical check, capped at 100 windows/user). Each
+**window** is one 24 h-ahead forecast anchored at a day boundary; its context is
+the full trajectory prefix before that boundary. Window semantics are
+model-agnostic — every model gets the same full prefix and owns any
+truncation/padding (see [INTERNALS.md](INTERNALS.md#1-data-preprocessing)).
+
+| Split      | Users     | Windows     | Windows/user (mean) |
+| ---------- | --------- | ----------- | ------------------- |
+| Train      | 1,621     | 83,510      | 51.5                |
+| Validation | 289       | 16,061      | 55.6                |
+| Test       | 827       | 43,563      | 52.7                |
+| **Total**  | **2,737** | **143,134** | 52.3                |
+
+Per-window context length (the full prefix handed to every model, before any
+model-specific truncation):
+
+|                             | mean  | median | p10 → p90  |
+| --------------------------- | ----- | ------ | ---------- |
+| Calendar span (days)        | 1,191 | 1,055  | 91 → 2,455 |
+| Observed days (non-missing) | 389   | 197    | 21 → 1,042 |
+
+Only ~30–37 % of each prefix carries actual observations; the rest is
+missing/NaN.
+
+---
+
 ## Part 1 — Custom forecasters via the public API (`openmhc`)
 
 ### Minimal example
