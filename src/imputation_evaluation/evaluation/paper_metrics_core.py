@@ -81,6 +81,41 @@ def is_collapsed_channel(channel: str) -> bool:
     return channel.startswith("cat_collapsed:")
 
 
+# Channel → sensor-category bucket for the B.2 two-stage form of
+# ``overall_binary_collapsed`` (skill / rank) and the per-attribute fairness
+# skill score. Maps each row to one of {activity, physiology, sleep,
+# workouts} when it belongs to a bucket consumed by the headline, or to
+# ``None`` for rows that should not contribute (e.g. per-channel binary
+# rows when ``cat_collapsed:*`` is used instead, to avoid double-counting).
+_B2_COLLAPSED_BUCKETS: dict[str, str] = {
+    "cat_collapsed:sleep":    "sleep",
+    "cat_collapsed:workouts": "workouts",
+}
+
+
+def b2_bucket_for_channel(channel: str, channel_type: str) -> str | None:
+    """Map a (channel, channel_type) pair to its B.2 bucket name.
+
+    Returns one of ``"activity"`` / ``"physiology"`` / ``"sleep"`` /
+    ``"workouts"`` for rows the two-stage form consumes, or ``None`` for
+    rows it ignores (the per-channel binary ``ch_7..ch_18`` rows — the
+    binary side reaches the headline only via the ``cat_collapsed:*``
+    rows so per-channel binary would double-count).
+
+    Used identically on the skill / rank side (via ``compute_skill_scores``
+    and ``aggregate_task_ranks_to_scopes``) and on the fairness side (via
+    ``_per_attribute_skill_keyed``), so the four scores reflect a
+    consistent category-balanced estimand.
+    """
+    if channel in _B2_COLLAPSED_BUCKETS:
+        return _B2_COLLAPSED_BUCKETS[channel]
+    if channel_type == "continuous":
+        return channel_category(channel)
+    # Per-channel binary rows (channel_type == "binary"): skipped — replaced
+    # by the cat_collapsed:* rows above.
+    return None
+
+
 # --------------------------------------------------------------------------
 # Error extraction (registry-DataFrame variant)
 # --------------------------------------------------------------------------
@@ -701,9 +736,35 @@ def _per_attribute_skill_keyed(
     ratio = (D["D_j"] / D["D_b"]).clip(lower=clip_lower, upper=clip_upper)
     D["log_ratio"] = np.log(ratio.to_numpy())
 
+    # B.2 two-stage form: per-task log_ratios collapse to one value per
+    # sensor-category bucket first, then we average over buckets per
+    # (method, *extra_keys). Mirrors the ``overall_binary_collapsed`` skill
+    # / rank aggregation in ``compute_skill_scores`` so the fairness score
+    # is category-balanced rather than task-count-weighted (where
+    # workouts' 10 binary channels would dominate the per-attribute
+    # geomean at 30 / 68 ≈ 44% weight).
+    D["bucket"] = [
+        b2_bucket_for_channel(ch, ct)
+        for ch, ct in zip(D["channel"].astype(str), D["channel_type"].astype(str))
+    ]
+    D = D[D["bucket"].notna()]
+    if D.empty:
+        return pd.DataFrame(columns=["method", *extra_keys, "S_attr", "n_tasks"])
+
+    # Stage 1: per (method, *extra_keys, bucket), mean of per-task log_ratio.
+    stage1 = (
+        D.groupby(["method", *extra_keys, "bucket"], observed=True)["log_ratio"]
+        .mean()
+        .reset_index(name="bucket_log_ratio")
+    )
+    # Stage 2: per (method, *extra_keys), arithmetic mean over buckets.
+    # ``n_tasks`` counts buckets present (≤ 4).
     agg = (
-        D.groupby(["method", *extra_keys], observed=True)
-        .agg(log_ratio_mean=("log_ratio", "mean"), n_tasks=("log_ratio", "size"))
+        stage1.groupby(["method", *extra_keys], observed=True)
+        .agg(
+            log_ratio_mean=("bucket_log_ratio", "mean"),
+            n_tasks=("bucket_log_ratio", "size"),
+        )
         .reset_index()
     )
     agg["S_attr"] = 1.0 - np.exp(agg["log_ratio_mean"])

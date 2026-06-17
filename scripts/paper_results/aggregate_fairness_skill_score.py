@@ -201,19 +201,25 @@ def compute_fairness_skill_scores(
 
     summary_frames: list[pd.DataFrame] = []
 
-    # Exclude Part D's collapsed-binary rows by default: this aggregator
-    # computes fairness over per-(scenario, channel) tasks, and including
-    # both per-channel ch_7..ch_18 rows AND cat_collapsed:{sleep,workouts}
-    # rows would double-count the binary signal. Callers that want
-    # fairness over the collapsed scopes specifically can pre-filter the
-    # ``draws_df`` to ``channel.str.startswith("cat_collapsed:")`` upstream.
-    is_collapsed = draws_df["channel"].astype(str).str.startswith("cat_collapsed:")
-    if is_collapsed.any():
+    # Fairness B.2: keep continuous per-channel rows (activity / physiology
+    # buckets) AND the cat_collapsed:{sleep,workouts} rows. Drop per-channel
+    # binary ch_7..ch_18 rows — the sleep / workouts buckets reach the
+    # fairness headline only via the collapsed rows, so per-channel binary
+    # would double-count. ``_per_attribute_skill_keyed`` enforces the same
+    # rule downstream via ``b2_bucket_for_channel`` (rows it would drop are
+    # filtered to ``bucket = None``), but stripping them up front cuts the
+    # join cost and surfaces the row-count drop in the log.
+    is_per_channel_binary = (
+        draws_df["channel"].astype(str).str.match(r"^ch_(?:[7-9]|1[0-8])$")
+        & (draws_df["channel_type"].astype(str) == "binary")
+    )
+    if is_per_channel_binary.any():
         logger.info(
-            "Excluding %d Part D collapsed-binary rows from fairness aggregation",
-            int(is_collapsed.sum()),
+            "Fairness B.2: dropping %d per-channel binary rows "
+            "(replaced by cat_collapsed:{sleep,workouts})",
+            int(is_per_channel_binary.sum()),
         )
-    draws_df = draws_df[~is_collapsed]
+    draws_df = draws_df[~is_per_channel_binary]
 
     for split in splits:
         df_split = draws_df[draws_df["split"] == split]

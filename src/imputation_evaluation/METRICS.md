@@ -334,11 +334,36 @@ Tasks are dropped from the `G`-aggregation if (i) fewer than two common
 subgroups exist for both `m` and `b` on task `r`, (ii) `D_{b, r, G} ≤ 0`
 or NaN, or (iii) `D_{m, r, G}` is NaN.
 
-**Per-attribute skill:**
+**Per-attribute skill (two-stage form, mirrors `overall_binary_collapsed`):**
 
 ```
-S^{G}_m  =  1  −  exp(  mean_r  log ratio_{m, r, G}  )
+S^{G}_m  =  1  −  exp(  (1 / K) · Σ_{c ∈ C}  log ratio^{G}_{m, c}  )
 ```
+
+where `C = {activity, physiology, sleep, workouts}`, `K = |C ∩ buckets present|`,
+and each bucket-level disparity log ratio is the **per-task mean of
+log(ratio_{m, r, G})** over the bucket's constituent (scenario, channel)
+tasks:
+
+```
+log ratio^{G}_{m, c}  =  (1 / n_c) · Σ_{r ∈ tasks(c)}  log clip(D_{r, j}^{(G)} / D_{r, b}^{(G)},  ℓ,  u)
+```
+
+Bucket sourcing matches the skill / rank side
+(`paper_metrics_core.b2_bucket_for_channel`):
+
+- `activity` and `physiology` come from per-channel continuous rows
+  (`ch_0..ch_4` and `ch_5..ch_6`).
+- `sleep` and `workouts` come from the `cat_collapsed:sleep` and
+  `cat_collapsed:workouts` rows (Part D — collapsed per-scenario tasks).
+- Per-channel binary rows (`ch_7..ch_18`) are dropped: the sleep /
+  workouts buckets reach the headline only via the collapsed rows, so
+  per-channel binary would double-count.
+
+The two-stage form prevents the same task-count imbalance the skill
+side carried before — under flat per-task geomeaning the 10 binary
+workout channels would weigh workouts at 30 / 68 ≈ 44% of the per-attribute
+geomean, eclipsing both continuous categories combined.
 
 **Macro-average over attributes:**
 
