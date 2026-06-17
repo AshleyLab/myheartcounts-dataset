@@ -76,6 +76,11 @@ BINARY_GROUPS: tuple[tuple[str, tuple[int, ...]], ...] = (
 CONTINUOUS_GROUPS: tuple[tuple[str, tuple[int, ...]], ...] = (
     ("steps", (0, 3)),      # iphone_steps + watch_steps
     ("distance", (1, 4)),   # iphone_distance + watch_distance
+    # Semantic super-groups spanning multiple physical quantities, scored the same
+    # way (geometric mean of the per-channel skill ratios). Additive reporting
+    # scopes only — they do not feed the overall skill/rank aggregation.
+    ("activity", (0, 1, 2, 3, 4)),   # steps + distance + flights (iphone + watch)
+    ("physiology", (5, 6)),          # heart rate + active energy (watch)
 )
 
 _METRIC_DISPLAY = {
