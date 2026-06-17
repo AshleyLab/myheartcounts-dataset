@@ -1632,43 +1632,27 @@ def _skill_for_draw(
     )
 
 
-def _rank_for_draw(
-    draw_errors: pd.DataFrame,
-    *,
-    mode: str = "per_user",
-) -> pd.DataFrame:
-    """Per-draw rank reducer.
+def _rank_for_draw(draw_errors: pd.DataFrame) -> pd.DataFrame:
+    """Per-draw rank reducer (per-user form — the leaderboard estimand).
 
-    ``mode="per_user"`` (default — the leaderboard estimand): consume the
-    per-task ``rank`` column emitted by Phase 1's
+    Consume the per-task ``rank`` column emitted by Phase 1's
     :func:`_rank_per_draw_for_cell` (Stage 1 already done at the draw
     grain); Phase 2 just does Stage 2 (mean over tasks in scope) via
     :func:`aggregate_task_ranks_to_scopes`. Raises if the column is
     absent — no silent fallback to pooled ranking.
-
-    ``mode="pooled"`` (legacy opt-in): re-rank methods on pooled-E per
-    (scenario, channel) task within the draw, mirroring the pre-refactor
-    behavior. Used only by callers that explicitly pass ``rank_mode="pooled"``.
     """
-    if mode == "per_user":
-        if "rank" not in draw_errors.columns:
-            raise ValueError(
-                "_rank_for_draw: mode='per_user' requires a 'rank' column on "
-                "the draws frame. Re-run Phase 1 (`bootstrap_imputation_draws.py`) "
-                "— the per-task rank is now emitted alongside E/R."
-            )
-        per_task = (
-            draw_errors[["method", "scenario", "channel", "rank"]]
-            .rename(columns={"rank": "task_rank"})
-            .copy()
+    if "rank" not in draw_errors.columns:
+        raise ValueError(
+            "_rank_for_draw requires a 'rank' column on the draws frame. "
+            "Re-run Phase 1 (`bootstrap_imputation_draws.py`) — the per-task "
+            "rank is now emitted alongside E/R."
         )
-        return aggregate_task_ranks_to_scopes(per_task)
-    if mode == "pooled":
-        cols = ["method", "scenario", "channel", "channel_type", "E"]
-        return compute_average_rankings(draw_errors[cols], mode="pooled")
-    raise ValueError(
-        f"_rank_for_draw: unknown mode={mode!r}; expected 'per_user' or 'pooled'."
+    per_task = (
+        draw_errors[["method", "scenario", "channel", "rank"]]
+        .rename(columns={"rank": "task_rank"})
+        .copy()
     )
+    return aggregate_task_ranks_to_scopes(per_task)
 
 
 def aggregate_skill_rank_fairness(
@@ -1681,7 +1665,6 @@ def aggregate_skill_rank_fairness(
     disparity_fns: dict[str, Callable[[dict[str, float]], float]] | None = None,
     fairness_combine_name: str = "linear_penalty",
     ci_level: float = 0.95,
-    rank_mode: str = "per_user",
 ) -> dict[str, pd.DataFrame]:
     """Phase-2 core: per-draw skill / rank / fairness, summarised across draws.
 
@@ -1780,7 +1763,7 @@ def aggregate_skill_rank_fairness(
                         "draw": int(draw),
                     }
                 )
-            rank = _rank_for_draw(df_draw, mode=rank_mode)
+            rank = _rank_for_draw(df_draw)
             for _, row in rank.iterrows():
                 rank_per_draw_records.append(
                     {

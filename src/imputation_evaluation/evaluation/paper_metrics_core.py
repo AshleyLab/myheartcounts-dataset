@@ -525,22 +525,6 @@ def aggregate_task_ranks_to_scopes(per_task: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(results)[cols]
 
 
-def _average_rankings_pooled(errors: pd.DataFrame) -> pd.DataFrame:
-    """Legacy pooled-E ranking — one rank per (method, task) on pooled E.
-
-    Kept as opt-in (``mode="pooled"``) for the deprecated ``S − λ·D``
-    fairness loop in :func:`bootstrap_skill_rank.aggregate_skill_rank_fairness`.
-    The leaderboard rank path uses ``mode="per_user"``.
-    """
-    if errors.empty:
-        return pd.DataFrame(columns=["method", "scope", "avg_rank", "n_tasks"])
-    df = errors.copy()
-    df["task_rank"] = df.groupby(["scenario", "channel"], observed=True)["E"].rank(
-        method="average", ascending=True,
-    )
-    return aggregate_task_ranks_to_scopes(df)
-
-
 def _average_rankings_per_user(errors: pd.DataFrame) -> pd.DataFrame:
     """Per-user ranking — forecasting-parity two-stage form.
 
@@ -562,10 +546,9 @@ def _average_rankings_per_user(errors: pd.DataFrame) -> pd.DataFrame:
     """
     if "user_id" not in errors.columns:
         raise ValueError(
-            "compute_average_rankings: mode='per_user' requires a 'user_id' "
-            "column in ``errors``. Build the per-user long frame from "
-            "``pair_aggregator.aggregate_pairs(..., return_per_user=True)`` "
-            "or use mode='pooled' for the legacy pooled-E reducer."
+            "compute_average_rankings requires a 'user_id' column in "
+            "``errors``. Build the per-user long frame from "
+            "``pair_aggregator.aggregate_pairs(..., return_per_user=True)``."
         )
     df = errors[np.isfinite(errors["E"])].copy()
     if df.empty:
@@ -598,11 +581,7 @@ def _average_rankings_per_user(errors: pd.DataFrame) -> pd.DataFrame:
     return aggregate_task_ranks_to_scopes(per_task)
 
 
-def compute_average_rankings(
-    errors: pd.DataFrame,
-    *,
-    mode: str = "per_user",
-) -> pd.DataFrame:
+def compute_average_rankings(errors: pd.DataFrame) -> pd.DataFrame:
     """Average rank per method × scope. Lower E → better → rank 1.
 
     Two-stage form mirroring forecasting's full cross-task rank aggregation
@@ -612,19 +591,8 @@ def compute_average_rankings(
     point estimate matches the bootstrap identity-draw point estimate.
 
     Args:
-        errors: long-format frame.
-
-            * ``mode="per_user"`` requires columns ``[method, scenario,
-              channel, user_id, E]`` — one row per (method, task, user).
-            * ``mode="pooled"`` requires columns ``[method, scenario,
-              channel, E]`` — one row per (method, task), with E already
-              user-macroaveraged upstream.
-
-        mode: ``"per_user"`` (default — the leaderboard estimand) or
-            ``"pooled"`` (legacy opt-in, kept for the deprecated
-            ``S − λ·D`` fairness loop). The previous silent switch on
-            ``user_id`` column presence has been removed; the mode must
-            be selected explicitly.
+        errors: long-format frame with columns ``[method, scenario,
+            channel, user_id, E]`` — one row per (method, task, user).
 
     Emits the same scope set as :func:`compute_skill_scores`: per-channel
     legacy scopes (``<scenario>``, ``cat:*``, ``semantic``, ``overall``)
@@ -632,14 +600,7 @@ def compute_average_rankings(
     ``cat_collapsed:workouts``, ``overall_binary_collapsed``) when
     ``cat_collapsed:*`` rows are present.
     """
-    if mode == "per_user":
-        return _average_rankings_per_user(errors)
-    if mode == "pooled":
-        return _average_rankings_pooled(errors)
-    raise ValueError(
-        f"compute_average_rankings: unknown mode={mode!r}; "
-        "expected 'per_user' or 'pooled'."
-    )
+    return _average_rankings_per_user(errors)
 
 
 # --------------------------------------------------------------------------

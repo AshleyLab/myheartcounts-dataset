@@ -103,17 +103,6 @@ def _parse_args() -> argparse.Namespace:
              "(fairness_subgroup_scores_bootstrap.csv, "
              "fairness_summary_bootstrap.csv). Off by default.",
     )
-    p.add_argument(
-        "--rank-mode", choices=["per_user", "pooled"], default="per_user",
-        help=(
-            "Average-rank estimand. 'per_user' (default — leaderboard) "
-            "consumes the per-task 'rank' column emitted by Phase 1; "
-            "'pooled' is the legacy reducer that re-ranks methods on "
-            "pooled-over-users E per task per draw. The per_user path "
-            "requires the 'rank' column — if absent (old draws Parquet), "
-            "re-run Phase 1."
-        ),
-    )
     return p.parse_args()
 
 
@@ -142,12 +131,11 @@ def main() -> int:
     logger.info("Fairness-combine: %s, lambda=%s",
                 args.fairness_combine, args.lambda_fairness)
 
-    if args.rank_mode == "per_user" and "rank" not in df.columns:
+    if "rank" not in df.columns:
         logger.error(
-            "rank_mode=per_user requires a 'rank' column on the draws "
+            "The Phase-2 reducer requires a 'rank' column on the draws "
             "Parquet, but %s has none. Re-run Phase 1 "
-            "(bootstrap_imputation_draws.py) to regenerate draws, or pass "
-            "--rank-mode pooled for the legacy reducer.",
+            "(bootstrap_imputation_draws.py) to regenerate draws.",
             args.draws,
         )
         return 2
@@ -161,7 +149,6 @@ def main() -> int:
         disparity_fns=disparity_fns,
         fairness_combine_name=args.fairness_combine,
         ci_level=args.ci_level,
-        rank_mode=args.rank_mode,
     )
 
     out = args.output_dir

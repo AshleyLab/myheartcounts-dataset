@@ -128,16 +128,6 @@ def _parse_args() -> argparse.Namespace:
         ),
     )
     p.add_argument(
-        "--rank-mode", choices=["per_user", "pooled"], default="per_user",
-        help=(
-            "Average-rank estimand. 'per_user' (default — leaderboard) is "
-            "the two-stage form-B reducer that matches the bootstrap and "
-            "forecasting; 'pooled' is the legacy single-stage reducer that "
-            "ranks methods on pooled-over-users E per task (kept as opt-in "
-            "for legacy comparisons)."
-        ),
-    )
-    p.add_argument(
         "--skill-mode", choices=["paired", "pooled"], default="paired",
         help=(
             "Skill-score estimand. 'paired' (default — leaderboard) consumes "
@@ -481,7 +471,8 @@ def main() -> int:
     logger.info("Scenarios: %s", scenarios)
     logger.info("Splits: %s", args.splits)
 
-    need_per_user = args.rank_mode == "per_user" or args.skill_mode == "paired"
+    # Rank is always per-user; skill is per-user when --skill-mode=paired.
+    # Either way we need the per-user long frame.
     registry, per_user_long = _gather_registry(
         method_dirs,
         scenarios=scenarios,
@@ -490,22 +481,21 @@ def main() -> int:
         exclude_unknown=args.exclude_unknown,
         channel_stds_path=args.channel_stds_path,
         strict=args.strict,
-        return_per_user=need_per_user,
+        return_per_user=True,
     )
     logger.info("Registry rows: %d", len(registry))
     if registry.empty:
         logger.error("Registry is empty; aborting")
         return 2
-    if need_per_user:
-        logger.info("Per-user rows: %d", len(per_user_long))
-        if per_user_long.empty:
-            logger.error(
-                "rank_mode=%s / skill_mode=%s requested per-user data, but "
-                "no per-user rows were emitted. Check pair_aggregator's "
-                "return_per_user threading.",
-                args.rank_mode, args.skill_mode,
-            )
-            return 2
+    logger.info("Per-user rows: %d", len(per_user_long))
+    if per_user_long.empty:
+        logger.error(
+            "skill_mode=%s requested per-user data (rank always uses per-user), "
+            "but no per-user rows were emitted. Check pair_aggregator's "
+            "return_per_user threading.",
+            args.skill_mode,
+        )
+        return 2
 
     errors_all, errors_sg = _build_errors_long(registry, splits=args.splits)
 
@@ -560,19 +550,14 @@ def main() -> int:
             skill_frames.append(skill)
 
         # --- rank ---
-        if args.rank_mode == "per_user":
-            if eu.empty:
-                logger.warning(
-                    "[split=%s] rank_mode=per_user but per-user frame is empty — "
-                    "skipping rank for this split.",
-                    split,
-                )
-            else:
-                rank = compute_average_rankings(eu, mode="per_user")
-                rank["split"] = split
-                rank_frames.append(rank)
-        else:  # pooled
-            rank = compute_average_rankings(ea, mode="pooled")
+        if eu.empty:
+            logger.warning(
+                "[split=%s] rank requires per-user data but the per-user "
+                "frame is empty — skipping rank for this split.",
+                split,
+            )
+        else:
+            rank = compute_average_rankings(eu)
             rank["split"] = split
             rank_frames.append(rank)
 

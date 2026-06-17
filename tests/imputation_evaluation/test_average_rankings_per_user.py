@@ -3,7 +3,7 @@
 Pins the post-refactor contract:
 
 1. Point-flow ↔ bootstrap identity-draw parity for average rank
-   (`compute_average_rankings(mode="per_user")` ≡ bootstrap rank kernel
+   (`compute_average_rankings` ≡ bootstrap rank kernel
    with `boot_idx = arange(U)`).
 2. Point-flow ↔ bootstrap identity-draw parity for the paired skill score
    (`compute_per_task_paired_R` + `compute_skill_scores(mode="paired")` ≡
@@ -157,7 +157,7 @@ def _make_per_user_E_matrix(
 
 
 def test_per_user_rank_point_flow_matches_bootstrap_identity_draw():
-    """`compute_average_rankings(mode="per_user")` ≡ bootstrap rank kernel
+    """`compute_average_rankings` ≡ bootstrap rank kernel
     with `boot_idx = arange(U)`.
 
     Multi-method, multi-task fixture so the two-stage form is non-trivial
@@ -172,7 +172,7 @@ def test_per_user_rank_point_flow_matches_bootstrap_identity_draw():
     user_ids = [f"u{i}" for i in range(n_users)]
 
     # Point-flow.
-    point = compute_average_rankings(eu, mode="per_user")
+    point = compute_average_rankings(eu)
     point_overall = (
         point[point["scope"] == "overall"].set_index("method")["avg_rank"]
     )
@@ -337,7 +337,7 @@ def test_per_user_rank_single_task_matches_forecasting():
     )
 
     # Imputation per-user task_rank (mean over users) per (method, scenario, channel).
-    imp_full = compute_average_rankings(eu, mode="per_user")
+    imp_full = compute_average_rankings(eu)
     imp_scenario = (
         imp_full[imp_full["scope"] == "scenarioA"]
         .set_index("method")["avg_rank"]
@@ -372,7 +372,7 @@ def test_per_user_rank_multitask_matches_forecasting_cross_channel_mean():
         methods=methods, channels=channels, n_users=10, seed=5,
     )
 
-    imp = compute_average_rankings(eu, mode="per_user")
+    imp = compute_average_rankings(eu)
     imp_overall = (
         imp[imp["scope"] == "overall"].set_index("method")["avg_rank"]
     )
@@ -399,8 +399,8 @@ def test_per_user_rank_multitask_matches_forecasting_cross_channel_mean():
 # ---------------------------------------------------------------------------
 
 
-def test_compute_average_rankings_per_user_raises_without_user_id():
-    """mode='per_user' requires a user_id column; raises if absent."""
+def test_compute_average_rankings_raises_without_user_id():
+    """compute_average_rankings requires a user_id column; raises if absent."""
     no_uid = pd.DataFrame({
         "method": ["a", "b"],
         "scenario": ["s", "s"],
@@ -409,7 +409,7 @@ def test_compute_average_rankings_per_user_raises_without_user_id():
         "E": [1.0, 0.5],
     })
     with pytest.raises(ValueError, match="user_id"):
-        compute_average_rankings(no_uid, mode="per_user")
+        compute_average_rankings(no_uid)
 
 
 def test_compute_skill_scores_paired_raises_without_R():
@@ -448,16 +448,6 @@ def test_compute_skill_scores_pooled_still_works_explicitly():
     assert float(overall["skill_score"].iloc[0]) > 0.0
 
 
-def test_compute_average_rankings_unknown_mode_raises():
-    """Unknown mode strings raise rather than silently falling back."""
-    df = pd.DataFrame({
-        "method": ["a"], "scenario": ["s"], "channel": ["ch_0"],
-        "channel_type": ["continuous"], "E": [0.5],
-    })
-    with pytest.raises(ValueError, match="unknown mode"):
-        compute_average_rankings(df, mode="not_a_mode")
-
-
 # ---------------------------------------------------------------------------
 # 6. Tie handling
 # ---------------------------------------------------------------------------
@@ -478,7 +468,7 @@ def test_tie_handling_method_average():
                          "channel_type": "continuous", "user_id": f"u{u}", "E": 0.5})
             rows.append({"method": "C", "scenario": "s", "channel": ch,
                          "channel_type": "continuous", "user_id": f"u{u}", "E": 2.0})
-    out = compute_average_rankings(pd.DataFrame(rows), mode="per_user")
+    out = compute_average_rankings(pd.DataFrame(rows))
     overall = out[out["scope"] == "overall"].set_index("method")["avg_rank"]
     assert overall["A"] == pytest.approx(1.5, rel=1e-12)
     assert overall["B"] == pytest.approx(1.5, rel=1e-12)
@@ -509,7 +499,7 @@ def test_ragged_user_coverage_tolerated():
         if u != 3:
             rows.append({"method": "B", "scenario": "s", "channel": "ch_1",
                          "channel_type": "continuous", "user_id": f"u{u}", "E": 1.0})
-    out = compute_average_rankings(pd.DataFrame(rows), mode="per_user")
+    out = compute_average_rankings(pd.DataFrame(rows))
     overall = out[out["scope"] == "overall"].set_index("method")["avg_rank"]
     # A < B on both tasks for every overlapping user → A rank 1, B rank 2
     # on every (user, task) with both methods present. Average == constant.
