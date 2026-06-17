@@ -224,3 +224,94 @@ class TestCollapsedChannelHelper:
         assert not is_collapsed_channel("ch_7")
         assert not is_collapsed_channel("ch_0")
         assert not is_collapsed_channel("activity")
+
+
+# ---------------------------------------------------------------------------
+# Part D + task-grain emission interaction
+# ---------------------------------------------------------------------------
+
+
+class TestTaskScopeWithCollapsedRows:
+    """Task-grain ``task:<scenario>:<channel>`` rows must coexist with the
+    Part D collapsed scopes — every per-channel input AND every
+    ``cat_collapsed:*`` input gets its own leaf scope, without polluting the
+    aggregated scopes (``overall``, ``cat:*``, ``overall_binary_collapsed``).
+    """
+
+    def test_collapsed_rows_emit_task_scopes(self):
+        """``task:<sc>:cat_collapsed:<cat>`` rows are emitted per input."""
+        scenarios = ["random_noise", "temporal_slice"]
+        rows = []
+        for sc in scenarios:
+            rows.append({
+                "method": "A", "scenario": sc, "channel": "ch_0",
+                "channel_type": "continuous", "E": 0.4,
+            })
+            rows.append({
+                "method": "A", "scenario": sc, "channel": "cat_collapsed:sleep",
+                "channel_type": "binary_collapsed", "E": 0.5,
+            })
+            rows.append({
+                "method": "A", "scenario": sc, "channel": "cat_collapsed:workouts",
+                "channel_type": "binary_collapsed", "E": 0.6,
+            })
+        bl_rows = [
+            {"method": "LOCF", "scenario": sc, "channel": ch,
+             "channel_type": ("binary_collapsed" if ch.startswith("cat_collapsed:")
+                              else "continuous"),
+             "E": 1.0}
+            for sc in scenarios
+            for ch in ("ch_0", "cat_collapsed:sleep", "cat_collapsed:workouts")
+        ]
+        result = compute_skill_scores(
+            _build_errors_df(rows), _build_errors_df(bl_rows), mode="pooled",
+        )
+
+        scopes = set(result[result["method"] == "A"]["scope"])
+        for sc in scenarios:
+            assert f"task:{sc}:ch_0" in scopes
+            assert f"task:{sc}:cat_collapsed:sleep" in scopes
+            assert f"task:{sc}:cat_collapsed:workouts" in scopes
+
+        # Skill value at task-grain == 1 − clipped(E/E_baseline). With
+        # baseline E=1.0 the ratio is the method's E directly (in-bounds).
+        skill_by_scope = (
+            result[result["method"] == "A"]
+            .set_index("scope")["skill_score"].to_dict()
+        )
+        np.testing.assert_allclose(
+            skill_by_scope["task:random_noise:cat_collapsed:sleep"], 0.5, rtol=1e-9,
+        )
+        np.testing.assert_allclose(
+            skill_by_scope["task:random_noise:cat_collapsed:workouts"], 0.4, rtol=1e-9,
+        )
+        np.testing.assert_allclose(
+            skill_by_scope["task:random_noise:ch_0"], 0.6, rtol=1e-9,
+        )
+
+    def test_task_scope_count_per_scenario(self):
+        """One ``task:*`` row per (method, scenario, channel) row in the
+        input — count is exact, not a lower bound.
+        """
+        rows = [
+            {"method": "A", "scenario": "random_noise", "channel": "ch_0",
+             "channel_type": "continuous", "E": 0.4},
+            {"method": "A", "scenario": "random_noise", "channel": "ch_1",
+             "channel_type": "continuous", "E": 0.5},
+            {"method": "A", "scenario": "random_noise",
+             "channel": "cat_collapsed:sleep",
+             "channel_type": "binary_collapsed", "E": 0.6},
+        ]
+        bl_rows = [
+            {"method": "LOCF", "scenario": "random_noise", "channel": ch,
+             "channel_type": ("binary_collapsed" if ch.startswith("cat_collapsed:")
+                              else "continuous"),
+             "E": 1.0}
+            for ch in ("ch_0", "ch_1", "cat_collapsed:sleep")
+        ]
+        result = compute_skill_scores(
+            _build_errors_df(rows), _build_errors_df(bl_rows), mode="pooled",
+        )
+        task_rows = result[result["scope"].str.startswith("task:")]
+        assert len(task_rows) == 3
+        assert (task_rows["n_tasks"] == 1).all()

@@ -24,6 +24,10 @@ from imputation_evaluation.evaluation.bootstrap_skill_rank import (
     read_draws_parquet,
     write_draws_parquet,
 )
+from imputation_evaluation.evaluation.paper_metrics_core import (
+    aggregate_task_ranks_to_scopes,
+    compute_skill_scores,
+)
 
 
 def _synthetic_draws(
@@ -145,6 +149,203 @@ def test_aggregate_returns_four_tables_even_when_empty():
         "fairness_subgroups",
         "fairness_summary",
     }
+
+
+# --------------------------------------------------------------------------
+# task:<scenario>:<channel> — leaf scope emission (skill + rank)
+# --------------------------------------------------------------------------
+#
+# These tests target the kernel functions directly with hand-built inputs so
+# the assertions stay local to the new emission code. The synthetic-draws +
+# Phase-2 pass-through test below exercises the same scopes through the
+# bootstrap.
+
+
+def _build_paired_R_frame(rows):
+    """Build a long-format paired-R frame for compute_skill_scores."""
+    return pd.DataFrame(rows)
+
+
+class TestTaskGrainSkillEmission:
+    """The per-(method, scenario, channel) leaf scope ``task:<sc>:<ch>``."""
+
+    def test_task_scope_present_for_every_input_row(self):
+        """One ``task:<sc>:<ch>`` row per (method, scenario, channel) input."""
+        rows = [
+            {"method": "A", "scenario": "random_noise", "channel": "ch_0", "R": 0.4},
+            {"method": "A", "scenario": "random_noise", "channel": "ch_1", "R": 0.6},
+            {"method": "A", "scenario": "temporal_slice", "channel": "ch_0", "R": 0.8},
+            {"method": "B", "scenario": "random_noise", "channel": "ch_0", "R": 1.2},
+            {"method": "B", "scenario": "random_noise", "channel": "ch_1", "R": 0.9},
+            {"method": "B", "scenario": "temporal_slice", "channel": "ch_0", "R": 1.0},
+        ]
+        result = compute_skill_scores(_build_paired_R_frame(rows), mode="paired")
+        task_scopes = result[result["scope"].str.startswith("task:")]
+        # 2 methods × 3 unique (scenario, channel) keys = 6 task rows.
+        assert len(task_scopes) == 6
+        for _, r in task_scopes.iterrows():
+            assert int(r["n_tasks"]) == 1
+
+    def test_task_skill_equals_one_minus_clipped_ratio(self):
+        """task:* skill is the degenerate single-task case: ``1 − clip(R)``."""
+        rows = [
+            {"method": "A", "scenario": "random_noise", "channel": "ch_0", "R": 0.4},
+            {"method": "A", "scenario": "random_noise", "channel": "ch_1", "R": 50.0},
+            # Out-of-clip extremes: R=0.001 should clip to 0.01, R=500 to 100.
+            {"method": "A", "scenario": "random_noise", "channel": "ch_2", "R": 0.001},
+            {"method": "A", "scenario": "random_noise", "channel": "ch_3", "R": 500.0},
+        ]
+        result = compute_skill_scores(_build_paired_R_frame(rows), mode="paired")
+        skill_by_ch = (
+            result[result["scope"].str.startswith("task:")]
+            .set_index("scope")["skill_score"]
+            .to_dict()
+        )
+        # ch_0: R=0.4 inside clip bounds → skill = 1 − 0.4 = 0.6.
+        np.testing.assert_allclose(skill_by_ch["task:random_noise:ch_0"], 0.6, rtol=1e-9)
+        # ch_1: R=50 inside clip → skill = 1 − 50 = −49.
+        np.testing.assert_allclose(skill_by_ch["task:random_noise:ch_1"], -49.0, rtol=1e-9)
+        # ch_2: R=0.001 clipped up to 0.01 → skill = 1 − 0.01 = 0.99.
+        np.testing.assert_allclose(skill_by_ch["task:random_noise:ch_2"], 0.99, rtol=1e-9)
+        # ch_3: R=500 clipped down to 100 → skill = 1 − 100 = −99.
+        np.testing.assert_allclose(skill_by_ch["task:random_noise:ch_3"], -99.0, rtol=1e-9)
+
+    def test_scenario_scope_is_geomean_of_task_ratios(self):
+        """Per-scenario scope skill reconstructs from its constituent task
+        scopes:
+
+            S_scenario = 1 − exp(mean(log(1 − S_task)))
+                       = 1 − geomean(clipped_R)
+
+        Locks in the consistency property between the new leaf scope and the
+        existing aggregated scope.
+        """
+        rows = [
+            {"method": "A", "scenario": "random_noise", "channel": "ch_0", "R": 0.5},
+            {"method": "A", "scenario": "random_noise", "channel": "ch_1", "R": 0.8},
+            {"method": "A", "scenario": "random_noise", "channel": "ch_2", "R": 1.5},
+        ]
+        result = compute_skill_scores(_build_paired_R_frame(rows), mode="paired")
+        task_skills = (
+            result[result["scope"].str.startswith("task:")]["skill_score"].values
+        )
+        scenario_skill = float(
+            result[result["scope"] == "random_noise"]["skill_score"].iloc[0]
+        )
+        expected = 1.0 - float(np.exp(np.mean(np.log(1.0 - task_skills))))
+        np.testing.assert_allclose(scenario_skill, expected, rtol=1e-9)
+
+
+class TestTaskGrainRankEmission:
+    """``task:<sc>:<ch>`` rows on the rank side mirror the skill side."""
+
+    def test_task_rank_passed_through_unchanged(self):
+        """avg_rank for each ``task:*`` row equals the input ``task_rank``."""
+        per_task = pd.DataFrame([
+            {"method": "A", "scenario": "random_noise", "channel": "ch_0",
+             "task_rank": 1.5, "n_users": 100},
+            {"method": "A", "scenario": "random_noise", "channel": "ch_1",
+             "task_rank": 2.0, "n_users": 95},
+            {"method": "B", "scenario": "temporal_slice", "channel": "ch_5",
+             "task_rank": 1.0, "n_users": 80},
+        ])
+        result = aggregate_task_ranks_to_scopes(per_task)
+        task_rows = result[result["scope"].str.startswith("task:")]
+        by_scope = task_rows.set_index("scope")
+        assert by_scope.loc["task:random_noise:ch_0", "avg_rank"] == pytest.approx(1.5)
+        assert by_scope.loc["task:random_noise:ch_1", "avg_rank"] == pytest.approx(2.0)
+        assert by_scope.loc["task:temporal_slice:ch_5", "avg_rank"] == pytest.approx(1.0)
+        # n_users column carries through when present in input.
+        assert int(by_scope.loc["task:random_noise:ch_0", "n_users"]) == 100
+        # All task rows have n_tasks=1.
+        assert (task_rows["n_tasks"] == 1).all()
+
+    def test_scenario_rank_is_mean_of_task_ranks(self):
+        """The Stage-2 ``<scenario>`` scope mean equals the mean of its
+        ``task:*`` constituents — the leaf rows can be re-aggregated by the
+        consumer without round-tripping the per-task fixture.
+        """
+        per_task = pd.DataFrame([
+            {"method": "A", "scenario": "random_noise", "channel": "ch_0",
+             "task_rank": 1.5, "n_users": 100},
+            {"method": "A", "scenario": "random_noise", "channel": "ch_1",
+             "task_rank": 2.5, "n_users": 100},
+            {"method": "A", "scenario": "random_noise", "channel": "ch_2",
+             "task_rank": 3.0, "n_users": 100},
+        ])
+        result = aggregate_task_ranks_to_scopes(per_task)
+        scenario_rank = float(
+            result[result["scope"] == "random_noise"]["avg_rank"].iloc[0]
+        )
+        task_ranks = (
+            result[result["scope"].str.startswith("task:")]["avg_rank"].values
+        )
+        np.testing.assert_allclose(scenario_rank, float(np.mean(task_ranks)), rtol=1e-9)
+        np.testing.assert_allclose(scenario_rank, (1.5 + 2.5 + 3.0) / 3, rtol=1e-9)
+
+    def test_n_users_optional(self):
+        """Rank input without ``n_users`` still emits task scopes; output
+        ``n_users`` column is omitted on every row consistently.
+        """
+        per_task = pd.DataFrame([
+            {"method": "A", "scenario": "random_noise", "channel": "ch_0",
+             "task_rank": 1.0},
+            {"method": "A", "scenario": "random_noise", "channel": "ch_1",
+             "task_rank": 2.0},
+        ])
+        result = aggregate_task_ranks_to_scopes(per_task)
+        task_rows = result[result["scope"].str.startswith("task:")]
+        assert "n_users" not in result.columns
+        assert len(task_rows) == 2
+
+
+def test_task_scopes_flow_through_bootstrap_phase2():
+    """End-to-end: ``task:*`` scopes appear in Phase-2 skill/rank tables.
+
+    The deterministic synthetic-draws fixture uses base errors locf=1.0,
+    mean=2.0, linear=0.5 so R is constant per method, and the per-task rank
+    is fixed at 1 (linear), 2 (locf), 3 (mean). The bootstrap mean for each
+    ``task:<scenario>:<channel>`` cell should equal the deterministic single
+    -task value.
+    """
+    draws = _synthetic_draws()
+    tables = aggregate_skill_rank_fairness(draws, baseline_method="locf")
+
+    skill = tables["skill_scores"]
+    rank = tables["avg_rankings"]
+    skill_scopes = set(skill["scope"])
+    rank_scopes = set(rank["scope"])
+
+    # Synthetic fixture uses 2 scenarios × 2 channels → 4 task scopes each.
+    expected_task_scopes = {
+        f"task:{sc}:{ch}" for sc in ("random_noise", "block_random")
+        for ch in ("ch_0", "ch_1")
+    }
+    assert expected_task_scopes.issubset(skill_scopes)
+    assert expected_task_scopes.issubset(rank_scopes)
+
+    # Each task:* row should report n_tasks=1.
+    task_skill = skill[skill["scope"].str.startswith("task:")]
+    assert (task_skill["n_tasks"] == 1).all()
+    task_rank = rank[rank["scope"].str.startswith("task:")]
+    assert (task_rank["n_tasks"] == 1).all()
+
+    # locf-vs-self ⇒ R ≈ 1 ⇒ task skill ≈ 0; linear (E=0.5/locf E=1.0=R=0.5)
+    # ⇒ task skill ≈ 0.5. Use the same ~5e-2 tolerance as the existing
+    # test_skill_score_for_baseline_is_zero.
+    locf_task = task_skill[task_skill["method"] == "locf"]
+    assert abs(float(locf_task["mean"].mean())) < 5e-2
+    linear_task = task_skill[task_skill["method"] == "linear"]
+    np.testing.assert_allclose(float(linear_task["mean"].mean()), 0.5, atol=5e-2)
+
+    # Task rank == task_rank, which is constant per method in the fixture:
+    # linear=1, locf=2, mean=3.
+    rank_by_method = (
+        task_rank.groupby("method", observed=True)["mean"].mean().to_dict()
+    )
+    np.testing.assert_allclose(rank_by_method["linear"], 1.0, atol=1e-6)
+    np.testing.assert_allclose(rank_by_method["locf"], 2.0, atol=1e-6)
+    np.testing.assert_allclose(rank_by_method["mean"], 3.0, atol=1e-6)
 
 
 # --------------------------------------------------------------------------

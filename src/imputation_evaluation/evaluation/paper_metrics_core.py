@@ -320,6 +320,24 @@ def compute_skill_scores(
                 "n_tasks": len(group),
             })
 
+    # --- task:<scenario>:<channel> (degenerate single-task scope) -----
+    # Per-(method, scenario, channel) leaf scope. Skill is the single-task
+    # case of 1 − exp(mean(log(R))) — i.e., 1 − clipped_ratio — so any
+    # aggregated scope built from these same R values reproduces exactly.
+    # Covers both real per-channel rows ("task:<scenario>:ch_K") and
+    # collapsed-binary rows ("task:<scenario>:cat_collapsed:<cat>"). The
+    # per-scenario channel inventory is inherited from the upstream pair
+    # writer (e.g. workout_gap / intensity_failure naturally produce only
+    # ch_5 and ch_6 tasks because no rows are written for unmasked
+    # channels).
+    for r in ratio_df.itertuples(index=False):
+        results.append({
+            "method": r.method,
+            "scope": f"task:{r.scenario}:{r.channel}",
+            "skill_score": 1.0 - float(r.clipped_ratio),
+            "n_tasks": 1,
+        })
+
     return pd.DataFrame(results)
 
 
@@ -392,6 +410,23 @@ def aggregate_task_ranks_to_scopes(per_task: pd.DataFrame) -> pd.DataFrame:
         merged = pd.concat([continuous_legacy, collapsed], ignore_index=True)
         for method, group in merged.groupby("method", observed=True):
             results.append(_row(method, "overall_binary_collapsed", group))
+
+    # --- task:<scenario>:<channel> (degenerate single-task rank scope) -
+    # Pass each per-task row through unchanged: ``avg_rank`` is the
+    # per-task ``task_rank`` (Stage-1 output). The aggregated scopes above
+    # are arithmetic means over these same rank values, so any consumer
+    # mean-aggregating ``task:*`` rows within a scope reproduces the
+    # aggregated scope's ``avg_rank`` exactly.
+    for r in df.itertuples(index=False):
+        row = {
+            "method": r.method,
+            "scope": f"task:{r.scenario}:{r.channel}",
+            "avg_rank": float(r.task_rank),
+            "n_tasks": 1,
+        }
+        if has_n_users:
+            row["n_users"] = int(r.n_users)
+        results.append(row)
 
     cols = ["method", "scope", "avg_rank", "n_tasks"]
     if has_n_users:
