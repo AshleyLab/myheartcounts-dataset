@@ -68,13 +68,31 @@ PERSONALIZED_HEADER = "Personalized-context (extended-history) methods"
 SUBMITTER = "OpenMHC team"  # lowercase 't' — matches existing entries + schema doc
 
 # CSV scope name -> JSON subgroup field name
+#
+# Sleep and workouts read the **collapsed-binary** scopes (Part D) so each
+# category counts once per scenario in the headline JSON, matching the
+# overall_binary_collapsed scope below. Continuous categories
+# (activity, physiology) only have 5 and 2 channels and already weight
+# roughly fairly, so they stay on the per-channel ``cat:*`` scopes — no
+# ``cat_collapsed:activity`` exists upstream (see
+# ``BINARY_CATEGORIES_ORDERED`` in ``paper_metrics_core.py``).
 SUBGROUP_FIELD: dict[str, str] = {
-    "cat:activity":   "activity",
-    "cat:physiology": "physiology",
-    "cat:sleep":      "sleep",
-    "cat:workouts":   "workout",   # singular in JSON
-    "semantic":       "semantic",
+    "cat:activity":          "activity",
+    "cat:physiology":        "physiology",
+    "cat_collapsed:sleep":   "sleep",
+    "cat_collapsed:workouts": "workout",   # singular in JSON
+    "semantic":              "semantic",
 }
+
+# Headline ``skill`` and ``rank`` JSON columns read from the
+# ``overall_binary_collapsed`` scope (continuous per-channel tasks +
+# 2 collapsed-binary tasks per scenario), so they're consistent with the
+# per-category sleep / workout choices above. Fairness keeps ``overall``
+# because its CSV's overall row is already the cross-attribute macro and
+# has no collapsed variant.
+OVERALL_SKILL_SCOPE = "overall_binary_collapsed"
+OVERALL_RANK_SCOPE = "overall_binary_collapsed"
+OVERALL_FAIR_SCOPE = "overall"
 
 
 # ---------------------------------------------------------------------------
@@ -82,11 +100,18 @@ SUBGROUP_FIELD: dict[str, str] = {
 # ---------------------------------------------------------------------------
 
 
-def _load_overall(path: Path) -> dict[str, float]:
+def _load_overall(path: Path, *, scope: str = "overall") -> dict[str, float]:
+    """Load the headline metric from one bootstrap CSV.
+
+    ``scope`` defaults to ``"overall"`` (the fairness CSV's macro row); the
+    skill and rank CSVs pass ``"overall_binary_collapsed"`` so the headline
+    aligns with the per-category ``cat_collapsed:*`` rows surfaced in
+    :data:`SUBGROUP_FIELD`.
+    """
     out: dict[str, float] = {}
     with path.open() as f:
         for r in csv.DictReader(f):
-            if r["scope"] == "overall" and r["split"] == "test":
+            if r["scope"] == scope and r["split"] == "test":
                 out[r["method"]] = float(r["mean"])
     return out
 
@@ -234,9 +259,15 @@ def main() -> None:
 
     current = json.loads(args.current.read_text())
     paper_dir: Path = args.paper_dir
-    skill = _load_overall(paper_dir / "skill_scores_bootstrap.csv")
-    fair  = _load_overall(paper_dir / "fairness_skill_score_bootstrap.csv")
-    rank  = _load_overall(paper_dir / "avg_rankings_bootstrap.csv")
+    skill = _load_overall(
+        paper_dir / "skill_scores_bootstrap.csv", scope=OVERALL_SKILL_SCOPE,
+    )
+    fair  = _load_overall(
+        paper_dir / "fairness_skill_score_bootstrap.csv", scope=OVERALL_FAIR_SCOPE,
+    )
+    rank  = _load_overall(
+        paper_dir / "avg_rankings_bootstrap.csv", scope=OVERALL_RANK_SCOPE,
+    )
     subs  = _load_subgroups(paper_dir / "skill_scores_bootstrap.csv")
 
     missing = [k for k in (*DAILY_META, *PERSONALIZED_META) if k not in skill]

@@ -202,6 +202,23 @@ collapsed to a single task per scenario (see §1 for the per-task E):
 Same formula as §3, computed over the collapsed-binary R values
 (`paper_metrics_core.py:300-308`).
 
+**Motivation** — without collapsing, the per-channel geomean weights
+`workouts` 10× `sleep` (10 vs. 2 binary channels), and in any pooled
+scope the binary side is dominated by workout channels. Collapsing makes
+each binary category count once per scenario, so sleep and workouts
+weigh equally and don't swamp the 7 continuous channels in `overall`.
+Continuous categories are deliberately **not** collapsed (`activity` has
+5 channels, `physiology` has 2 — they "already weight roughly fairly"
+per `paper_metrics_core.py:60-64`), so there is no `cat_collapsed:activity`
+or `cat_collapsed:physiology`. Only sleep and workouts have collapsed
+twins (`BINARY_CATEGORIES_ORDERED`, `:65-68`).
+
+**Leaderboard consumption** — the leaderboard JSON's `sleep` and
+`workout` columns read `cat_collapsed:sleep` and `cat_collapsed:workouts`,
+not the per-channel `cat:sleep` / `cat:workouts`
+(`build_leaderboard_json.SUBGROUP_FIELD`). The per-channel `cat:sleep` /
+`cat:workouts` scopes remain in the CSVs as secondary references.
+
 ### 5.4 Cross-scenario scopes (3 rows per method per split)
 
 | scope | task set | task count |
@@ -210,7 +227,11 @@ Same formula as §3, computed over the collapsed-binary R values
 | `overall` | all 6 scenarios × all per-channel tasks (binary excluded from semantic) | 19·3 + 7 + 2 + 2 = **68** |
 | `overall_binary_collapsed` | overall with the 12 per-channel binary tasks replaced by the 6 `cat_collapsed:*` tasks | 7·3 + 2·3 + 6 = **33** |
 
-`overall` is the headline skill / rank quoted on the leaderboard.
+`overall_binary_collapsed` is the headline skill / rank quoted on the
+leaderboard JSON (`build_leaderboard_json.OVERALL_SKILL_SCOPE`).
+`overall` is kept as a secondary per-channel reference and is the scope
+the fairness CSV's macro row uses (it has no collapsed variant — only
+one disparity per attribute).
 
 ### 5.5 Per-task leaf scopes (`task:<s>:<c>`)
 

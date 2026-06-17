@@ -101,6 +101,87 @@ def test_build_section_does_not_raise_on_reordering():
     assert [r["method"] for r in rows_inv] == ["Gamma", "Beta", "Alpha"]
 
 
+def test_load_overall_defaults_to_overall_for_fairness(tmp_path: Path):
+    """Default ``scope='overall'`` keeps the fairness loader working —
+    its CSV has no ``overall_binary_collapsed`` row.
+    """
+    csv_path = tmp_path / "fairness_skill_score_bootstrap.csv"
+    csv_path.write_text(
+        "method,scope,split,mean,se,ci_lo,ci_hi,n_boot\n"
+        "lsm2,age_group,test,0.10,0.01,0.08,0.12,1000\n"
+        "lsm2,sex,test,0.20,0.01,0.18,0.22,1000\n"
+        "lsm2,overall,test,0.15,0.01,0.13,0.17,1000\n"
+    )
+    out = blj._load_overall(csv_path)
+    assert out == {"lsm2": 0.15}
+
+
+def test_load_overall_picks_overall_binary_collapsed_for_skill(tmp_path: Path):
+    """Skill / rank CSVs read ``overall_binary_collapsed`` so the headline
+    is consistent with the per-category collapsed scopes — equal weight
+    for binary categories vs. continuous channels.
+    """
+    csv_path = tmp_path / "skill_scores_bootstrap.csv"
+    csv_path.write_text(
+        "method,scope,split,mean,se,ci_lo,ci_hi,n_boot\n"
+        # Both scopes co-exist in the CSV; loader must pick the right one.
+        "lsm2,overall,test,0.40,0.01,0.38,0.42,1000\n"
+        "lsm2,overall_binary_collapsed,test,0.55,0.01,0.53,0.57,1000\n"
+        "locf,overall,test,0.00,0.00,0.00,0.00,1000\n"
+        "locf,overall_binary_collapsed,test,0.00,0.00,0.00,0.00,1000\n"
+    )
+    out = blj._load_overall(csv_path, scope=blj.OVERALL_SKILL_SCOPE)
+    assert blj.OVERALL_SKILL_SCOPE == "overall_binary_collapsed"
+    assert out == {"lsm2": 0.55, "locf": 0.0}
+
+
+def test_load_subgroups_reads_collapsed_for_sleep_and_workouts(tmp_path: Path):
+    """``SUBGROUP_FIELD`` repoints sleep / workout to ``cat_collapsed:*``;
+    activity / physiology / semantic stay on the per-channel scopes.
+    A skill_scores CSV that carries both variants must yield the
+    collapsed value for sleep / workout and the per-channel value for
+    activity / physiology.
+    """
+    csv_path = tmp_path / "skill_scores_bootstrap.csv"
+    csv_path.write_text(
+        "method,scope,split,mean,se,ci_lo,ci_hi,n_boot\n"
+        # activity / physiology — per-channel scopes, picked unchanged.
+        "lsm2,cat:activity,test,0.30,0.01,0.28,0.32,1000\n"
+        "lsm2,cat:physiology,test,0.40,0.01,0.38,0.42,1000\n"
+        # Per-channel sleep / workouts ARE in the CSV but MUST NOT be picked
+        # (would be 10× weighted on workouts; that's the bug Part D fixed).
+        "lsm2,cat:sleep,test,0.99,0.01,0.99,0.99,1000\n"
+        "lsm2,cat:workouts,test,0.99,0.01,0.99,0.99,1000\n"
+        # Collapsed variants — these are the ones the leaderboard should read.
+        "lsm2,cat_collapsed:sleep,test,0.50,0.01,0.48,0.52,1000\n"
+        "lsm2,cat_collapsed:workouts,test,0.60,0.01,0.58,0.62,1000\n"
+        "lsm2,semantic,test,0.35,0.01,0.33,0.37,1000\n"
+    )
+    subs = blj._load_subgroups(csv_path)
+    assert subs == {
+        "lsm2": {
+            "activity":   0.30,
+            "physiology": 0.40,
+            "sleep":      0.50,   # ← cat_collapsed:sleep, not cat:sleep
+            "workout":    0.60,   # ← cat_collapsed:workouts, not cat:workouts
+            "semantic":   0.35,
+        }
+    }
+
+
+def test_subgroup_field_mapping_locked_in():
+    """Lock the canonical scope→field mapping so future edits to
+    ``SUBGROUP_FIELD`` show up as test failures.
+    """
+    assert blj.SUBGROUP_FIELD == {
+        "cat:activity":           "activity",
+        "cat:physiology":         "physiology",
+        "cat_collapsed:sleep":    "sleep",
+        "cat_collapsed:workouts": "workout",
+        "semantic":               "semantic",
+    }
+
+
 def test_full_imputation_section_with_real_registry():
     """End-to-end on the real registry with synthetic skill scores."""
     skill = {
