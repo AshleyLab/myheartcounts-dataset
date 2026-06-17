@@ -552,14 +552,16 @@ def compute_skill_scores(
             "n_tasks": len(group),
         })
 
-    # cat_collapsed:<cat> (one per binary category) — unchanged
-    # log-space geomean of per-scenario R values (3 structural
-    # scenarios × 1 collapsed task each).
+    # cat:<cat> for binary categories — log-space geomean of per-scenario
+    # R values (3 structural scenarios × 1 collapsed task each). The
+    # synthetic channel key (``cat_collapsed:<cat>``) is unchanged in the
+    # parquet and pair_aggregator wire format; only the *scope label* is
+    # ``cat:<cat>``.
     if not collapsed_df.empty:
         for (method, channel), group in collapsed_df.groupby(["method", "channel"], observed=True):
             cat_name = str(channel).split(":", 1)[1]
             results.append({
-                "method": method, "scope": f"cat_collapsed:{cat_name}",
+                "method": method, "scope": f"cat:{cat_name}",
                 "skill_score": _skill(np.log(group["clipped_ratio"].values)),
                 "n_tasks": len(group),
             })
@@ -570,26 +572,15 @@ def compute_skill_scores(
     )
     results.extend(sem_rows)
 
-    # --- overall (legacy per-channel; historical column kept for C2) --
-    # Flat geomean over every per-channel legacy task. Removed in C3
-    # when ``overall_binary_collapsed`` is renamed to ``overall``.
-    for method, group in legacy_df.groupby("method", observed=True):
-        results.append({
-            "method": method, "scope": "overall",
-            "skill_score": _skill(np.log(group["clipped_ratio"].values)),
-            "n_tasks": len(group),
-        })
-
-    # --- overall_binary_collapsed: L1 log-space mean over all 6 ------
-    # scenarios. Rename to ``overall`` in C3.
+    # --- overall: L1 log-space mean over all 6 scenarios --------------
     all_scenarios = (
         set(scen_log_R["scenario"].unique())
         if not scen_log_R.empty else set()
     )
-    obc_rows = _multi_scenario_skill(
-        scen_log_R, all_scenarios, scope_label="overall_binary_collapsed",
+    overall_rows = _multi_scenario_skill(
+        scen_log_R, all_scenarios, scope_label="overall",
     )
-    results.extend(obc_rows)
+    results.extend(overall_rows)
 
     # --- task:<scenario>:<channel> (degenerate single-task scope) -----
     # Per-(method, scenario, channel) leaf scope. Skill is the single-task
@@ -688,13 +679,13 @@ def aggregate_task_ranks_to_scopes(per_task: pd.DataFrame) -> pd.DataFrame:
             continue
         results.append(_row(method, f"cat:{cat}", group))
 
-    # cat_collapsed:<cat> — log-space mean of per-scenario task_ranks
-    # (unchanged from today: per-scenario collapsed tasks already share
-    # the same arithmetic mean rule as the cat:* continuous scopes).
+    # cat:<cat> for binary categories — arithmetic mean of per-scenario
+    # task_ranks. The synthetic channel key (``cat_collapsed:<cat>``) is
+    # unchanged; only the *scope label* is ``cat:<cat>``.
     if not collapsed.empty:
         for (method, channel), group in collapsed.groupby(["method", "channel"], observed=True):
             cat_name = str(channel).split(":", 1)[1]
-            results.append(_row(method, f"cat_collapsed:{cat_name}", group))
+            results.append(_row(method, f"cat:{cat_name}", group))
 
     # semantic: L1 mean over the 3 semantic scenarios.
     results.extend(_multi_scenario_rank(
@@ -702,16 +693,11 @@ def aggregate_task_ranks_to_scopes(per_task: pd.DataFrame) -> pd.DataFrame:
         scope_label="semantic", has_n_users=has_n_users,
     ))
 
-    # overall (legacy per-channel; deleted in C3).
-    for method, group in legacy.groupby("method", observed=True):
-        results.append(_row(method, "overall", group))
-
-    # overall_binary_collapsed: L1 mean over all 6 scenarios. Renamed to
-    # ``overall`` in C3.
+    # overall: L1 mean over all 6 scenarios.
     all_scenarios_rank = set(scen_rank["scenario"].unique()) if not scen_rank.empty else set()
     results.extend(_multi_scenario_rank(
         scen_rank, all_scenarios_rank,
-        scope_label="overall_binary_collapsed", has_n_users=has_n_users,
+        scope_label="overall", has_n_users=has_n_users,
     ))
 
     # --- task:<scenario>:<channel> (degenerate single-task rank scope) -

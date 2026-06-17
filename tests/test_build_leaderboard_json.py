@@ -101,9 +101,14 @@ def test_build_section_does_not_raise_on_reordering():
     assert [r["method"] for r in rows_inv] == ["Gamma", "Beta", "Alpha"]
 
 
-def test_load_overall_defaults_to_overall_for_fairness(tmp_path: Path):
-    """Default ``scope='overall'`` keeps the fairness loader working —
-    its CSV has no ``overall_binary_collapsed`` row.
+def test_load_overall_fairness_default(tmp_path: Path):
+    """Default ``scope='overall'`` works for the fairness CSV.
+
+    Both skill/rank and fairness CSVs use ``overall`` as the scope
+    name now (the old ``overall_binary_collapsed`` was renamed). The
+    semantics differ — skill/rank's ``overall`` is the 3-level B.2 over
+    6 scenarios; fairness's ``overall`` is the cross-attribute macro —
+    but they live in different CSVs.
     """
     csv_path = tmp_path / "fairness_skill_score_bootstrap.csv"
     csv_path.write_text(
@@ -116,45 +121,36 @@ def test_load_overall_defaults_to_overall_for_fairness(tmp_path: Path):
     assert out == {"lsm2": 0.15}
 
 
-def test_load_overall_picks_overall_binary_collapsed_for_skill(tmp_path: Path):
-    """Skill / rank CSVs read ``overall_binary_collapsed`` so the headline
-    is consistent with the per-category collapsed scopes — equal weight
-    for binary categories vs. continuous channels.
+def test_load_overall_picks_overall_for_skill(tmp_path: Path):
+    """Skill / rank CSVs use ``overall`` as the headline scope. The
+    OVERALL_SKILL_SCOPE / OVERALL_RANK_SCOPE constants make the choice
+    explicit at the import surface.
     """
     csv_path = tmp_path / "skill_scores_bootstrap.csv"
     csv_path.write_text(
         "method,scope,split,mean,se,ci_lo,ci_hi,n_boot\n"
-        # Both scopes co-exist in the CSV; loader must pick the right one.
-        "lsm2,overall,test,0.40,0.01,0.38,0.42,1000\n"
-        "lsm2,overall_binary_collapsed,test,0.55,0.01,0.53,0.57,1000\n"
+        "lsm2,overall,test,0.55,0.01,0.53,0.57,1000\n"
         "locf,overall,test,0.00,0.00,0.00,0.00,1000\n"
-        "locf,overall_binary_collapsed,test,0.00,0.00,0.00,0.00,1000\n"
     )
     out = blj._load_overall(csv_path, scope=blj.OVERALL_SKILL_SCOPE)
-    assert blj.OVERALL_SKILL_SCOPE == "overall_binary_collapsed"
+    assert blj.OVERALL_SKILL_SCOPE == "overall"
     assert out == {"lsm2": 0.55, "locf": 0.0}
 
 
-def test_load_subgroups_reads_collapsed_for_sleep_and_workouts(tmp_path: Path):
-    """``SUBGROUP_FIELD`` repoints sleep / workout to ``cat_collapsed:*``;
-    activity / physiology / semantic stay on the per-channel scopes.
-    A skill_scores CSV that carries both variants must yield the
-    collapsed value for sleep / workout and the per-channel value for
-    activity / physiology.
+def test_load_subgroups_reads_unified_cat_scopes(tmp_path: Path):
+    """After the C3 rename, all 4 categories live under ``cat:*``.
+    Per-channel binary scopes (the old ``cat:sleep`` / ``cat:workouts``
+    that took the geomean over individual binary channels) were
+    deleted in C2 — the unqualified label ``cat:sleep`` now means
+    the binary-collapsed task.
     """
     csv_path = tmp_path / "skill_scores_bootstrap.csv"
     csv_path.write_text(
         "method,scope,split,mean,se,ci_lo,ci_hi,n_boot\n"
-        # activity / physiology — per-channel scopes, picked unchanged.
         "lsm2,cat:activity,test,0.30,0.01,0.28,0.32,1000\n"
         "lsm2,cat:physiology,test,0.40,0.01,0.38,0.42,1000\n"
-        # Per-channel sleep / workouts ARE in the CSV but MUST NOT be picked
-        # (would be 10× weighted on workouts; that's the bug Part D fixed).
-        "lsm2,cat:sleep,test,0.99,0.01,0.99,0.99,1000\n"
-        "lsm2,cat:workouts,test,0.99,0.01,0.99,0.99,1000\n"
-        # Collapsed variants — these are the ones the leaderboard should read.
-        "lsm2,cat_collapsed:sleep,test,0.50,0.01,0.48,0.52,1000\n"
-        "lsm2,cat_collapsed:workouts,test,0.60,0.01,0.58,0.62,1000\n"
+        "lsm2,cat:sleep,test,0.50,0.01,0.48,0.52,1000\n"
+        "lsm2,cat:workouts,test,0.60,0.01,0.58,0.62,1000\n"
         "lsm2,semantic,test,0.35,0.01,0.33,0.37,1000\n"
     )
     subs = blj._load_subgroups(csv_path)
@@ -162,8 +158,8 @@ def test_load_subgroups_reads_collapsed_for_sleep_and_workouts(tmp_path: Path):
         "lsm2": {
             "activity":   0.30,
             "physiology": 0.40,
-            "sleep":      0.50,   # ← cat_collapsed:sleep, not cat:sleep
-            "workout":    0.60,   # ← cat_collapsed:workouts, not cat:workouts
+            "sleep":      0.50,
+            "workout":    0.60,
             "semantic":   0.35,
         }
     }
@@ -174,11 +170,11 @@ def test_subgroup_field_mapping_locked_in():
     ``SUBGROUP_FIELD`` show up as test failures.
     """
     assert blj.SUBGROUP_FIELD == {
-        "cat:activity":           "activity",
-        "cat:physiology":         "physiology",
-        "cat_collapsed:sleep":    "sleep",
-        "cat_collapsed:workouts": "workout",
-        "semantic":               "semantic",
+        "cat:activity":   "activity",
+        "cat:physiology": "physiology",
+        "cat:sleep":      "sleep",
+        "cat:workouts":   "workout",
+        "semantic":       "semantic",
     }
 
 

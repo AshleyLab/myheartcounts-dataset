@@ -67,31 +67,29 @@ PERSONALIZED_HEADER = "Personalized-context (extended-history) methods"
 
 SUBMITTER = "OpenMHC team"  # lowercase 't' — matches existing entries + schema doc
 
-# CSV scope name -> JSON subgroup field name
+# CSV scope name -> JSON subgroup field name.
 #
-# Sleep and workouts read the **collapsed-binary** scopes (Part D) so each
-# category counts once per scenario in the headline JSON, matching the
-# overall_binary_collapsed scope below. Continuous categories
-# (activity, physiology) only have 5 and 2 channels and already weight
-# roughly fairly, so they stay on the per-channel ``cat:*`` scopes — no
-# ``cat_collapsed:activity`` exists upstream (see
-# ``BINARY_CATEGORIES_ORDERED`` in ``paper_metrics_core.py``).
+# All four categories are sourced from their respective ``cat:*`` scopes.
+# Sleep and workouts read the binary-collapsed variant (Part D) — the
+# old per-channel ``cat:sleep`` / ``cat:workouts`` scopes have been
+# deleted, so the unqualified label ``cat:sleep`` now unambiguously
+# means the collapsed task. Continuous categories (activity, physiology)
+# stay on per-channel ``cat:*`` rows because they only have 5 and 2
+# channels and already weight roughly fairly.
 SUBGROUP_FIELD: dict[str, str] = {
-    "cat:activity":          "activity",
-    "cat:physiology":        "physiology",
-    "cat_collapsed:sleep":   "sleep",
-    "cat_collapsed:workouts": "workout",   # singular in JSON
-    "semantic":              "semantic",
+    "cat:activity":   "activity",
+    "cat:physiology": "physiology",
+    "cat:sleep":      "sleep",
+    "cat:workouts":   "workout",   # singular in JSON
+    "semantic":       "semantic",
 }
 
-# Headline ``skill`` and ``rank`` JSON columns read from the
-# ``overall_binary_collapsed`` scope (continuous per-channel tasks +
-# 2 collapsed-binary tasks per scenario), so they're consistent with the
-# per-category sleep / workout choices above. Fairness keeps ``overall``
-# because its CSV's overall row is already the cross-attribute macro and
-# has no collapsed variant.
-OVERALL_SKILL_SCOPE = "overall_binary_collapsed"
-OVERALL_RANK_SCOPE = "overall_binary_collapsed"
+# Headline ``skill`` / ``rank`` JSON columns read from the unified
+# 3-level B.2 ``overall`` scope (L1 log-space mean over the 6 per-scenario
+# B.2 values). Fairness reads its own ``overall`` macro (cross-attribute
+# mean — disjoint from the skill/rank ``overall``).
+OVERALL_SKILL_SCOPE = "overall"
+OVERALL_RANK_SCOPE = "overall"
 OVERALL_FAIR_SCOPE = "overall"
 
 

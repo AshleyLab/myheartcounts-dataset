@@ -1,13 +1,12 @@
-"""Unit tests for Part D — binary-collapsed scopes.
+"""Unit tests for binary-collapsed scopes.
 
 The leaderboard's geomean of clipped error ratios across ``(scenario, channel)``
 tasks weights the 10 individually-sparse workout channels 10x sleep's 2
-channels. Part D adds three new scopes that collapse the two binary
-categories (sleep, workouts) into one task per scenario each:
-
-- ``cat_collapsed:sleep`` / ``cat_collapsed:workouts``
-- ``overall_binary_collapsed`` (7 continuous per-channel tasks + 2 binary
-  category tasks × scenarios)
+channels. Part D collapses the two binary categories (sleep, workouts)
+into one task per scenario each, with the resulting scopes labeled
+``cat:sleep`` and ``cat:workouts`` after the C3 rename (the underlying
+synthetic channel key remains ``cat_collapsed:<cat>`` in the parquet
+and per-user data flow).
 
 These tests pin the math:
 
@@ -16,10 +15,13 @@ These tests pin the math:
   (b) Per-task E = ``nanmean`` over resampled users of (a) (preserving
       bootstrap multiplicity).
   (c) ``compute_skill_scores`` partitions per-channel and collapsed rows
-      cleanly: legacy scopes (``overall``, ``cat:*``, etc.) consume only
-      per-channel rows; new scopes only consume the matching mix.
+      cleanly: continuous scopes (``cat:activity``, ``cat:physiology``)
+      consume only continuous per-channel rows; binary collapsed scopes
+      (``cat:sleep``, ``cat:workouts``) only consume the matching mix.
   (d) Rare workout channels with single-class users drop cleanly from the
-      collapsed mean without polluting the legacy per-channel paths.
+      collapsed mean without polluting the per-channel paths.
+  (e) The 3-level B.2 ``overall`` scope (L1 log-space mean over the 6
+      per-scenario B.2 values) is the headline metric.
 """
 
 from __future__ import annotations
@@ -137,14 +139,13 @@ def _build_errors_df(rows):
 
 
 class TestCollapsedSkillScopes:
-    def test_legacy_overall_excludes_collapsed_rows(self):
-        """``overall`` scope should only count per-channel tasks (114 max
-        per scenario × method × channel), never the cat_collapsed:* rows.
+    def test_overall_uses_buckets_not_per_channel(self):
+        """The 3-level ``overall`` scope sources binary categories from
+        the collapsed rows, NOT from per-channel ``ch_7..ch_18`` binary
+        rows. ``n_tasks`` counts scenarios present (= 1 here).
         """
         scenarios = ["random_noise"]
         rows = []
-        # Method A: per-channel rows for two continuous channels and
-        # one sleep channel, plus collapsed rows for sleep.
         for sc in scenarios:
             for ch in ("ch_0", "ch_1", "ch_7"):
                 rows.append({
@@ -179,33 +180,27 @@ class TestCollapsedSkillScopes:
         bl = _build_errors_df(bl_rows)
         result = compute_skill_scores(errors, bl, mode="pooled")
 
-        overall_row = result[(result["method"] == "A") & (result["scope"] == "overall")]
-        assert len(overall_row) == 1
-        # ``overall`` includes only the 3 per-channel rows: ch_0, ch_1, ch_7.
-        assert int(overall_row["n_tasks"].iloc[0]) == 3
-
-        # cat_collapsed:sleep present and has 1 task (one scenario).
-        sleep_row = result[(result["method"] == "A") & (result["scope"] == "cat_collapsed:sleep")]
+        # ``cat:sleep`` present (from cat_collapsed:sleep) and has 1 task
+        # (one scenario).
+        sleep_row = result[(result["method"] == "A") & (result["scope"] == "cat:sleep")]
         assert len(sleep_row) == 1
         assert int(sleep_row["n_tasks"].iloc[0]) == 1
 
-        # overall_binary_collapsed: 3-level B.2 form — n_tasks counts
-        # **scenarios** present (L1 axis). The fixture has data for only one
-        # scenario (random_noise), so n_tasks == 1. Per-channel ch_7 is
-        # binary and is NOT consumed (binary side enters via the collapsed
-        # rows only).
-        collapsed_overall = result[
-            (result["method"] == "A") & (result["scope"] == "overall_binary_collapsed")
+        # 3-level ``overall``: n_tasks counts scenarios present (L1 axis).
+        # The fixture has 1 scenario (random_noise), so n_tasks == 1.
+        # Per-channel ch_7 is binary and is NOT consumed by ``overall``
+        # (binary side enters via the collapsed rows only).
+        overall_3level = result[
+            (result["method"] == "A") & (result["scope"] == "overall")
         ]
-        assert len(collapsed_overall) == 1
-        assert int(collapsed_overall["n_tasks"].iloc[0]) == 1
+        assert len(overall_3level) == 1
+        assert int(overall_3level["n_tasks"].iloc[0]) == 1
 
-    def test_no_collapsed_rows_omits_cat_collapsed_scopes(self):
-        """Without ``cat_collapsed:*`` rows, the ``cat_collapsed:*`` per-
-        category scopes do not appear. ``overall_binary_collapsed`` and
-        per-scenario scopes are still emitted from the continuous side
-        only (sleep / workouts buckets are simply absent in those
-        scenarios).
+    def test_no_collapsed_rows_omits_binary_cat_scopes(self):
+        """Without ``cat_collapsed:*`` rows in the input, the binary
+        ``cat:sleep`` / ``cat:workouts`` scopes do not appear. The
+        3-level ``overall`` scope still emits, fed by the continuous
+        buckets only.
         """
         rows = [
             {"method": "A", "scenario": "random_noise", "channel": "ch_0",
@@ -219,14 +214,13 @@ class TestCollapsedSkillScopes:
             _build_errors_df(rows), _build_errors_df(bl_rows), mode="pooled",
         )
         scopes = set(result["scope"])
-        # Per-channel cat_collapsed:* scopes only fire when collapsed rows
-        # exist in the input.
-        assert not any(s.startswith("cat_collapsed:") for s in scopes)
-        # Legacy per-channel ``overall`` and the 3-level
-        # ``overall_binary_collapsed`` both still emit — the latter from the
-        # activity bucket only (no sleep/workouts buckets to add).
+        # Binary ``cat:sleep`` / ``cat:workouts`` only fire when collapsed
+        # rows exist in the input.
+        assert "cat:sleep" not in scopes
+        assert "cat:workouts" not in scopes
+        # The 3-level ``overall`` scope still emits from the activity
+        # bucket alone (no sleep/workouts buckets to add).
         assert "overall" in scopes
-        assert "overall_binary_collapsed" in scopes
 
 
 class TestCollapsedChannelHelper:
@@ -243,8 +237,8 @@ class TestCollapsedChannelHelper:
 # ---------------------------------------------------------------------------
 
 
-class TestOverallBinaryCollapsedTwoStage:
-    """``overall_binary_collapsed`` is the category-balanced two-stage form.
+class TestOverallTwoStage:
+    """``overall`` is the category-balanced 3-level B.2 form.
 
     Stage 1 (per-bucket): mean of log(R) over the bucket's constituent tasks
     — exactly what ``cat:activity`` / ``cat:physiology`` /
@@ -310,7 +304,7 @@ class TestOverallBinaryCollapsedTwoStage:
         result = compute_skill_scores(errors, bl, mode="pooled")
         for method in ("A", "B"):
             row = result[(result["method"] == method) &
-                         (result["scope"] == "overall_binary_collapsed")]
+                         (result["scope"] == "overall")]
             assert len(row) == 1
             assert int(row["n_tasks"].iloc[0]) == 2
 
@@ -331,21 +325,21 @@ class TestOverallBinaryCollapsedTwoStage:
         expected_S = 1.0 - np.exp(mean_log)
         got = float(
             result[(result["method"] == "A") &
-                   (result["scope"] == "overall_binary_collapsed")]
+                   (result["scope"] == "overall")]
             ["skill_score"].iloc[0]
         )
         np.testing.assert_allclose(got, expected_S, rtol=1e-9)
 
     def test_per_channel_binary_scope_not_consumed(self):
         """Adding ``cat:sleep`` / ``cat:workouts`` per-channel rows must NOT
-        change ``overall_binary_collapsed`` — the bucket priority rule is
+        change ``overall`` — the bucket priority rule is
         "collapsed wins for sleep / workouts".
         """
         errors, bl = self._build_balanced_fixture()
         baseline = float(
             compute_skill_scores(errors, bl, mode="pooled")
             .pipe(lambda d: d[(d["method"] == "A") &
-                              (d["scope"] == "overall_binary_collapsed")])
+                              (d["scope"] == "overall")])
             ["skill_score"].iloc[0]
         )
         # Now sneak in catastrophic per-channel binary rows; they belong to
@@ -370,18 +364,18 @@ class TestOverallBinaryCollapsedTwoStage:
         augmented = float(
             compute_skill_scores(errors_aug, bl_aug, mode="pooled")
             .pipe(lambda d: d[(d["method"] == "A") &
-                              (d["scope"] == "overall_binary_collapsed")])
+                              (d["scope"] == "overall")])
             ["skill_score"].iloc[0]
         )
         np.testing.assert_allclose(augmented, baseline, rtol=1e-9)
 
 
 class TestThreeLevelB2Form:
-    """Per-scenario / semantic / overall_binary_collapsed all use the
-    universal 3-level B.2 form (L3 within-bucket × scenario task mean →
-    L2 mean over buckets within scenario → L1 log-space mean over
-    scenarios in scope). Each scope tested below pins one closed-form
-    aspect of that operator.
+    """Per-scenario / semantic / overall all use the universal 3-level
+    B.2 form (L3 within-bucket × scenario task mean → L2 mean over
+    buckets within scenario → L1 log-space mean over scenarios in
+    scope). Each scope tested below pins one closed-form aspect of
+    that operator.
     """
 
     def _build_3level_fixture(self):
@@ -515,10 +509,8 @@ class TestThreeLevelB2Form:
         # n_tasks counts semantic scenarios present (= 3).
         assert int(row["n_tasks"].iloc[0]) == 3
 
-    def test_overall_binary_collapsed_log_space_mean_over_6_scenarios(self):
-        """overall_binary_collapsed = 1 − exp(mean over all 6 scenarios of
-        log_R_scenario).
-        """
+    def test_overall_log_space_mean_over_6_scenarios(self):
+        """overall = 1 − exp(mean over all 6 scenarios of log_R_scenario)."""
         errors, bl = self._build_3level_fixture()
         result = compute_skill_scores(errors, bl, mode="pooled")
         log_struct = (
@@ -531,7 +523,7 @@ class TestThreeLevelB2Form:
             (3 * log_struct + log_sg + log_wg + log_if) / 6
         )
         row = result[(result["method"] == "A") &
-                     (result["scope"] == "overall_binary_collapsed")]
+                     (result["scope"] == "overall")]
         assert len(row) == 1
         np.testing.assert_allclose(
             float(row["skill_score"].iloc[0]), expected, rtol=1e-9,
@@ -543,7 +535,7 @@ class TestTaskScopeWithCollapsedRows:
     """Task-grain ``task:<scenario>:<channel>`` rows must coexist with the
     Part D collapsed scopes — every per-channel input AND every
     ``cat_collapsed:*`` input gets its own leaf scope, without polluting the
-    aggregated scopes (``overall``, ``cat:*``, ``overall_binary_collapsed``).
+    aggregated scopes (``overall``, ``cat:*``).
     """
 
     def test_collapsed_rows_emit_task_scopes(self):

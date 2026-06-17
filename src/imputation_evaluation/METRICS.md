@@ -156,14 +156,22 @@ by `(method, scope, split)`.
 
 ### 5.1 Per-scenario scopes (6 rows per method per split)
 
-| scope | task set | task count |
+All per-scenario scopes use the **3-level B.2 form**: L3 within-bucket
+task mean → L2 mean over buckets-present within the scenario. ``n_tasks``
+reports the number of buckets present in the scenario.
+
+| scope | buckets present | n_tasks |
 |---|---|---|
-| `random_noise` | `ch_0..ch_18` | 19 |
-| `temporal_slice` | `ch_0..ch_18` | 19 |
-| `signal_slice` | `ch_0..ch_18` | 19 |
-| `sleep_gap` | `ch_0..ch_6` (binary excluded — see §6) | 7 |
-| `workout_gap` | `ch_5, ch_6` (only masked channels — see §6) | 2 |
-| `intensity_failure` | `ch_5, ch_6` (only masked channels — see §6) | 2 |
+| `random_noise` | activity, physiology, sleep, workouts | 4 |
+| `temporal_slice` | activity, physiology, sleep, workouts | 4 |
+| `signal_slice` | activity, physiology, sleep, workouts | 4 |
+| `sleep_gap` | activity, physiology (binary excluded by `EXCLUDE_BINARY_SCENARIOS`) | 2 |
+| `workout_gap` | physiology (only `ch_5, ch_6` masked) | 1 |
+| `intensity_failure` | physiology (only `ch_5, ch_6` masked) | 1 |
+
+In single-bucket scenarios (`workout_gap`, `intensity_failure`) the
+3-level form degenerates to the per-channel geomean over `ch_5, ch_6`,
+so those values are numerically equivalent to a flat 2-task geomean.
 
 ### 5.2 Per-category scopes (4 rows per method per split)
 
@@ -176,71 +184,76 @@ Channel partition (`paper_metrics_core.py:48-53`):
 | `sleep` | `ch_7..ch_8` | sleep asleep / inbed (binary) |
 | `workouts` | `ch_9..ch_18` | 10 workout-type binary channels |
 
-| scope | task set | task count |
+| scope | aggregation | n_tasks |
 |---|---|---|
-| `cat:activity` | `{random_noise, temporal_slice, signal_slice}` × `{ch_0..ch_4}` | 15 |
-| `cat:physiology` | `{random_noise, temporal_slice, signal_slice}` × `{ch_5, ch_6}` | 6 |
-| `cat:sleep` | `{random_noise, temporal_slice, signal_slice}` × `{ch_7, ch_8}` | 6 |
-| `cat:workouts` | `{random_noise, temporal_slice, signal_slice}` × `{ch_9..ch_18}` | 30 |
+| `cat:activity` | log-space geomean over `{random_noise, temporal_slice, signal_slice}` × `{ch_0..ch_4}` per-task R | 15 |
+| `cat:physiology` | log-space geomean over `{random_noise, temporal_slice, signal_slice}` × `{ch_5, ch_6}` per-task R | 6 |
+| `cat:sleep` | log-space geomean over `{random_noise, temporal_slice, signal_slice}` × `cat_collapsed:sleep` per-scenario R | 3 |
+| `cat:workouts` | log-space geomean over `{random_noise, temporal_slice, signal_slice}` × `cat_collapsed:workouts` per-scenario R | 3 |
 
 All four are **structural-only** by design — `EXCLUDE_BINARY_SCENARIOS`
 strips binary tasks from semantic scenarios, and continuous categories
 deliberately mirror the same restriction so all four category scores
-share the same scenario denominator
-(`paper_metrics_core.py:42-45`, `:273-281`).
+share the same scenario denominator.
 
-### 5.3 Collapsed-binary scopes (2 rows per method per split, Part D)
+**Binary `cat:sleep` / `cat:workouts`** read from the synthetic
+`cat_collapsed:<cat>` channel keys in the upstream per-user dict
+(`pair_aggregator.py:401-419`). Each per-user category E is the
+arithmetic mean of `(1 − AUC_channel)` across that user's defined
+channels in the category, after which the standard paired-ratio
+machinery applies. The per-channel `cat:sleep` / `cat:workouts`
+that previously took the geomean over individual binary channels
+have been deleted — they overweighted workouts at 10× sleep by
+construction.
 
-Geometric mean over the two binary categories with each category
-collapsed to a single task per scenario (see §1 for the per-task E):
+**Continuous categories are not collapsed** (`activity` has 5
+channels, `physiology` has 2 — they "already weight roughly fairly").
+So there is no `cat_collapsed:activity` / `cat_collapsed:physiology`
+synthetic channel; the bucket-source for `cat:activity` / `cat:physiology`
+is the per-channel rows directly.
 
-| scope | task set | task count |
+### 5.3 Cross-scenario scopes (2 rows per method per split)
+
+Both use the same 3-level B.2 form as the per-scenario scopes,
+with an additional **L1 log-space mean over scenarios in scope**.
+``n_tasks`` reports the number of scenarios contributing.
+
+| scope | scenarios in L1 | n_tasks |
 |---|---|---|
-| `cat_collapsed:sleep` | `{random_noise, temporal_slice, signal_slice}` × `cat_collapsed:sleep` | 3 |
-| `cat_collapsed:workouts` | `{random_noise, temporal_slice, signal_slice}` × `cat_collapsed:workouts` | 3 |
+| `semantic` | `{sleep_gap, workout_gap, intensity_failure}` | 3 |
+| `overall` | all 6 scenarios | 6 |
 
-Same formula as §3, computed over the collapsed-binary R values
-(`paper_metrics_core.py:300-308`).
+`overall` is the headline skill / rank quoted on the leaderboard JSON
+(`build_leaderboard_json.OVERALL_SKILL_SCOPE`). The legacy per-channel
+`overall` (flat geomean over all 68 per-channel tasks) was deleted in
+C3 of the B.2-everywhere consolidation; the new `overall` is the
+3-level form universally applied. The fairness CSV's `overall` row is
+a separate quantity — the cross-attribute macro of the per-attribute
+disparity-ratio skill scores — and is read via
+`OVERALL_FAIR_SCOPE = "overall"` from a different CSV.
 
-**Motivation** — without collapsing, the per-channel geomean weights
-`workouts` 10× `sleep` (10 vs. 2 binary channels), and in any pooled
-scope the binary side is dominated by workout channels. Collapsing makes
-each binary category count once per scenario, so sleep and workouts
-weigh equally and don't swamp the 7 continuous channels in `overall`.
-Continuous categories are deliberately **not** collapsed (`activity` has
-5 channels, `physiology` has 2 — they "already weight roughly fairly"
-per `paper_metrics_core.py:60-64`), so there is no `cat_collapsed:activity`
-or `cat_collapsed:physiology`. Only sleep and workouts have collapsed
-twins (`BINARY_CATEGORIES_ORDERED`, `:65-68`).
+### 5.3.1 The universal 3-level B.2 form
 
-**Leaderboard consumption** — the leaderboard JSON's `sleep` and
-`workout` columns read `cat_collapsed:sleep` and `cat_collapsed:workouts`,
-not the per-channel `cat:sleep` / `cat:workouts`
-(`build_leaderboard_json.SUBGROUP_FIELD`). The per-channel `cat:sleep` /
-`cat:workouts` scopes remain in the CSVs as secondary references.
-
-### 5.4 Cross-scenario scopes (3 rows per method per split)
-
-| scope | task set | task count |
-|---|---|---|
-| `semantic` | `{sleep_gap, workout_gap, intensity_failure}` × applicable channels | 7 + 2 + 2 = 11 |
-| `overall` | all 6 scenarios × all per-channel tasks (binary excluded from semantic) | 19·3 + 7 + 2 + 2 = **68** |
-| `overall_binary_collapsed` | category-balanced two-stage geomean over **4 buckets** | **4** |
-
-`overall_binary_collapsed` is the headline skill / rank quoted on the
-leaderboard JSON (`build_leaderboard_json.OVERALL_SKILL_SCOPE`).
-`overall` is kept as a secondary per-channel reference and is the scope
-the fairness CSV's macro row uses (it has no collapsed variant — only
-one disparity per attribute).
-
-### 5.4.1 The B.2 two-stage form for `overall_binary_collapsed`
-
-Each of the four sensor categories contributes **once** to the headline,
-regardless of how many constituent (channel × scenario) tasks live inside it:
+All cross-scenario scopes (`semantic`, `overall`) and all per-scenario
+scopes share one operator:
 
 ```
-S_overall_binary_collapsed  =  1  −  exp(  (1/K) · Σ_{c ∈ C}  log(R_c)  )
+L3 (within bucket × scenario):  bucket_log_R[m, s, b] = mean over tasks(s, b)
+                                                       of log(clip(R_task))
+L2 (within scenario):           scenario_log_R[m, s]  = mean over buckets-present
+                                                       of bucket_log_R[m, s, b]
+L1 (across scenarios):          scope_log_R[m]        = mean over scenarios-in-scope
+                                                       of scenario_log_R[m, s]
+S_scope[m]                       = 1 − exp(scope_log_R[m])
 ```
+
+Per-scenario scopes (`random_noise`, `temporal_slice`, `signal_slice`,
+`sleep_gap`, `workout_gap`, `intensity_failure`) use only L3+L2 — there
+is no L1 axis because there's only one scenario. `semantic` uses L1
+over the 3 semantic scenarios; `overall` uses L1 over all 6 scenarios.
+
+Each of the four sensor categories contributes once per scenario via L2,
+regardless of how many constituent channels it has:
 
 where `C = {activity, physiology, sleep, workouts}`, `K = |C ∩ buckets present|`,
 and the per-bucket geomeaned ratio is
@@ -249,31 +262,34 @@ and the per-bucket geomeaned ratio is
 R_c  =  exp(  (1/n_c) · Σ_{r ∈ tasks(c)}  log(R_task_r)  )
 ```
 
-— exactly the value that `cat:<c>` (continuous) or `cat_collapsed:<c>`
-(binary) already report.
+— at the per-scenario grain. The **bucket source** is fixed
+(`paper_metrics_core.b2_bucket_for_channel`):
+- `activity` ← continuous per-channel rows for `ch_0..ch_4`.
+- `physiology` ← continuous per-channel rows for `ch_5..ch_6`.
+- `sleep` ← `cat_collapsed:sleep` synthetic channel key (one row per
+  scenario, value `nanmean(1 − AUC_channel)` over `ch_7..ch_8`).
+- `workouts` ← `cat_collapsed:workouts` synthetic channel key (one row
+  per scenario, value `nanmean(1 − AUC_channel)` over `ch_9..ch_18`).
+- Per-channel binary rows (`ch_7..ch_18` with `channel_type == "binary"`)
+  are **dropped** — they reach the headline only via the collapsed rows
+  so per-channel binary would double-count.
 
-The **bucket source** is fixed:
-- `activity` and `physiology` come from `cat:<c>` (continuous per-channel
-  scopes, structural scenarios only).
-- `sleep` and `workouts` come from `cat_collapsed:<c>` (Part D — collapsed
-  per-scenario tasks). The per-channel `cat:sleep` / `cat:workouts` scopes
-  are **deliberately not consumed** here — that's the whole point of the
-  binary collapse.
+Why 3-level (and not flat): a flat geomean over the underlying ~38 tasks
+would weight activity 6.7× heavier than sleep (20 vs. 3 tasks) and weight
+scenarios proportional to their task counts. The 3-level form gives each
+bucket equal voice within each scenario and each scenario equal voice in
+the headline.
 
-Why two-stage: a flat geomean over the underlying ~38 tasks would weight
-activity (20 tasks) ~6.7× heavier than sleep (3 collapsed tasks). The
-two-stage form removes that imbalance and gives each modality equal voice
-in the headline.
+Rank side mirrors the skill side: L3 per-(scenario, bucket) mean of
+`task_rank`; L2 mean over buckets-present per scenario; L1 arithmetic
+mean over scenarios in scope (no log/exp because rank is linear).
+``n_tasks`` reports the same axis it does on the skill side — buckets
+for per-scenario scopes, scenarios for cross-scenario scopes.
 
-Rank side mirrors the skill side: the per-bucket value is the bucket's
-arithmetic mean of `task_rank` (i.e. the `avg_rank` of the corresponding
-`cat:*` / `cat_collapsed:*` scope), and the headline rank is the arithmetic
-mean across the 4 buckets — `n_tasks` again counts buckets present.
-
-### 5.5 Per-task leaf scopes (`task:<s>:<c>`)
+### 5.4 Per-task leaf scopes (`task:<s>:<c>`)
 
 One row per `(method, scenario, channel)` cell in §5.1 plus one per
-`(method, scenario, cat_collapsed:K)` cell in §5.3:
+`(method, scenario, cat_collapsed:K)` synthetic-channel cell:
 
 ```
 68  per-channel task scopes
@@ -334,7 +350,8 @@ Tasks are dropped from the `G`-aggregation if (i) fewer than two common
 subgroups exist for both `m` and `b` on task `r`, (ii) `D_{b, r, G} ≤ 0`
 or NaN, or (iii) `D_{m, r, G}` is NaN.
 
-**Per-attribute skill (two-stage form, mirrors `overall_binary_collapsed`):**
+**Per-attribute skill (two-stage form, mirrors §5.3.1 — buckets only;
+fairness does not have an L1 over scenarios):**
 
 ```
 S^{G}_m  =  1  −  exp(  (1 / K) · Σ_{c ∈ C}  log ratio^{G}_{m, c}  )
