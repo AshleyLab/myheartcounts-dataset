@@ -113,3 +113,33 @@ every model + baseline jointly, the point-flow aggregators re-run per draw, redu
 identity draw reproduces the point estimate — the primary correctness gate (see
 `tests/test_forecasting_bootstrap_skill_rank.py`,
 `tests/test_forecasting_fair_skill_score_bootstrap.py`).
+
+### Point estimate + BCa interval (fairness)
+
+The fairness disparity `D = max_g E − min_g E` is a **range** statistic: resampling
+noise inflates it, so its bootstrap **mean sits below the point estimate** and the
+percentile CI is **biased low** (it brackets 0 for much of the mid-pack). For the
+headline scopes the fairness table therefore reports the **point estimate** plus a
+**BCa (bias-corrected & accelerated) 95% CI** — extra columns `point, bca_lo, bca_hi`
+alongside the unchanged percentile columns. The reported value stays the point; BCa
+only re-anchors the interval near it and corrects bias + skew (second-order accurate).
+Per `(model, scope)`, from point `θ̂`, draws `θ*_b` (B), and an **exact** leave-one-
+user-out jackknife `θ₍ᵢ₎`:
+
+```
+z0  = Φ⁻¹( #{θ*_b < θ̂} / B )                          bias correction (prop clipped to [0.5/B, 1−0.5/B])
+d   = mean_i(θ₍ᵢ₎) − θ₍ᵢ₎ ;  a = Σ d³ / (6·(Σ d²)^{3/2})   acceleration (nan-aware; a=0 if Σd²=0)
+α_q = Φ( z0 + (z0 + z_q) / (1 − a(z0 + z_q)) ) ,  z_q = Φ⁻¹(q)   for q = α/2, 1−α/2
+bca = [ quantile(θ*, α_{α/2}), quantile(θ*, α_{1−α/2}) ]
+```
+
+Φ / Φ⁻¹ come from `statistics.NormalDist` (stdlib — no scipy). Guards: all draws equal
+→ `[θ̂, θ̂]`; non-finite `z0`/`a` or a zero denominator `1 − a(z0+z_q)` → fall back to
+the percentile interval. When `z0 = a = 0` the formula reduces exactly to the percentile
+interval. Headline scopes = `overall`, the 4 categories, and the 2 attributes
+(`age_group`/`sex`); per-channel scopes keep the percentile CI only.
+
+Skill and rank are per-task **ratios/means** (mean ≈ point, near-unbiased), so they keep
+the percentile CI by default; BCa for them is **opt-in** (`bootstrap.bca_skill_rank`),
+mainly to confirm the machinery leaves a well-behaved metric ≈ unchanged. See
+`tests/test_forecasting_bca.py`.

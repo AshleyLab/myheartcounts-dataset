@@ -199,6 +199,19 @@ def test_schema_and_ci_ordering(tmp_path):
     assert set(point["scope"].unique()) == expected_scopes
 
 
+def test_bca_columns_present_by_default(tmp_path):
+    """Default output carries point + BCa for headline scopes, percentile-only for
+    per-channel scopes (see test_forecasting_bca.py for the full BCa coverage)."""
+    models = _make_models(tmp_path)
+    out = _bootstrap(models, _demographics(), n_boot=150, seed=8)["fairness_skill_scores"]
+    assert {"point", "bca_lo", "bca_hi"}.issubset(out.columns)
+    assert out["point"].notna().all()
+    headline = {"overall", "activity", "sleep", "age_group", "sex"}
+    assert out[out["scope"].isin(headline)][["bca_lo", "bca_hi"]].notna().all().all()
+    per_channel = out[out["scope"].str.startswith("channel_")]
+    assert per_channel[["bca_lo", "bca_hi"]].isna().all().all()
+
+
 def test_single_subgroup_attr_dropped(tmp_path):
     """An attribute with one subgroup value (degenerate max-min) is skipped."""
     models = _make_models(tmp_path)

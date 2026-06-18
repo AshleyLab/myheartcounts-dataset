@@ -20,10 +20,12 @@ from __future__ import annotations
 
 import hashlib
 import logging
+from statistics import NormalDist
 
 import numpy as np
 import pandas as pd
 
+from forecasting_evaluation.metrics import metric_spec as _spec
 from forecasting_evaluation.metrics.grouped_metric_rank_summary import (
     _build_binary_user_rows,
     _build_continuous_user_rows,
@@ -36,6 +38,15 @@ from forecasting_evaluation.metrics.skill_score_summary import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Headline scopes that receive a point estimate + BCa interval (the rest keep the
+# percentile CI only). Derived from the 4 sensor categories so they track
+# metric_spec. Skill columns carry the ``_score`` suffix; rank scopes do not.
+_CATEGORY_NAMES: tuple[str, ...] = tuple(name for name, _ in _spec.CATEGORY_SCOPES)
+SKILL_HEADLINE_SCOPES: frozenset[str] = frozenset(
+    {"overall_score", *(f"{name}_score" for name in _CATEGORY_NAMES)}
+)
+RANK_HEADLINE_SCOPES: frozenset[str] = frozenset({"overall", *_CATEGORY_NAMES})
 
 
 # --------------------------------------------------------------------------
@@ -73,6 +84,155 @@ def _summarize(values: np.ndarray, ci_level: float) -> dict:
         "ci_hi": float(np.percentile(finite, 100.0 * (1.0 - alpha / 2.0))),
         "n_boot": n_valid,
     }
+
+
+# --------------------------------------------------------------------------
+# BCa (bias-corrected & accelerated) interval — point-anchored alternative to the
+# percentile CI for skewed / downward-biased statistics (the fairness disparity
+# ratio). Re-anchors the interval near the point estimate and corrects bias + skew
+# (second-order accurate). Uses ``statistics.NormalDist`` for Φ / Φ⁻¹ (no scipy).
+# --------------------------------------------------------------------------
+
+_NORM = NormalDist()
+
+
+def _jackknife_acceleration(jack: np.ndarray) -> float:
+    """BCa acceleration from leave-one-out jackknife values (nan-aware).
+
+    ``a = Σ d³ / (6 · (Σ d²)^{3/2})`` with ``d = mean_i(θ₍ᵢ₎) − θ₍ᵢ₎``. Returns
+    ``0.0`` when fewer than two finite values are present or ``Σ d² == 0``.
+    """
+    arr = np.asarray(jack, dtype=np.float64)
+    finite = arr[np.isfinite(arr)]
+    if finite.size < 2:
+        return 0.0
+    d = finite.mean() - finite
+    s2 = float(np.sum(d**2))
+    if s2 == 0.0:
+        return 0.0
+    return float(np.sum(d**3)) / (6.0 * s2**1.5)
+
+
+def _bca_interval(
+    draws: np.ndarray, point: float, jack: np.ndarray, ci_level: float
+) -> tuple[float, float]:
+    """Bias-corrected & accelerated CI for one statistic.
+
+    Args:
+        draws: bootstrap draws ``θ*_b`` (NaN-dropped).
+        point: the deterministic point estimate ``θ̂`` (the reported value).
+        jack: leave-one-user-out jackknife values ``θ₍ᵢ₎`` (NaN-aware).
+        ci_level: e.g. 0.95 -> a 2.5/97.5 percentile-equivalent interval.
+
+    Guards (fall back to the plain percentile interval): empty/non-finite point,
+    non-finite ``z0``/``a``, or a zero BCa denominator ``1 − a(z0 + z_q)``. All
+    draws equal -> ``[point, point]``. When ``z0 = a = 0`` the adjusted percentiles
+    reduce to ``α/2`` and ``1 − α/2``, i.e. the percentile interval exactly.
+    """
+    arr = np.asarray(draws, dtype=np.float64)
+    finite = arr[np.isfinite(arr)]
+    n = int(finite.size)
+    alpha = 1.0 - ci_level
+
+    def _percentile() -> tuple[float, float]:
+        if n == 0:
+            return float("nan"), float("nan")
+        return (
+            float(np.percentile(finite, 100.0 * (alpha / 2.0))),
+            float(np.percentile(finite, 100.0 * (1.0 - alpha / 2.0))),
+        )
+
+    if n == 0 or not np.isfinite(point):
+        return _percentile()
+    if np.ptp(finite) == 0.0:
+        return float(point), float(point)
+
+    # Bias correction z0 from the fraction of draws below the point (clipped so
+    # an extreme point still yields a finite z0).
+    prop = float(np.count_nonzero(finite < point)) / n
+    prop = min(max(prop, 0.5 / n), 1.0 - 0.5 / n)
+    z0 = _NORM.inv_cdf(prop)
+    a = _jackknife_acceleration(jack)
+    if not (np.isfinite(z0) and np.isfinite(a)):
+        return _percentile()
+
+    out: list[float] = []
+    for z_q in (_NORM.inv_cdf(alpha / 2.0), _NORM.inv_cdf(1.0 - alpha / 2.0)):
+        denom = 1.0 - a * (z0 + z_q)
+        if denom == 0.0 or not np.isfinite(denom):
+            return _percentile()
+        adj = z0 + (z0 + z_q) / denom
+        if not np.isfinite(adj):
+            return _percentile()
+        frac = min(max(_NORM.cdf(adj), 0.0), 1.0)
+        out.append(float(np.percentile(finite, 100.0 * frac)))
+    return out[0], out[1]
+
+
+def _draws_by_key(records: list[dict], key_cols: list[str]) -> dict[tuple, np.ndarray]:
+    """Group per-draw value records into ``{key tuple: draws array}``."""
+    out: dict[tuple, list[float]] = {}
+    for rec in records:
+        out.setdefault(tuple(rec[c] for c in key_cols), []).append(rec["value"])
+    return {key: np.asarray(values, dtype=np.float64) for key, values in out.items()}
+
+
+def _pad_jackknife_maps(per_user_maps: list[dict[tuple, float]]) -> dict[tuple, np.ndarray]:
+    """Align a list of per-user ``{key: value}`` maps into ``{key: array}``.
+
+    The k-th array entry is user k's leave-one-out value, NaN where that user's
+    recompute lacked the key (so every key spans all users, NaN-aware downstream).
+    """
+    keys: set[tuple] = set()
+    for m in per_user_maps:
+        keys |= m.keys()
+    return {
+        key: np.array([m.get(key, np.nan) for m in per_user_maps], dtype=np.float64)
+        for key in keys
+    }
+
+
+def _augment_with_bca(
+    summary_df: pd.DataFrame,
+    *,
+    draws_by_key: dict[tuple, np.ndarray],
+    point_by_key: dict[tuple, float],
+    jack_by_key: dict[tuple, np.ndarray],
+    scopes: frozenset[str],
+    ci_level: float,
+    key_cols: list[str],
+) -> pd.DataFrame:
+    """Add ``point``, ``bca_lo``, ``bca_hi`` columns to a ``_summary_table`` output.
+
+    ``point`` is filled for every row (from ``point_by_key``); ``bca_lo``/``bca_hi``
+    only for rows whose ``scope`` is in ``scopes`` (NaN elsewhere). The percentile
+    columns are left untouched.
+    """
+    out = summary_df.copy()
+    if out.empty:
+        for col in ("point", "bca_lo", "bca_hi"):
+            out[col] = pd.Series(dtype=np.float64)
+        return out
+
+    points, los, his = [], [], []
+    for _, row in out.iterrows():
+        key = tuple(row[c] for c in key_cols)
+        point = point_by_key.get(key, float("nan"))
+        point = float(point) if point is not None and np.isfinite(point) else float("nan")
+        points.append(point)
+        if row["scope"] in scopes and key in draws_by_key:
+            lo, hi = _bca_interval(
+                draws_by_key[key], point, jack_by_key.get(key, np.empty(0)), ci_level
+            )
+            los.append(lo)
+            his.append(hi)
+        else:
+            los.append(float("nan"))
+            his.append(float("nan"))
+    out["point"] = points
+    out["bca_lo"] = los
+    out["bca_hi"] = his
+    return out
 
 
 def _seed_for(seed: int, tag: str) -> int:
@@ -115,6 +275,78 @@ def _resample(df: pd.DataFrame, replicas: pd.DataFrame, user_col: str) -> pd.Dat
 
 
 # --------------------------------------------------------------------------
+# Leave-one-user-out jackknife of the deterministic point flow (BCa acceleration)
+# --------------------------------------------------------------------------
+
+
+def _jackknife_skill_points(
+    error_df: pd.DataFrame,
+    models: dict[str, dict[str, str]],
+    *,
+    baseline_model: str,
+    clip_lower: float,
+    clip_upper: float,
+    min_pairs: int,
+    scopes: frozenset[str],
+) -> dict[tuple, np.ndarray]:
+    """Leave-one-user-out jackknife of the skill-score headline scopes.
+
+    Re-runs the point flow (``_compute_long_skill_scores`` + ``_build_model_summary``)
+    on ``error_df`` minus each user in turn, returning ``{(model, scope): array}``
+    over the dropped users (NaN where a scope is absent for that recompute).
+    """
+    users = sorted(set(error_df["unit_id"].astype(str)))
+    unit_arr = error_df["unit_id"].astype(str).to_numpy()
+    per_user_maps: list[dict[tuple, float]] = []
+    for user in users:
+        summ = _build_model_summary(
+            long_df=_compute_long_skill_scores(
+                error_df=error_df.loc[unit_arr != user],
+                models=models,
+                baseline_model=baseline_model,
+                clip_lower=clip_lower,
+                clip_upper=clip_upper,
+                min_pairs=min_pairs,
+            ),
+            models=models,
+            baseline_model=baseline_model,
+        )
+        cols = [c for c in scopes if c in summ.columns]
+        per_user_maps.append(
+            {
+                (row["model"], col): float(row[col])
+                for _, row in summ.iterrows()
+                for col in cols
+                if pd.notna(row[col])
+            }
+        )
+    return _pad_jackknife_maps(per_user_maps)
+
+
+def _jackknife_rank_points(
+    rank_user_df: pd.DataFrame, *, scopes: frozenset[str]
+) -> dict[tuple, np.ndarray]:
+    """Leave-one-user-out jackknife of the mean-rank headline scopes.
+
+    Re-runs ``_compute_all_ranks`` on ``rank_user_df`` minus each user, returning
+    ``{(model, scope, metric): array}`` over the dropped users.
+    """
+    users = sorted(set(rank_user_df["user_id"].astype(str)))
+    uid_arr = rank_user_df["user_id"].astype(str).to_numpy()
+    per_user_maps: list[dict[tuple, float]] = []
+    for user in users:
+        ranks = _compute_all_ranks(user_metric_df=rank_user_df.loc[uid_arr != user])
+        per_user_maps.append(
+            {
+                (row["model"], row["scope"], row["metric"]): float(row["rank"])
+                for _, row in ranks.iterrows()
+                if row["scope"] in scopes and pd.notna(row["rank"])
+            }
+        )
+    return _pad_jackknife_maps(per_user_maps)
+
+
+# --------------------------------------------------------------------------
 # Public entry point
 # --------------------------------------------------------------------------
 
@@ -135,6 +367,7 @@ def bootstrap_skill_rank(
     clip_upper: float = 100.0,
     min_pairs: int = 1,
     within_user_aggregation: str = "micro",
+    bca_skill_rank: bool = False,
 ) -> dict[str, pd.DataFrame]:
     """Paired user-bootstrap CIs for forecasting skill scores and mean ranks.
 
@@ -156,12 +389,18 @@ def bootstrap_skill_rank(
         within_user_aggregation: 'micro' (default) weights each window by its finite
             horizon-cell count when building per-user errors; 'macro' averages
             per-window means unweighted (legacy). Shared with the point flow.
+        bca_skill_rank: when True, also add ``point``, ``bca_lo``, ``bca_hi`` columns
+            (point estimate + bias-corrected & accelerated CI) for the headline
+            scopes — skill ``overall_score`` + the 4 ``<category>_score``; rank
+            ``overall`` + the 4 categories. Off by default (skill/rank are
+            near-unbiased: bootstrap mean ≈ point, so the percentile CI suffices).
 
     Returns:
         ``{"skill_scores": df, "avg_rankings": df}`` where each row carries
-        ``mean, se, ci_lo, ci_hi, n_boot``. ``skill_scores`` is keyed by
-        ``(model, scope)`` (scope = ``channel_<i>_score`` / ``sleep_score`` /
-        ``workout_score``); ``avg_rankings`` by ``(model, scope, metric)``.
+        ``mean, se, ci_lo, ci_hi, n_boot`` (plus ``point, bca_lo, bca_hi`` when
+        ``bca_skill_rank``). ``skill_scores`` is keyed by ``(model, scope)``
+        (scope = ``channel_<i>_score`` / ``sleep_score`` / ``workout_score``);
+        ``avg_rankings`` by ``(model, scope, metric)``.
     """
     metric_groups = {
         "continuous": {
@@ -258,10 +497,64 @@ def bootstrap_skill_rank(
                     }
                 )
 
-    return {
-        "skill_scores": _summary_table(skill_records, ["model", "scope"], ci_level),
-        "avg_rankings": _summary_table(rank_records, ["model", "scope", "metric"], ci_level),
-    }
+    skill_summary = _summary_table(skill_records, ["model", "scope"], ci_level)
+    rank_summary = _summary_table(rank_records, ["model", "scope", "metric"], ci_level)
+
+    if bca_skill_rank:
+        if not error_df.empty:
+            point_summary = _build_model_summary(
+                long_df=_compute_long_skill_scores(
+                    error_df=error_df,
+                    models=models,
+                    baseline_model=baseline_model,
+                    clip_lower=clip_lower,
+                    clip_upper=clip_upper,
+                    min_pairs=min_pairs,
+                ),
+                models=models,
+                baseline_model=baseline_model,
+            )
+            point_by_key = {
+                (row["model"], col): float(row[col])
+                for _, row in point_summary.iterrows()
+                for col in point_summary.columns
+                if col.endswith("_score") and pd.notna(row[col])
+            }
+            skill_summary = _augment_with_bca(
+                skill_summary,
+                draws_by_key=_draws_by_key(skill_records, ["model", "scope"]),
+                point_by_key=point_by_key,
+                jack_by_key=_jackknife_skill_points(
+                    error_df,
+                    models,
+                    baseline_model=baseline_model,
+                    clip_lower=clip_lower,
+                    clip_upper=clip_upper,
+                    min_pairs=min_pairs,
+                    scopes=SKILL_HEADLINE_SCOPES,
+                ),
+                scopes=SKILL_HEADLINE_SCOPES,
+                ci_level=ci_level,
+                key_cols=["model", "scope"],
+            )
+        if not rank_user_df.empty:
+            point_ranks = _compute_all_ranks(user_metric_df=rank_user_df)
+            rank_point_by_key = {
+                (row["model"], row["scope"], row["metric"]): float(row["rank"])
+                for _, row in point_ranks.iterrows()
+                if pd.notna(row["rank"])
+            }
+            rank_summary = _augment_with_bca(
+                rank_summary,
+                draws_by_key=_draws_by_key(rank_records, ["model", "scope", "metric"]),
+                point_by_key=rank_point_by_key,
+                jack_by_key=_jackknife_rank_points(rank_user_df, scopes=RANK_HEADLINE_SCOPES),
+                scopes=RANK_HEADLINE_SCOPES,
+                ci_level=ci_level,
+                key_cols=["model", "scope", "metric"],
+            )
+
+    return {"skill_scores": skill_summary, "avg_rankings": rank_summary}
 
 
 def _summary_table(records: list[dict], key_cols: list[str], ci_level: float) -> pd.DataFrame:

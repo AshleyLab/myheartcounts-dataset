@@ -18,11 +18,16 @@ from __future__ import annotations
 
 import logging
 
+import numpy as np
 import pandas as pd
 
+from forecasting_evaluation.metrics import metric_spec as _spec
 from forecasting_evaluation.metrics.bootstrap_skill_rank import (
+    _augment_with_bca,
     _bootstrap_indices,
     _draw_replica_frame,
+    _draws_by_key,
+    _pad_jackknife_maps,
     _resample,
     _seed_for,
     _summary_table,
@@ -31,6 +36,7 @@ from forecasting_evaluation.metrics.fair_skill_score import (
     CLIP_LOWER,
     CLIP_UPPER,
     DEFAULT_FAIRNESS_ATTRS,
+    FAIRNESS_OVERALL_SCOPE,
     _build_subgroup_error_long,
     compute_fair_skill_scores,
     compute_fair_skill_scores_from_errors,
@@ -44,6 +50,52 @@ from forecasting_evaluation.metrics.fairness_skill_score_summary import (
 logger = logging.getLogger(__name__)
 
 _SUMMARY_COLUMNS = ["model", "scope", "mean", "se", "ci_lo", "ci_hi", "n_boot"]
+
+
+def _fairness_headline_scopes(attrs: tuple[str, ...]) -> frozenset[str]:
+    """Headline fairness scopes: ``overall`` + the 4 sensor categories + each attr."""
+    return frozenset(
+        {FAIRNESS_OVERALL_SCOPE, *(name for name, _ in _spec.CATEGORY_SCOPES), *attrs}
+    )
+
+
+def _jackknife_fair_points(
+    error_df: pd.DataFrame,
+    demographics: dict[str, dict[str, str]],
+    users: list[str],
+    *,
+    baseline_model: str,
+    attrs: tuple[str, ...],
+    clip_lower: float,
+    clip_upper: float,
+    scopes: frozenset[str],
+) -> dict[tuple, np.ndarray]:
+    """Exact leave-one-user-out jackknife of the fair-skill headline scopes.
+
+    Re-runs the deterministic point flow
+    (``compute_fair_skill_scores_from_errors``) on ``error_df`` minus each user in
+    ``users``, returning ``{(model, scope): array}`` over the dropped users (NaN
+    where a scope is absent for that recompute). ~U deterministic computes.
+    """
+    uid_arr = error_df["user_id"].astype(str).to_numpy()
+    per_user_maps: list[dict[tuple, float]] = []
+    for user in users:
+        fair = compute_fair_skill_scores_from_errors(
+            error_df.loc[uid_arr != user],
+            demographics,
+            attrs=attrs,
+            baseline_method=baseline_model,
+            clip_lower=clip_lower,
+            clip_upper=clip_upper,
+        )
+        per_user_maps.append(
+            {
+                (row["model"], row["scope"]): float(row["fair_skill_score"])
+                for _, row in fair.iterrows()
+                if row["scope"] in scopes and pd.notna(row["fair_skill_score"])
+            }
+        )
+    return _pad_jackknife_maps(per_user_maps)
 
 
 def bootstrap_fair_skill_score(
@@ -65,6 +117,7 @@ def bootstrap_fair_skill_score(
     clip_lower: float = CLIP_LOWER,
     clip_upper: float = CLIP_UPPER,
     within_user_aggregation: str = "micro",
+    bca: bool = True,
 ) -> dict[str, pd.DataFrame]:
     """Paired user-bootstrap CIs + point estimate for the fair skill score.
 
@@ -89,12 +142,20 @@ def bootstrap_fair_skill_score(
         within_user_aggregation: 'micro' (default) weights each window by its finite
             horizon-cell count when building per-user errors; 'macro' averages
             per-window means unweighted (legacy). Shared with the point flow.
+        bca: when True (default), add ``point``, ``bca_lo``, ``bca_hi`` columns
+            (point estimate + bias-corrected & accelerated CI) for the headline
+            scopes — ``overall`` + the 4 sensor categories + each attribute. The
+            disparity ratio is skewed and downward-biased, so its bootstrap mean
+            sits below the point and the percentile CI is biased low; BCa re-anchors
+            the interval near the (reported) point. Per-channel scopes keep the
+            percentile CI only.
 
     Returns:
         ``{"fairness_skill_scores": ci_df, "fairness_skill_scores_point": point_df}``.
         ``ci_df`` is keyed by ``(model, scope)`` with ``mean, se, ci_lo, ci_hi,
-        n_boot``; ``point_df`` carries ``fair_skill_score, n_tasks``. ``scope`` is
-        one entry per attribute plus ``"overall"``.
+        n_boot`` (plus ``point, bca_lo, bca_hi`` when ``bca``); ``point_df`` carries
+        ``fair_skill_score, n_tasks``. ``scope`` is one entry per attribute plus
+        ``"overall"``, the 4 sensor categories, and per-channel rows.
     """
     attrs = tuple(attrs)
 
@@ -176,7 +237,32 @@ def bootstrap_fair_skill_score(
                 }
             )
 
+    summary = _summary_table(records, ["model", "scope"], ci_level)
+    if bca:
+        headline = _fairness_headline_scopes(attrs)
+        summary = _augment_with_bca(
+            summary,
+            draws_by_key=_draws_by_key(records, ["model", "scope"]),
+            point_by_key={
+                (row["model"], row["scope"]): float(row["fair_skill_score"])
+                for _, row in point_df.iterrows()
+                if pd.notna(row["fair_skill_score"])
+            },
+            jack_by_key=_jackknife_fair_points(
+                error_df,
+                demographics,
+                users,
+                baseline_model=baseline_model,
+                attrs=attrs,
+                clip_lower=clip_lower,
+                clip_upper=clip_upper,
+                scopes=headline,
+            ),
+            scopes=headline,
+            ci_level=ci_level,
+            key_cols=["model", "scope"],
+        )
     return {
-        "fairness_skill_scores": _summary_table(records, ["model", "scope"], ci_level),
+        "fairness_skill_scores": summary,
         "fairness_skill_scores_point": point_df,
     }
