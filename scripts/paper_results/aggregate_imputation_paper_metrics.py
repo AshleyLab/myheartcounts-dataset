@@ -95,7 +95,14 @@ def _parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--method-filter", nargs="+", default=None,
-        help="Restrict to these methods only",
+        help=(
+            "Restrict the rank comparison pool to these methods only. "
+            "Skill / fairness values stay the same (pairwise vs. baseline); "
+            "avg_rank values shift because the pool size changes. The "
+            "baseline method (default: locf) MUST be in the filter or "
+            "skill rows will be empty. See METRICS.md §8.1 for the full "
+            "subset-recompute workflow."
+        ),
     )
     p.add_argument(
         "--write-deprecated-fairness", action="store_true",

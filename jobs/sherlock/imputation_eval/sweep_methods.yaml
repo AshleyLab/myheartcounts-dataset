@@ -51,6 +51,16 @@ fairness_combine: linear_penalty
 ci_level: 0.95
 disparity_fns: []
 
+# Optional: restrict Phase 2 to a subset of methods. When unset / null /
+# empty, every method in bootstrap_draws.parquet contributes to the rank
+# comparison pool. When set, both aggregators (skill+rank and fairness)
+# get ``--method-filter <names>``. Skill / fairness values are unchanged
+# (they're pairwise vs. the baseline); avg_rank values shift because
+# the comparison pool changes.
+# CAVEAT: ``baseline_method`` must be in this list — the pipeline
+# driver raises if you exclude it. See METRICS.md §8.1.
+method_filter: null
+
 # Methods. Order matters only for logs. Names match
 # src/imputation_evaluation/hydra/registry.py keys.
 #

@@ -457,6 +457,69 @@ Fairness bootstrap follows the same shape: each draw computes
 average. SE / CI from `_summarize` over the 1000 draws
 (`aggregate_fairness_skill_score.py`).
 
+### 8.1 Recomputing against a subset of methods
+
+The Phase 0 → Phase 1 → Phase 2 boundary is well-defined:
+`bootstrap_draws.parquet` is the canonical Phase-1 output, and any subset
+of the methods inside it can be re-aggregated in Phase 2 alone — no
+Phase 0 (per-method eval) or Phase 1 (resample) rerun needed.
+
+Both Phase 2 aggregators take a `--method-filter` flag that pre-filters
+the parquet rows before any reducer runs:
+
+```bash
+python scripts/paper_results/aggregate_imputation_paper_metrics.py \
+  --draws  ${PAPER_OUT}/bootstrap_draws.parquet \
+  --output-dir ${PAPER_OUT}/subset-A/ \
+  --method-filter locf lsm2 lsm2_weekly_sparse linear brits \
+  --baseline-method locf \
+  --clip-lower 0.01 --clip-upper 100.0 \
+  --lambda-fairness 0.5 --fairness-combine linear_penalty \
+  --ci-level 0.95
+
+python scripts/paper_results/aggregate_fairness_skill_score.py \
+  --draws  ${PAPER_OUT}/bootstrap_draws.parquet \
+  --output ${PAPER_OUT}/subset-A/fairness_skill_score_bootstrap.csv \
+  --method-filter locf lsm2 lsm2_weekly_sparse linear brits \
+  --baseline-method locf --clip-lower 0.01 --clip-upper 100.0 --ci-level 0.95
+```
+
+Or via the pipeline driver: set `method_filter: [locf, lsm2, …]` in the
+sweep YAML and run `run_paper_pipeline.py --skip-eval --skip-phase1`.
+Both aggregators are dispatched with the filter automatically.
+
+**Two invariants the math gives you:**
+
+| Quantity | Depends on the pool? | Why |
+|---|---|---|
+| Skill score (vs. baseline) | **No** | Paired ratio `E_method / E_baseline` per task is independent of every other method in the parquet |
+| Fairness skill score | **No** | Disparity ratio `D_method / D_baseline` per task is also independent |
+| Avg rank | **Yes** | `compute_average_rankings` ranks methods against each other per (scenario, channel, user); changing the pool changes every rank |
+| Bootstrap SE / CI | follows the underlying quantity | Skill / fairness SE unchanged; rank SE depends on pool size |
+
+So a subset rerun lets you re-cut ranks against a custom comparison
+group while skill / fairness numbers stay bit-identical to the full-pool
+run.
+
+**Two operational guardrails:**
+
+1. **The baseline must be in the filter.** Both skill and fairness pair
+   each method's E against the baseline's E per task; if the baseline
+   isn't in the parquet rows after filtering, the inner merge produces
+   no rows and the CSV gets empty skill / fairness rows for every
+   method. The pipeline driver's `_method_filter_args` helper raises a
+   `ValueError` before subprocess launch if the YAML's `method_filter`
+   excludes `baseline_method`; the direct CLI does not enforce this, so
+   include `locf` (or whatever `--baseline-method` is) explicitly.
+
+2. **`build_leaderboard_json.py` does NOT re-filter to its own
+   `DAILY_META` / `PERSONALIZED_META` registries when reading the
+   subset CSV.** It looks for every method registered in those dicts and
+   raises `SystemExit` if any is missing from the CSV. If your subset
+   doesn't include every method the renderer expects, either edit the
+   dicts to match the subset, or invoke the renderer with a different
+   working directory whose registry matches.
+
 ## 9. Constants (verified canonical values)
 
 | Constant | Value | Location |

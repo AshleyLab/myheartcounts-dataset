@@ -101,7 +101,13 @@ def _parse_args() -> argparse.Namespace:
     )
     p.add_argument(
         "--method-filter", nargs="+", default=None,
-        help="Restrict to these methods only.",
+        help=(
+            "Restrict to these methods only. Fairness skill values are "
+            "pairwise vs. the baseline so values stay the same as the "
+            "full-pool run; the baseline method (default: locf) MUST be "
+            "in the filter or fairness rows will be empty. See METRICS.md "
+            "§8.1 for the full subset-recompute workflow."
+        ),
     )
     p.add_argument(
         "--strict", action="store_true",

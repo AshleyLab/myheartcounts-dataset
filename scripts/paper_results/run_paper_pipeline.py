@@ -196,6 +196,33 @@ def _phase1_bootstrap(cfg: dict, dry_run: bool, *, strict: bool = False) -> None
     _run(cmd, dry_run)
 
 
+def _method_filter_args(cfg: dict) -> list[str]:
+    """Return ``["--method-filter", *names]`` if cfg sets ``method_filter``.
+
+    Empty list / None / missing → no flag emitted (Phase 2 uses every
+    method in the parquet).
+
+    When set, both Phase 2 aggregators restrict to the listed methods.
+    The skill / fairness scores stay numerically the same as the full-pool
+    run because each is computed pairwise vs. the baseline; the
+    ``avg_rank`` values shift because the rank comparison pool changes.
+    The baseline method (``cfg["baseline_method"]``) MUST appear in the
+    filter or the per-task paired-ratio merge yields empty skill rows.
+    """
+    names = cfg.get("method_filter") or []
+    if not names:
+        return []
+    baseline = cfg.get("baseline_method", "locf")
+    if baseline not in names:
+        raise ValueError(
+            f"sweep config: method_filter={names!r} excludes the baseline "
+            f"method {baseline!r}. Skill / fairness require the baseline "
+            "to be in the comparison pool — add it to method_filter or "
+            "drop the filter entirely."
+        )
+    return ["--method-filter", *names]
+
+
 def _phase2_aggregate(cfg: dict, dry_run: bool, *, strict: bool = False) -> None:
     script = REPO_ROOT / "scripts" / "paper_results" / "aggregate_imputation_paper_metrics.py"
     cmd = [
@@ -211,6 +238,7 @@ def _phase2_aggregate(cfg: dict, dry_run: bool, *, strict: bool = False) -> None
     ]
     for d in cfg.get("disparity_fns", []) or []:
         cmd.extend(["--disparity-fn", d])
+    cmd.extend(_method_filter_args(cfg))
     if strict:
         cmd.append("--strict")
     _run(cmd, dry_run)
@@ -223,7 +251,8 @@ def _phase2_fairness_skill_score(cfg: dict, dry_run: bool, *, strict: bool = Fal
     the same Phase 1 draws and writes a single
     ``fairness_skill_score_bootstrap.csv`` under ``output_root``. Reuses the
     same clip bounds, baseline method, and CI level as the regular skill
-    score for cross-table consistency.
+    score for cross-table consistency. Honors the same ``method_filter`` as
+    ``_phase2_aggregate`` so the two CSVs stay in lockstep.
     """
     script = REPO_ROOT / "scripts" / "paper_results" / "aggregate_fairness_skill_score.py"
     output_path = Path(cfg["output_root"]) / "fairness_skill_score_bootstrap.csv"
@@ -236,6 +265,7 @@ def _phase2_fairness_skill_score(cfg: dict, dry_run: bool, *, strict: bool = Fal
         "--clip-upper", str(cfg["clip_upper"]),
         "--ci-level", str(cfg["ci_level"]),
     ]
+    cmd.extend(_method_filter_args(cfg))
     if strict:
         cmd.append("--strict")
     _run(cmd, dry_run)
