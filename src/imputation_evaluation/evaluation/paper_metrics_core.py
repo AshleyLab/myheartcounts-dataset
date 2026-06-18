@@ -610,10 +610,8 @@ def aggregate_task_ranks_to_scopes(per_task: pd.DataFrame) -> pd.DataFrame:
     Optionally, ``n_users`` is carried through as the scope-level
     ``max(n_users)`` over tasks-in-scope.
 
-    Mirrors forecasting's cross-channel rank averaging in
-    ``paper_result_generator_all_channels.py:422-424`` — every task in
-    scope contributes one ``task_rank`` value, equally weighted, to the
-    scope arithmetic mean.
+    Every task in scope contributes one ``task_rank`` value, equally
+    weighted, to the scope arithmetic mean.
 
     Emits the standard scope set used by :func:`compute_skill_scores` and
     :func:`compute_average_rankings`:
@@ -726,19 +724,15 @@ def aggregate_task_ranks_to_scopes(per_task: pd.DataFrame) -> pd.DataFrame:
 
 
 def _average_rankings_per_user(errors: pd.DataFrame) -> pd.DataFrame:
-    """Per-user ranking — forecasting-parity two-stage form.
+    """Per-user ranking — two-stage form.
 
-    Stage 1 (mirrors ``forecasting_evaluation.metrics.
-    grouped_metric_rank_summary._compute_mean_ranks`` applied at a
-    per-channel scope): per ``(scenario, channel)`` task, pivot
+    Stage 1: per ``(scenario, channel)`` task, pivot
     ``user_id × method`` on E, rank methods across each user
     (``method="average"``, ``ascending=True``), then take the
     ``nanmean`` over users → one ``task_rank`` per
     ``(method, scenario, channel)``.
 
-    Stage 2 (mirrors forecasting's cross-channel rank mean in
-    ``paper_result_generator_all_channels.py:422-424``): mean
-    ``task_rank`` over tasks in scope.
+    Stage 2: mean ``task_rank`` over tasks in scope.
 
     Per-user ranks are scale-free (each user's row is ranked across
     methods independently), so channel scale differences across tasks

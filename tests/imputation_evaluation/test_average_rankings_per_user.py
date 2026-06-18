@@ -11,8 +11,7 @@ Pins the post-refactor contract:
 3. Cross-track parity Stage 1: the per-(user, task) rank step matches
    forecasting's `_compute_mean_ranks` on a single-channel fixture.
 4. Cross-track parity Stage 2: cross-channel mean of per-channel ranks
-   matches forecasting's `AVG[0-K]` construction
-   (`paper_result_generator_all_channels.py:422-424`).
+   matches forecasting's `AVG[0-K]` construction.
 5. Explicit mode is required — the silent switch on column presence has
    been removed.
 6. Tie handling uses `method="average"` on both sides.
@@ -360,8 +359,7 @@ def test_per_user_rank_single_task_matches_forecasting():
 
 def test_per_user_rank_multitask_matches_forecasting_cross_channel_mean():
     """Stage 2 parity: the imputation overall avg_rank equals the
-    cross-channel mean of forecasting per-channel ranks (mirrors
-    ``paper_result_generator_all_channels.py:422-424``).
+    cross-channel mean of forecasting per-channel ranks.
 
     This is the hard contract that the two tracks aggregate ranks across
     tasks/channels in the same way.
