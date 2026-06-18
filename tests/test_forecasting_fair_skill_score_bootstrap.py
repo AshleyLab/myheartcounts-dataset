@@ -1,4 +1,4 @@
-"""Tests for the forecasting worst-group fairness skill score + bootstrap.
+"""Tests for the forecasting disparity-ratio fairness skill score + bootstrap.
 
 Reuses the on-disk metrics fixture from ``test_forecasting_bootstrap_skill_rank``
 (``<model>/<metric>/<user>.parquet`` with per-channel arrays), assigns synthetic
@@ -24,7 +24,6 @@ from forecasting_evaluation.metrics.bootstrap_skill_rank import (
 from forecasting_evaluation.metrics.fair_skill_score import (
     FAIRNESS_OVERALL_SCOPE,
     _build_subgroup_error_long,
-    _per_subgroup_skill,
     compute_fair_skill_scores,
     compute_fair_skill_scores_from_errors,
 )
@@ -38,10 +37,6 @@ BIN_CH = (7, 8)
 N_CH = 19
 N_USERS = 12
 WINDOWS_PER_USER = 3
-
-# Test fixture has only 4 users per subgroup; relax the production default
-# (50) so the fairness scope is non-empty in tests.
-MIN_SUB_USERS = 1
 
 
 def _write_metric_file(path, *, metric, model, n_users, seed):
@@ -120,7 +115,6 @@ def _bootstrap(models, demographics, **kw):
         continuous_channel_indices=CONT_CH,
         binary_channel_indices=BIN_CH,
         demographics=demographics,
-        min_subgroup_users=MIN_SUB_USERS,
         **kw,
     )
 
@@ -133,12 +127,7 @@ def test_identity_draw_matches_point(tmp_path):
     users = sorted(set(error_df["user_id"].astype(str)))
 
     point = compute_fair_skill_scores_from_errors(
-        error_df,
-        demo,
-        baseline_method="baseline",
-        clip_lower=0.01,
-        clip_upper=100.0,
-        min_subgroup_users=MIN_SUB_USERS,
+        error_df, demo, baseline_method="baseline", clip_lower=0.01, clip_upper=100.0
     )
 
     replicas = _draw_replica_frame(users, np.arange(len(users)))
@@ -157,7 +146,7 @@ def test_identity_draw_matches_point(tmp_path):
 
 
 def test_baseline_fair_skill_is_zero(tmp_path):
-    """Baseline vs itself -> per-subgroup ratio 1 -> min over subgroups = 0."""
+    """Baseline vs itself -> disparity ratio 1 -> fair skill score exactly 0."""
     models = _make_models(tmp_path)
     out = _bootstrap(models, _demographics(), n_boot=100, seed=1)["fairness_skill_scores"]
     base = out[out["model"] == "baseline"]
@@ -197,7 +186,7 @@ def test_schema_and_ci_ordering(tmp_path):
 
 
 def test_single_subgroup_attr_dropped(tmp_path):
-    """An attribute with one subgroup value (degenerate min over <2) is skipped."""
+    """An attribute with one subgroup value (degenerate max-min) is skipped."""
     models = _make_models(tmp_path)
     out = _bootstrap(models, _demographics(constant_sex=True), n_boot=40, seed=5)
     scopes = set(out["fairness_skill_scores"]["scope"].unique())
@@ -220,132 +209,74 @@ def _long_row(model, attr, value, e, *, group="continuous", metric="mae", ch_idx
     }
 
 
-def test_single_subgroup_for_model_excluded_from_scope():
-    """A model with data on only one subgroup of an attribute is excluded from that scope.
+def test_single_subgroup_row_for_model_does_not_score_perfect_fair_skill():
+    """A model with only one subgroup row for a task must not score perfect fairness.
 
-    Worst-group skill needs ≥ 2 subgroups for the ``min`` reduction to be a
-    meaningful aggregation. A model that has data on only one subgroup of an
-    attribute is dropped from that scope (and hence from the overall macro-mean).
+    Old behaviour: D_j = max - min = 0 over a single row -> ratio = 0 / D_b,
+    clipped to ``clip_lower`` -> ``S_attr ~= 1 - clip_lower`` (~0.99). With the
+    fix the task is dropped from the geometric mean because the model ∩ baseline
+    subgroup set has fewer than two members.
     """
     rows = []
-    # Two tasks, each with a real per-subgroup difference.
-    tasks = [(0, "ch_0", 1.0, 0.5), (1, "ch_1", 1.0, 0.6)]
-    for ch_idx, ch_name, e_b, e_m in tasks:
+    # (ch_idx, ch_name, hi_baseline, hi_model): two tasks, each with a real gap.
+    tasks = [(0, "ch_0", 2.0, 1.8), (1, "ch_1", 1.5, 1.4)]
+    for ch_idx, ch_name, hi_b, hi_m in tasks:
         # age_group: both baseline and model_x cover two groups (valid scope).
-        for model, e in [("baseline", e_b), ("model_x", e_m)]:
-            rows.append(_long_row(model, "age_group", "18-29", e, ch_idx=ch_idx, ch_name=ch_name))
-            rows.append(_long_row(model, "age_group", "30-39", e * 1.1, ch_idx=ch_idx, ch_name=ch_name))
+        for model, lo, hi in [("baseline", 1.0, hi_b), ("model_x", 0.9, hi_m)]:
+            rows.append(_long_row(model, "age_group", "18-29", lo, ch_idx=ch_idx, ch_name=ch_name))
+            rows.append(_long_row(model, "age_group", "30-39", hi, ch_idx=ch_idx, ch_name=ch_name))
         # sex: baseline covers male+female; model_x covers ONLY male.
-        rows.append(_long_row("baseline", "sex", "male", e_b, ch_idx=ch_idx, ch_name=ch_name))
-        rows.append(_long_row("baseline", "sex", "female", e_b * 1.1, ch_idx=ch_idx, ch_name=ch_name))
-        rows.append(_long_row("model_x", "sex", "male", e_m, ch_idx=ch_idx, ch_name=ch_name))
+        rows.append(_long_row("baseline", "sex", "male", 1.0, ch_idx=ch_idx, ch_name=ch_name))
+        rows.append(_long_row("baseline", "sex", "female", hi_b, ch_idx=ch_idx, ch_name=ch_name))
+        rows.append(_long_row("model_x", "sex", "male", 0.9, ch_idx=ch_idx, ch_name=ch_name))
 
     out = compute_fair_skill_scores(pd.DataFrame(rows), baseline_method="baseline")
 
-    sex_models = set(out.loc[out["scope"] == "sex", "model"].tolist())
-    assert "model_x" not in sex_models, (
-        "model_x has only one sex subgroup (male) and should be excluded from the 'sex' scope"
-    )
+    # model_x's sex tasks all collapse to a single common subgroup -> dropped.
+    sex_model = out[(out["scope"] == "sex") & (out["model"] == "model_x")]
+    if not sex_model.empty:
+        score = float(sex_model["fair_skill_score"].iloc[0])
+        assert score < 0.5, (
+            f"model_x with a single sex subgroup got bogus near-perfect "
+            f"fair_skill_score={score} (expected the task to be dropped)"
+        )
+
+    # Sanity: model_x is meaningfully present elsewhere (its age_group scope is
+    # valid), so its absence from overall is specifically the empty sex scope.
     age_models = set(out.loc[out["scope"] == "age_group", "model"].tolist())
-    assert "model_x" in age_models, "model_x has two age subgroups and should be present in 'age_group'"
+    assert "model_x" in age_models
+
     overall_models = set(out.loc[out["scope"] == FAIRNESS_OVERALL_SCOPE, "model"].tolist())
     assert "model_x" not in overall_models, (
-        "model_x is missing the 'sex' scope and so should be excluded from the macro-mean overall"
+        "model_x should be excluded from overall because its sex scope is empty"
     )
 
 
-def test_worst_group_equals_min_of_per_subgroup_skills():
-    """The reported S_attr is exactly min_g of the per-subgroup skill score.
+def test_model_baseline_subgroup_sets_aligned():
+    """D_j and D_b are computed over the common model∩baseline subgroup set per task.
 
-    Constructs a hand-tunable per-subgroup error frame and checks the
-    invariant ``S_attr == min_g (1 − exp(mean_r ln ρ_{r,g}))``.
+    The baseline covers three age buckets {A, B, C} but the model only {A, B}.
+    The fair-skill ratio must use D_b = E_A - E_B (the common pair), not the
+    full E_A - E_C, so the model is neither rewarded nor penalised by a subgroup
+    it never reported on.
     """
     rows = []
-    # 3 tasks for age_group, 2 subgroups. baseline error = 1.0 everywhere.
-    # model_x is stronger on 18-29 (ratio 0.5) than on 30-39 (ratio 0.8).
-    tasks = [0, 1, 2]
-    for ch_idx in tasks:
-        rows.append(_long_row("baseline", "age_group", "18-29", 1.0, ch_idx=ch_idx))
-        rows.append(_long_row("baseline", "age_group", "30-39", 1.0, ch_idx=ch_idx))
-        rows.append(_long_row("model_x", "age_group", "18-29", 0.5, ch_idx=ch_idx))
-        rows.append(_long_row("model_x", "age_group", "30-39", 0.8, ch_idx=ch_idx))
+    # C is an outlier: D_b over {A,B,C} = 4.0, but D_b over the common {A,B} = 0.2.
+    for model, e_a, e_b, e_c in [
+        ("baseline", 1.0, 1.2, 5.0),
+        ("model_x", 0.6, 0.8, None),  # model_x only has A, B
+    ]:
+        for value, e in [("18-29", e_a), ("30-39", e_b), ("40-49", e_c)]:
+            if e is None:
+                continue
+            rows.append(_long_row(model, "age_group", value, e))
 
-    df = pd.DataFrame(rows)
-    out = compute_fair_skill_scores(df, attrs=("age_group",), baseline_method="baseline")
-    s_attr = float(out.loc[out["model"] == "model_x", "fair_skill_score"].iloc[0])
+    out = compute_fair_skill_scores(pd.DataFrame(rows), baseline_method="baseline")
+    age = out[out["scope"] == "age_group"].set_index("model")
 
-    per_sub = _per_subgroup_skill(
-        df[df["subgroup_attr"] == "age_group"],
-        extra_keys=[],
-        baseline_method="baseline",
-        clip_lower=0.01,
-        clip_upper=100.0,
-    )
-    per_sub_x = per_sub[per_sub["model"] == "model_x"].set_index("subgroup_value")["S_sub"]
-    # Expected per-subgroup skills.
-    assert per_sub_x.loc["18-29"] == pytest.approx(1 - 0.5, abs=1e-12)
-    assert per_sub_x.loc["30-39"] == pytest.approx(1 - 0.8, abs=1e-12)
-    # And the reported S_attr is the min over subgroups.
-    assert s_attr == pytest.approx(min(per_sub_x.values), abs=1e-12)
-
-
-def test_min_subgroup_users_drops_undersized_subgroup():
-    """Subgroups below ``min_subgroup_users`` in the cohort are excluded.
-
-    Builds 12 users with 'unknown' as a tiny 2-user bucket; with
-    min_subgroup_users=4, only 18-29/30-39/40-49 contribute, and an outlier
-    'unknown' subgroup must not pull the worst-group reduction.
-    """
-    # 4 users per age bucket (18-29, 30-39, 40-49) + 2 in 'unknown'.
-    demo = {}
-    for u in range(12):
-        demo[f"u{u}"] = {"age_group": ["18-29", "30-39", "40-49"][u // 4], "sex": "male"}
-    demo["u_outlier_a"] = {"age_group": "unknown", "sex": "male"}
-    demo["u_outlier_b"] = {"age_group": "unknown", "sex": "male"}
-
-    rows = []
-    # baseline error 1.0 everywhere; model_x is 0.7 except 'unknown' where it's 1.5
-    # (catastrophic). Without the floor, 'unknown' would dominate the worst-group min.
-    for uid, attrs in demo.items():
-        e = 1.5 if attrs["age_group"] == "unknown" else 0.7
-        rows.append({
-            "model": "baseline", "group": "continuous", "metric": "mae",
-            "channel_idx": 0, "channel_name": "ch_0",
-            "user_id": uid, "error": 1.0, "n_values": 1,
-        })
-        rows.append({
-            "model": "model_x", "group": "continuous", "metric": "mae",
-            "channel_idx": 0, "channel_name": "ch_0",
-            "user_id": uid, "error": e, "n_values": 1,
-        })
-    err_df = pd.DataFrame(rows)
-
-    # min_subgroup_users=4 excludes 'unknown' (n=2) but keeps the three 4-user buckets.
-    out = compute_fair_skill_scores_from_errors(
-        err_df,
-        demo,
-        attrs=("age_group",),
-        baseline_method="baseline",
-        min_subgroup_users=4,
-    )
-    s = float(out.loc[(out["model"] == "model_x") & (out["scope"] == "age_group"),
-                       "fair_skill_score"].iloc[0])
-    # With 'unknown' filtered out, every eligible subgroup has ratio 0.7 -> S=0.3.
-    assert s == pytest.approx(0.3, abs=1e-12)
-
-    # Sanity: with min_subgroup_users=1, 'unknown' creeps in and dominates the min.
-    out_no_floor = compute_fair_skill_scores_from_errors(
-        err_df,
-        demo,
-        attrs=("age_group",),
-        baseline_method="baseline",
-        min_subgroup_users=1,
-    )
-    s_no_floor = float(out_no_floor.loc[
-        (out_no_floor["model"] == "model_x") & (out_no_floor["scope"] == "age_group"),
-        "fair_skill_score"
-    ].iloc[0])
-    assert s_no_floor < s, (
-        f"with no eligibility floor, the noisy 'unknown' subgroup must drag the worst-group "
-        f"reduction down (got {s_no_floor} vs floored {s})"
+    # Aligned (18-29, 30-39): D_j = 0.2, D_b = 0.2 -> ratio 1 -> S_attr = 0,
+    # NOT the 4.0 baseline gap from the full {A, B, C} set.
+    assert abs(float(age.loc["model_x", "fair_skill_score"]) - 0.0) < 1e-9, (
+        "alignment failed: model_x's D_b should be 0.2 (common subgroups), "
+        "not 4.0 (baseline-only full set)"
     )

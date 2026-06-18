@@ -1,19 +1,13 @@
 """Paired participant-level (user) bootstrap for the forecasting fair skill score.
 
-Wraps the deterministic worst-group fair skill metric in ``fair_skill_score.py``
-with the same paired user-bootstrap used for skill/rank
-(``bootstrap_skill_rank.py``): one shared user-resample matrix, the per-user
-error table built **once**, and the point flow recomputed per draw on the
-replica-expanded table. The cluster unit is the **user**, so between-user
-variance is captured, and the within-draw pairing of per-subgroup model error
-against the same subgroup of the baseline is preserved (both come from one
-resampled cohort). The identity resample reproduces the deterministic point
+Wraps the deterministic disparity-ratio metric in ``fair_skill_score.py`` with
+the same paired user-bootstrap used for skill/rank (``bootstrap_skill_rank.py``):
+one shared user-resample matrix, the per-user error table built **once**, and the
+point-flow recomputed per draw on the replica-expanded table. The cluster unit is
+the **user**, so between-user variance is captured, and the within-draw pairing of
+the model gap ``D_m`` against the baseline gap ``D_b`` is preserved (both come from
+one resampled cohort). The identity resample reproduces the deterministic point
 estimate — see ``tests/test_forecasting_fair_skill_score_bootstrap.py``.
-
-Subgroup eligibility (``min_subgroup_users`` threshold) is fixed once on the
-original cohort and applied identically to every bootstrap draw, so the set of
-subgroups contributing to the ``min`` reduction does not shift under
-resampling.
 
 Both estimates are returned: ``fairness_skill_scores`` (bootstrap CIs) and
 ``fairness_skill_scores_point`` (deterministic point), built from the same
@@ -37,9 +31,7 @@ from forecasting_evaluation.metrics.fair_skill_score import (
     CLIP_LOWER,
     CLIP_UPPER,
     DEFAULT_FAIRNESS_ATTRS,
-    DEFAULT_MIN_SUBGROUP_USERS,
     _build_subgroup_error_long,
-    _eligible_subgroups,
     compute_fair_skill_scores,
     compute_fair_skill_scores_from_errors,
 )
@@ -72,14 +64,13 @@ def bootstrap_fair_skill_score(
     ci_level: float = 0.95,
     clip_lower: float = CLIP_LOWER,
     clip_upper: float = CLIP_UPPER,
-    min_subgroup_users: int = DEFAULT_MIN_SUBGROUP_USERS,
     within_user_aggregation: str = "micro",
 ) -> dict[str, pd.DataFrame]:
-    """Paired user-bootstrap CIs + point estimate for the worst-group fair skill score.
+    """Paired user-bootstrap CIs + point estimate for the fair skill score.
 
     Args:
         models: ``{name: {"path": metrics_dir, "display_name": ...}}``.
-        baseline_model: key in ``models`` used as the per-subgroup skill denominator.
+        baseline_model: key in ``models`` used as the disparity-ratio denominator.
         continuous_metrics: metric keys scored on continuous channels (e.g. mae).
         binary_metrics: metric keys scored on binary channels (e.g. auprc).
         continuous_channel_indices: continuous channels to score.
@@ -93,10 +84,8 @@ def bootstrap_fair_skill_score(
         n_boot: number of bootstrap draws.
         seed: master RNG seed (a per-run seed is derived deterministically).
         ci_level: percentile-CI level (0.95 -> 2.5/97.5).
-        clip_lower: lower clip on the per-(task, subgroup) skill ratio.
-        clip_upper: upper clip on the per-(task, subgroup) skill ratio.
-        min_subgroup_users: minimum number of users (in the original cohort) for
-            a subgroup to be eligible for the ``min`` reduction. Default 50.
+        clip_lower: lower clip on the per-task disparity ratio.
+        clip_upper: upper clip on the per-task disparity ratio.
         within_user_aggregation: 'micro' (default) weights each window by its finite
             horizon-cell count when building per-user errors; 'macro' averages
             per-window means unweighted (legacy). Shared with the point flow.
@@ -145,18 +134,10 @@ def bootstrap_fair_skill_score(
         baseline_method=baseline_model,
         clip_lower=clip_lower,
         clip_upper=clip_upper,
-        min_subgroup_users=min_subgroup_users,
     )
 
-    # Subgroup eligibility is fixed on the ORIGINAL cohort (not per-draw) so the
-    # ``min`` reduction sees the same subgroup set across draws. A subgroup that
-    # passes here keeps contributing even if a particular draw under-samples it;
-    # a subgroup that fails (below threshold) is excluded everywhere.
-    users_in_errors = set(error_df["user_id"].astype(str).tolist())
-    eligible = _eligible_subgroups(demographics, users_in_errors, attrs, min_subgroup_users)
-
     # ---- Phase 1: one shared user-resample matrix ----
-    users = sorted(users_in_errors)
+    users = sorted(set(error_df["user_id"].astype(str)))
     n_users = len(users)
     if n_users == 0:
         return {
@@ -184,7 +165,6 @@ def bootstrap_fair_skill_score(
             baseline_method=baseline_model,
             clip_lower=clip_lower,
             clip_upper=clip_upper,
-            eligible_subgroups=eligible,
         )
         for _, row in fair_b.iterrows():
             records.append(

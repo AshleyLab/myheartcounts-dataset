@@ -327,17 +327,8 @@ finite horizon cells across a user's windows; binary metrics are already
 pooled per user by the producer (so the toggle is a no-op for them).
 - **Rank**: per scope, rank the 12 models within each user, then average ranks
 over users.
-- **Fairness**: worst-group skill score across demographic subgroups. For each
-  sensitive attribute `G ∈ {age_group, sex}`, compute a per-subgroup skill
-  score (`1 − geomean(E_model_g / E_baseline_g)` over tasks, restricted to the
-  same `(task, subgroup)` cell of the baseline), then take the **minimum over
-  subgroups** (Rawlsian reduction). The reported `overall` is the **macro mean
-  across attributes**. Subgroups with fewer than 50 users in the cohort are
-  excluded (the eligibility set is fixed once and applied identically to every
-  bootstrap draw). The baseline scores 0 by construction. A positive value
-  means every eligible subgroup is better than the baseline on the
-  geometric-mean of per-task ratios. Code:
-  `forecasting_evaluation.metrics.fair_skill_score`.
+- **Fairness**: disparity-ratio fairness skill score across demographic
+subgroups.
 - **Bootstrap**: resample users (the cluster unit) with replacement and recompute
 via the same readers → `mean / se / 95% CI`.
 

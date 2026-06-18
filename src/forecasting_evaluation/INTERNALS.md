@@ -325,26 +325,6 @@ consumes the per-metric parquet trees produced above. Its scripts, semantics,
 and end-to-end reproduction are documented in
 [README.md §8](README.md#8-paper-scoring-skill--rank--fairness-and-reproduction).
 
-The fairness metric is **worst-group skill** (Rawlsian). For each sensitive
-attribute `G ∈ {age_group, sex}` and model `m`:
-
-```
-ρ_{r,m,g}  = clip( E_{r,m}^{(g)} / E_{r,b}^{(g)}, 0.01, 100 )    per (task, subgroup)
-S^{(g)}_m  = 1 − exp( mean_r ln ρ_{r,m,g} )                       per-subgroup skill
-S^{(G)}_m  = min_g S^{(g)}_m                                      worst-subgroup reduction
-S_fair_m   = (1/|A|) · Σ_{G∈A} S^{(G)}_m                          macro-mean across attrs
-```
-
-Subgroups with fewer than 50 users in the cohort are dropped at the dataset
-level (the eligibility set is fixed once and reused for every bootstrap draw,
-so the set of subgroups contributing to the `min` reduction does not shift
-under resampling). The baseline scores 0 by construction. A positive value
-means every eligible subgroup is better than the baseline on the
-geometric-mean of per-task ratios. Code:
-[`metrics/fair_skill_score.py`](metrics/fair_skill_score.py) (point),
-[`metrics/bootstrap_fair_skill_score.py`](metrics/bootstrap_fair_skill_score.py)
-(paired user-bootstrap CIs).
-
 ## 9. Common caveats
 
 - `data.day_remain_mask` is mainly used to generate sample index; what evaluation truly requires is `data.sample_index_file`.
