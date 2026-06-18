@@ -420,9 +420,12 @@ For each draw `(b)`:
 - recompute per-task per-user paired ratios on the resampled cohort
 - aggregate to `R^{(b)}_{m, r}` (geomean over users, §2)
 - compute per-task per-user ranks → `task_rank^{(b)}_{m, r}` (Stage 1, §4)
-- AUC for binary channels uses the per-user pooled Mann-Whitney U with
-  multiplicity from `M` (`_bootstrap_auc_from_arrays` at
-  `bootstrap_skill_rank.py:309-376`)
+
+For binary channels, the code precomputes the per-(user, channel) pooled
+AUC matrix once per `(method, scenario, cell)` and reuses it across the
+per-channel `E`, paired-ratio `R`, collapsed-binary, and rank reducers
+(`_per_user_auc_from_cell_stats`, wired in the Phase 1 loop at
+`bootstrap_skill_rank.py:399-434, 1355-1363`).
 
 Output: `bootstrap_draws.parquet` with one row per
 `(method, scenario, split, channel, subgroup_attr, subgroup_value, draw)`
@@ -437,7 +440,7 @@ draws:
 
 ```
 mean        =  nanmean_b   X^{(b)}
-SE          =  nanstd_b    X^{(b)}     (ddof=0)
+SE          =  nanstd_b    X^{(b)}     (ddof=1)
 ci_lo, ci_hi = percentile_b X^{(b)} at (α/2, 1 − α/2)  with  α = 0.05
 n_boot      =  count of finite draws in this cell
 ```
