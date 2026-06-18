@@ -175,14 +175,28 @@ def test_schema_and_ci_ordering(tmp_path):
     tables = _bootstrap(models, _demographics(), n_boot=120, seed=3)
     df = tables["fairness_skill_scores"]
     assert {"mean", "se", "ci_lo", "ci_hi", "n_boot"}.issubset(df.columns)
-    assert set(df["scope"].unique()) == {"age_group", "sex", FAIRNESS_OVERALL_SCOPE}
+    # Per-attribute + overall, plus the category-balanced per-scope and per-channel
+    # rows. The fixture has continuous channels 0,1 (-> activity) and binary 7,8
+    # (-> sleep), so those scopes/channels appear; physiology/workout do not.
+    expected_scopes = {
+        "age_group",
+        "sex",
+        FAIRNESS_OVERALL_SCOPE,
+        "activity",
+        "sleep",
+        "channel_0",
+        "channel_1",
+        "channel_7",
+        "channel_8",
+    }
+    assert set(df["scope"].unique()) == expected_scopes
     finite = df[np.isfinite(df["mean"])]
     assert (finite["ci_lo"] <= finite["mean"] + 1e-9).all()
     assert (finite["mean"] <= finite["ci_hi"] + 1e-9).all()
     assert (finite["se"] >= 0.0).all()
     # The returned point table is consistent with the bootstrap key set.
     point = tables["fairness_skill_scores_point"]
-    assert set(point["scope"].unique()) == {"age_group", "sex", FAIRNESS_OVERALL_SCOPE}
+    assert set(point["scope"].unique()) == expected_scopes
 
 
 def test_single_subgroup_attr_dropped(tmp_path):
@@ -280,3 +294,63 @@ def test_model_baseline_subgroup_sets_aligned():
         "alignment failed: model_x's D_b should be 0.2 (common subgroups), "
         "not 4.0 (baseline-only full set)"
     )
+
+
+def _fairness_rows(workout, *, attrs=("age_group", "sex")):
+    """Long per-subgroup error frame: baseline gap 1.0; 'good' narrows it, 'bad'
+    widens it, on every channel of every scope."""
+    rows = []
+    channels = list(range(0, 7)) + [7, 8] + list(workout)
+    for attr in attrs:
+        for ch in channels:
+            group = "continuous" if ch < 7 else "binary"
+            metric = "mae" if ch < 7 else "auroc"
+            for model, (e1, e2) in (
+                ("baseline", (1.0, 2.0)),
+                ("good", (1.0, 1.2)),
+                ("bad", (1.0, 4.0)),
+            ):
+                for value, e in (("g1", e1), ("g2", e2)):
+                    rows.append(
+                        _long_row(model, attr, value, e, group=group, metric=metric,
+                                  ch_idx=ch, ch_name=f"c{ch}")
+                    )
+    return pd.DataFrame(rows)
+
+
+def test_fairness_category_balanced_invariant_to_workout_count():
+    """Per-attribute and overall fair skill are invariant to the workout channel
+    count: each sensor scope is weighted once, so 10 workout channels == 2."""
+    few = compute_fair_skill_scores(_fairness_rows([9, 10]), baseline_method="baseline")
+    many = compute_fair_skill_scores(_fairness_rows(range(9, 19)), baseline_method="baseline")
+    f = few.set_index(["model", "scope"])["fair_skill_score"]
+    m = many.set_index(["model", "scope"])["fair_skill_score"]
+    for model in ("good", "bad"):
+        for scope in ("age_group", "sex", FAIRNESS_OVERALL_SCOPE):
+            assert f[(model, scope)] == pytest.approx(m[(model, scope)])
+    # baseline vs itself -> ratio 1 -> exactly 0; good fairer (>0), bad less fair (<0)
+    assert f[("baseline", FAIRNESS_OVERALL_SCOPE)] == pytest.approx(0.0)
+    assert f[("good", FAIRNESS_OVERALL_SCOPE)] > 0 > f[("bad", FAIRNESS_OVERALL_SCOPE)]
+
+
+def test_fairness_per_channel_and_per_scope_rows():
+    """Per-channel + per-scope fairness rows appear; a single-channel scope equals
+    its channel's score (built from the same tasks)."""
+    rows = []
+    # activity scope here spans only channel 0; sleep spans channels 7, 8.
+    tasks = [(0, "continuous", "mae"), (7, "binary", "auroc"), (8, "binary", "auroc")]
+    for attr in ("age_group", "sex"):
+        for ch, group, metric in tasks:
+            for model, (e1, e2) in (("baseline", (1.0, 2.0)), ("good", (1.0, 1.3))):
+                for value, e in (("g1", e1), ("g2", e2)):
+                    rows.append(
+                        _long_row(model, attr, value, e, group=group, metric=metric,
+                                  ch_idx=ch, ch_name=f"c{ch}")
+                    )
+    out = compute_fair_skill_scores(pd.DataFrame(rows), baseline_method="baseline")
+    scopes = set(out["scope"])
+    assert {"activity", "sleep"}.issubset(scopes)  # per-scope rows
+    assert {"channel_0", "channel_7", "channel_8"}.issubset(scopes)  # per-channel rows
+    # activity has a single channel (0), so its scope score == the channel_0 score.
+    good = out[out["model"] == "good"].set_index("scope")["fair_skill_score"]
+    assert good["activity"] == pytest.approx(good["channel_0"])

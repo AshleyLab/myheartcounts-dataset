@@ -419,6 +419,40 @@ def _aggregate_continuous_collection_score(
     return _aggregate_rows_score(collection_rows)
 
 
+def _aggregate_overall_category_balanced_score(
+    long_df: pd.DataFrame, model_name: str
+) -> tuple[float, int]:
+    """Category-balanced overall skill: two-stage geomean over the 4 sensor scopes.
+
+    Stage 1 (within scope): mean of ``log(geometric_mean_ratio)`` over every
+    ``(metric, channel)`` task-row whose channel maps to that sensor-category scope
+    (activity / physiology / sleep / workout), reading ONLY the per-channel rows
+    (``group in {"continuous", "binary"}``) — never the derived ``<group>_score``
+    columns — so each of the 4 categories contributes exactly one Stage-1 voice
+    regardless of how many channels it holds. Stage 2 (across scopes): arithmetic
+    mean of the scope log-ratios over the scopes present; ``overall = 1 - exp`` of
+    that. Returns ``(overall_skill, n_scopes_present)`` with ``n_scopes_present <= 4``.
+    """
+    rows = long_df.loc[
+        (long_df["model"] == model_name)
+        & (long_df["group"].isin(("continuous", "binary")))
+        & long_df["channel_idx"].notna()
+        & np.isfinite(long_df["geometric_mean_ratio"])
+        & (long_df["geometric_mean_ratio"] > 0.0)
+    ].copy()
+    if rows.empty:
+        return float("nan"), 0
+    rows["scope"] = rows["channel_idx"].map(_spec.category_scope_for_channel)
+    rows = rows[rows["scope"].notna()]
+    if rows.empty:
+        return float("nan"), 0
+    rows["log_ratio"] = np.log(rows["geometric_mean_ratio"].to_numpy(dtype=float))
+    scope_log = rows.groupby("scope", observed=True)["log_ratio"].mean()
+    if scope_log.empty:
+        return float("nan"), 0
+    return float(1.0 - np.exp(float(scope_log.mean()))), int(scope_log.size)
+
+
 def _build_model_summary(
     *,
     long_df: pd.DataFrame,
@@ -456,12 +490,25 @@ def _build_model_summary(
                 "workout_n_units": n_workout,
             }
         )
+        binary_channels = sorted(
+            int(idx)
+            for idx in long_df.loc[long_df["group"] == "binary", "channel_idx"].dropna().unique()
+        )
+        for channel_idx in binary_channels:
+            score, n_units = _aggregate_binary_collection_score(long_df, model_name, (channel_idx,))
+            row[f"channel_{channel_idx}_score"] = score
+            row[f"channel_{channel_idx}_n_units"] = n_units
+
         for group_name, channel_indices in _spec.CONTINUOUS_GROUPS:
             score, n_units = _aggregate_continuous_collection_score(
                 long_df, model_name, channel_indices
             )
             row[f"{group_name}_score"] = score
             row[f"{group_name}_n_units"] = n_units
+
+        overall_score, n_overall = _aggregate_overall_category_balanced_score(long_df, model_name)
+        row["overall_score"] = overall_score
+        row["overall_n_units"] = n_overall
         rows.append(row)
     return pd.DataFrame(rows)
 

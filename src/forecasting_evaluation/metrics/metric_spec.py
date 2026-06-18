@@ -64,24 +64,40 @@ CONTINUOUS_CHANNELS: tuple[int, ...] = tuple(range(0, 7))
 SLEEP_CHANNELS: tuple[int, ...] = (7, 8)
 WORKOUT_CHANNELS: tuple[int, ...] = tuple(range(9, 19))
 BINARY_CHANNELS: tuple[int, ...] = tuple(range(7, 19))
-BINARY_GROUPS: tuple[tuple[str, tuple[int, ...]], ...] = (
-    ("sleep", SLEEP_CHANNELS),
-    ("workout", WORKOUT_CHANNELS),
+
+# --- Sensor-category scopes (the category-balanced "overall") ---
+# Partition of all 19 channels into the 4 semantic scopes, each weighted ONCE in
+# the category-balanced overall so the 10 workout channels can't dominate the
+# headline. This is the single source of truth — the per-track reporting group
+# lists below derive from it. (Forecasting keeps its names, "workout" singular,
+# vs the imputation track's "workouts".)
+CATEGORY_SCOPES: tuple[tuple[str, tuple[int, ...]], ...] = (
+    ("activity", (0, 1, 2, 3, 4)),  # steps + distance + flights (iphone + watch)
+    ("physiology", (5, 6)),  # heart rate + active energy (watch)
+    ("sleep", SLEEP_CHANNELS),  # asleep / inbed (binary)
+    ("workout", WORKOUT_CHANNELS),  # 10 workout-type channels (binary)
 )
-# Device-pair collections over continuous channels (phone + watch for the same
-# physical quantity). Scored per-task — each device channel keeps its own skill
-# ratio and the two are combined with a geometric mean, exactly like BINARY_GROUPS
-# (sleep/workout) and the imputation track's per-channel categories — rather than
-# averaging the two device signals before the metric (combine_channels=True).
-CONTINUOUS_GROUPS: tuple[tuple[str, tuple[int, ...]], ...] = (
-    ("steps", (0, 3)),      # iphone_steps + watch_steps
-    ("distance", (1, 4)),   # iphone_distance + watch_distance
-    # Semantic super-groups spanning multiple physical quantities, scored the same
-    # way (geometric mean of the per-channel skill ratios). Additive reporting
-    # scopes only — they do not feed the overall skill/rank aggregation.
-    ("activity", (0, 1, 2, 3, 4)),   # steps + distance + flights (iphone + watch)
-    ("physiology", (5, 6)),          # heart rate + active energy (watch)
+CHANNEL_TO_CATEGORY_SCOPE: dict[int, str] = {
+    idx: name for name, idxs in CATEGORY_SCOPES for idx in idxs
+}
+
+# Per-track reporting groups, derived from CATEGORY_SCOPES by channel kind. Each
+# channel keeps its own skill ratio and the group combines them with a geometric
+# mean (per-task scoring), like the imputation track's per-channel categories. The
+# earlier steps/distance device-pair scopes were dropped — redundant with the
+# `activity` scope plus the per-channel rows.
+CONTINUOUS_GROUPS: tuple[tuple[str, tuple[int, ...]], ...] = tuple(
+    (name, idxs) for name, idxs in CATEGORY_SCOPES if set(idxs) <= set(CONTINUOUS_CHANNELS)
 )
+BINARY_GROUPS: tuple[tuple[str, tuple[int, ...]], ...] = tuple(
+    (name, idxs) for name, idxs in CATEGORY_SCOPES if set(idxs) <= set(BINARY_CHANNELS)
+)
+
+
+def category_scope_for_channel(channel_idx: int) -> str | None:
+    """Return the sensor-category scope for a channel index, or None if unmapped."""
+    return CHANNEL_TO_CATEGORY_SCOPE.get(int(channel_idx))
+
 
 _METRIC_DISPLAY = {
     "mae": "MAE",

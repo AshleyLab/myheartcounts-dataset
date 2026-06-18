@@ -16,6 +16,27 @@ def test_channel_groups():
     assert dict(spec.BINARY_GROUPS) == {"sleep": (7, 8), "workout": tuple(range(9, 19))}
 
 
+def test_category_scopes():
+    """The 4 sensor scopes partition all 19 channels; groups derive from them."""
+    assert [name for name, _ in spec.CATEGORY_SCOPES] == [
+        "activity",
+        "physiology",
+        "sleep",
+        "workout",
+    ]
+    all_channels = [c for _, idxs in spec.CATEGORY_SCOPES for c in idxs]
+    assert sorted(all_channels) == list(range(19))  # partition, no channel twice
+    # inverse map covers every channel and rejects unknowns
+    assert spec.category_scope_for_channel(0) == "activity"
+    assert spec.category_scope_for_channel(5) == "physiology"
+    assert spec.category_scope_for_channel(7) == "sleep"
+    assert spec.category_scope_for_channel(13) == "workout"
+    assert spec.category_scope_for_channel(99) is None
+    # derived group lists are exactly the 4 categories (steps/distance removed)
+    assert dict(spec.CONTINUOUS_GROUPS) == {"activity": (0, 1, 2, 3, 4), "physiology": (5, 6)}
+    assert dict(spec.BINARY_GROUPS) == {"sleep": (7, 8), "workout": tuple(range(9, 19))}
+
+
 def test_metric_direction():
     assert spec.metric_lower_is_better("mae") is True
     assert spec.metric_lower_is_better("auprc") is False

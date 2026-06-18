@@ -21,7 +21,13 @@ from forecasting_evaluation.metrics.bootstrap_skill_rank import (
     _resample,
     bootstrap_skill_rank,
 )
-from forecasting_evaluation.metrics.skill_score_summary import compute_skill_score_tables
+from forecasting_evaluation.metrics.grouped_metric_rank_summary import (
+    _compute_overall_category_balanced_ranks,
+)
+from forecasting_evaluation.metrics.skill_score_summary import (
+    _aggregate_overall_category_balanced_score,
+    compute_skill_score_tables,
+)
 
 # Per-channel base values per model (channels 0-1 continuous via mae,
 # channels 7-8 binary via auprc). "good" beats "baseline" beats "bad".
@@ -123,7 +129,13 @@ def test_identity_draw_matches_point(tmp_path):
     b = summ_b.set_index("model")
     p = point_summary.set_index("model")
     for model in ("baseline", "good", "bad"):
-        for col in ("channel_0_score", "channel_1_score", "sleep_score"):
+        for col in (
+            "channel_0_score",
+            "channel_1_score",
+            "sleep_score",
+            "channel_7_score",
+            "overall_score",
+        ):
             assert b.loc[model, col] == pytest.approx(p.loc[model, col], rel=1e-9, abs=1e-12)
 
 
@@ -170,3 +182,108 @@ def test_bootstrap_is_deterministic(tmp_path):
         a.sort_values(["model", "scope"]).reset_index(drop=True),
         b.sort_values(["model", "scope"]).reset_index(drop=True),
     )
+
+
+def _overall_skill_long_df(workout_channels, ratio=0.5):
+    """Synthetic per-(group, metric, channel) skill rows for the overall helper."""
+    rows = []
+    for ch in range(0, 7):  # activity 0-4, physiology 5-6 (continuous)
+        rows.append(
+            dict(model="m", group="continuous", metric="mae", channel_idx=ch,
+                 geometric_mean_ratio=ratio)
+        )
+    for ch in [7, 8, *workout_channels]:  # sleep 7-8, workout (binary)
+        rows.append(
+            dict(model="m", group="binary", metric="auroc", channel_idx=ch,
+                 geometric_mean_ratio=ratio)
+        )
+    return pd.DataFrame(rows)
+
+
+def test_overall_score_invariant_to_workout_channel_count():
+    """Category-balanced overall_score weights each of the 4 scopes once, so adding
+    workout channels (at the same ratio) leaves it unchanged — the defining property."""
+    few, n_few = _aggregate_overall_category_balanced_score(_overall_skill_long_df([9, 10]), "m")
+    many, n_many = _aggregate_overall_category_balanced_score(
+        _overall_skill_long_df(range(9, 19)), "m"
+    )
+    assert n_few == n_many == 4
+    assert few == pytest.approx(many)
+    assert few == pytest.approx(0.5)  # all ratios 0.5 -> 1 - 0.5
+
+    # reads only per-channel rows: a derived group row must not change it
+    injected = pd.concat(
+        [
+            _overall_skill_long_df(range(9, 19)),
+            pd.DataFrame(
+                [dict(model="m", group="activity", metric="mae", channel_idx=-1,
+                      geometric_mean_ratio=0.01)]
+            ),
+        ],
+        ignore_index=True,
+    )
+    inj, _ = _aggregate_overall_category_balanced_score(injected, "m")
+    assert inj == pytest.approx(many)
+
+
+def test_overall_score_two_scope_formula():
+    """overall = 1 - exp(mean over scopes of the within-scope mean log-ratio)."""
+    df = pd.DataFrame(
+        [
+            dict(model="m", group="continuous", metric="mae", channel_idx=0,
+                 geometric_mean_ratio=0.5),
+            dict(model="m", group="binary", metric="auroc", channel_idx=7,
+                 geometric_mean_ratio=0.8),
+        ]
+    )
+    got, n = _aggregate_overall_category_balanced_score(df, "m")
+    assert n == 2
+    assert got == pytest.approx(1.0 - np.exp((np.log(0.5) + np.log(0.8)) / 2))
+
+
+def test_overall_rank_invariant_and_monotonic():
+    """The category-balanced overall rank weights each scope once (invariant to the
+    workout channel count) and orders models by skill."""
+
+    def user_rows(workout):
+        rs = []
+        for u in ("u1", "u2", "u3"):
+            for ch in range(0, 7):  # continuous: lower mae is better
+                for mdl, val in (("good", 0.1), ("baseline", 0.5), ("bad", 0.9)):
+                    rs.append(dict(model=mdl, scope_type="continuous_channel",
+                                   scope=f"channel_{ch}", scope_label="", metric="mae",
+                                   metric_display="", channel_idx=ch, user_id=u,
+                                   metric_value=val, n_values=1))
+            for ch in (7, 8, *workout):  # binary: higher auroc is better
+                for mdl, val in (("good", 0.9), ("baseline", 0.5), ("bad", 0.1)):
+                    rs.append(dict(model=mdl, scope_type="binary_channel",
+                                   scope=f"channel_{ch}", scope_label="", metric="auroc",
+                                   metric_display="", channel_idx=ch, user_id=u,
+                                   metric_value=val, n_values=1))
+        return pd.DataFrame(rs)
+
+    few = _compute_overall_category_balanced_ranks(user_rows([9, 10]))
+    many = _compute_overall_category_balanced_ranks(user_rows(range(9, 19)))
+    assert set(few["scope"]) == {"overall"}
+    assert set(few["metric"]) == {"overall"}
+    fm = few.set_index("model")["rank"].to_dict()
+    mm = many.set_index("model")["rank"].to_dict()
+    assert fm["good"] < fm["baseline"] < fm["bad"]
+    assert all(fm[k] == pytest.approx(mm[k]) for k in fm)
+
+
+def test_per_binary_channel_and_overall_in_bootstrap(tmp_path):
+    """Bootstrap exposes per-binary-channel skill/rank + the category-balanced overall."""
+    models = _make_models(tmp_path)
+    tables = _bootstrap(models, n_boot=60, seed=4)
+    skill_scopes = set(tables["skill_scores"]["scope"])
+    assert "overall_score" in skill_scopes
+    assert {"channel_7_score", "channel_8_score"}.issubset(skill_scopes)
+
+    rank = tables["avg_rankings"]
+    overall = rank[(rank["scope"] == "overall") & (rank["metric"] == "overall")]
+    assert not overall.empty
+    by_model = overall.set_index("model")["mean"].to_dict()
+    assert by_model["good"] < by_model["bad"]
+    # per-binary-channel rank now emitted with its binary metric
+    assert not rank[(rank["scope"] == "channel_7") & (rank["metric"] == "auprc")].empty

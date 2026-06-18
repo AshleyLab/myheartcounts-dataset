@@ -322,26 +322,41 @@ add `--skip-eval` to run only Phases 1–3 once the metric trees exist.
 users, clip to `[0.01, 100]`, geometric-mean → `R`; `skill = 1 − R`.
 Higher-is-better metrics (`auroc/auprc/f1`) are first converted to error
 `e = 1 − value`.
+- **Scopes — per-channel, 4 categories, one overall.** Every channel is scored
+individually, then grouped into 4 sensor categories — **activity** (0–4),
+**physiology** (5–6), **sleep** (7–8), **workout** (9–18) — and a single
+**`overall`** that is *category-balanced*: it averages the 4 categories with equal
+weight (each as one within-category geometric mean of log-ratios), so the 10
+workout channels can't dominate the headline. Skill, rank, and fairness all share
+this per-channel → category → overall shape. See [METRICS.md](METRICS.md).
 - **Within-user aggregation** (default `micro`): continuous metrics pool all
 finite horizon cells across a user's windows; binary metrics are already
 pooled per user by the producer (so the toggle is a no-op for them).
-- **Rank**: per scope, rank the 12 models within each user, then average ranks
-over users.
-- **Fairness**: disparity-ratio fairness skill score across demographic
-subgroups.
+- **Rank**: per scope, rank the models within each user, then average ranks over
+users; the `overall` rank ranks each category per user and averages the 4 equally.
+- **Fairness**: disparity-ratio fairness skill score across demographic subgroups,
+macro-averaged over `age_group` + `sex`, and reported per channel, per category,
+and as the category-balanced `overall`.
 - **Bootstrap**: resample users (the cluster unit) with replacement and recompute
 via the same readers → `mean / se / 95% CI`.
 
 ### Interpreting metrics
 
-Main scores treat the paired phone/watch channels **per task**: each device
-channel (step count `(0, 3)`, distance `(1, 4)`) keeps its own skill ratio, and
-the `steps`/`distance` scopes combine the pair with a geometric mean — the same
-way the sleep/workout scopes and the imputation track aggregate channels. Pass
-`--combine-channels` (legacy) to instead nan-mean the paired signals before
-scoring, as used for some appendix tables. Binary-channel metrics (sleep,
-workout) are AUROC/AUPRC/F1 pooled within each user. The math is in
+Main scores treat every channel **per task**: each channel (including the paired
+phone/watch signals — steps `0,3`, distance `1,4`) keeps its own skill ratio, and
+the category scopes combine their channels with a geometric mean — the same way
+the imputation track aggregates channels. All 19 channels get their own
+skill/rank/fairness cell; the 4 category scopes and the category-balanced
+`overall` sit on top. Pass `--combine-channels` (legacy) to instead nan-mean the
+paired signals before scoring, as used for some appendix tables. Binary-channel
+metrics (sleep, workout) are AUROC/AUPRC/F1 pooled within each user. The math is
+in [METRICS.md](METRICS.md) and
 [INTERNALS.md](INTERNALS.md#7-offline-metric-computation).
+
+> **Sparse per-channel fairness:** a per-channel or per-category fairness cell can
+> be undefined or noisy when a binary channel has too few users in a subgroup — the
+> disparity guards (≥2 common subgroups, baseline gap > 0) drop such tasks, so read
+> single-channel fairness cells with their `n_boot` / CI width in mind.
 
 > **Memory:** the binary-metric pass and the bootstrap load all users' contexts
 > into RAM — run on a real allocation (~64–96 GB), not a small interactive

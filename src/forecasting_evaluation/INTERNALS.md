@@ -321,8 +321,11 @@ Current skip policy: if `results/metrics/<run_key>/mae/<user_id>.parquet` alread
 ## 8. Aggregation and paper results
 
 The leaderboard scoring layer (skill score, mean rank, fairness, bootstrap)
-consumes the per-metric parquet trees produced above. Its scripts, semantics,
-and end-to-end reproduction are documented in
+consumes the per-metric parquet trees produced above. Each channel is scored
+individually, then rolled up into the 4 sensor-category scopes (activity /
+physiology / sleep / workout) and a **category-balanced** `overall` that weights
+each category once — the exact formulas are in [METRICS.md](METRICS.md). Its
+scripts, semantics, and end-to-end reproduction are documented in
 [README.md §8](README.md#8-paper-scoring-skill--rank--fairness-and-reproduction).
 
 ## 9. Common caveats

@@ -28,6 +28,7 @@ from forecasting_evaluation.metrics.grouped_metric_rank_summary import (
     _build_binary_user_rows,
     _build_continuous_user_rows,
     _compute_mean_ranks,
+    _compute_overall_category_balanced_ranks,
 )
 from forecasting_evaluation.metrics.skill_score_summary import (
     _build_error_table,
@@ -247,6 +248,9 @@ def bootstrap_skill_rank(
         if not rank_user_df.empty:
             rank_b_input = _resample(rank_user_df, replicas, "user_id")
             ranks_b = _compute_mean_ranks(user_metric_df=rank_b_input)
+            overall_b = _compute_overall_category_balanced_ranks(user_metric_df=rank_b_input)
+            if not overall_b.empty:
+                ranks_b = pd.concat([ranks_b, overall_b], ignore_index=True)
             for _, row in ranks_b.iterrows():
                 rank_records.append(
                     {

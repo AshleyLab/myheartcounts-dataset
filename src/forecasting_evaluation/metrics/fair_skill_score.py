@@ -5,11 +5,14 @@ This is the **default** fairness metric (replacing the legacy ``S − λ·D``
 built exactly like the regular forecasting skill score, but the quantity scored
 per task is the **cross-subgroup error gap**, taken as a **ratio against the
 baseline's gap** (no ``λ``). It mirrors the imputation track's metric in
-``imputation_evaluation/evaluation/paper_metrics_core.py`` (``compute_fair_skill_scores`` /
-``_per_attribute_skill_keyed``); the two core functions are ported here verbatim
-(renamed ``method→model`` and keyed on forecasting task columns) so the public
-forecasting package stays decoupled from the imputation internals — same reason
-the bootstrap helpers were copied in ``bootstrap_skill_rank.py``.
+``imputation_evaluation/evaluation/paper_metrics_core.py`` (``compute_fair_skill_scores``),
+adapted to forecasting's per-``(channel, metric)`` tasks and made
+**category-balanced**: the per-task log-ratios collapse to one value per sensor
+scope (activity / physiology / sleep / workout) before averaging, so the 10
+workout channels can't dominate. It additionally emits per-scope and per-channel
+breakdowns. Kept here (not imported from the imputation internals) so the public
+forecasting package stays decoupled — same reason the bootstrap helpers were
+copied in ``bootstrap_skill_rank.py``.
 
 Formulation. For model ``m``, baseline ``b`` (forecasting: ``seasonal_naive``),
 task ``r = (group, metric, channel)``, sensitive attribute ``G ∈ {age_group, sex}``
@@ -20,11 +23,14 @@ ratio clips ``[ℓ, u]``::
     both gaps are taken over the common method∩baseline subgroup set per task
     drop task r from G if <2 common subgroups, D_{r,b}^{(G)} ≤ 0, or any D is NaN
     ρ_r          = clip( D_{r,m}^{(G)} / D_{r,b}^{(G)}, ℓ, u )
-    S^{(G)}_m    = 1 − exp( mean_r ln ρ_r )
-    S_fair_m     = (1/|A|) · Σ_{G∈A} S^{(G)}_m     (macro-average across attrs)
+    S^{(G)}_m    = 1 − exp( mean_c [ mean_{r∈c} ln ρ_r ] )   (c = sensor scope; equal per scope)
+    S_fair_m     = (1/|A|) · Σ_{G∈A} S^{(G)}_m              (macro-average across attrs)
 
-The baseline's self-ratio is ``1`` (⇒ ``S_b = 0``), and a model missing any
-attribute drops out of the ``overall`` row to keep the macro-average honest.
+Per-scope rows use the inner ``1 − exp(mean_{r∈c} ln ρ_r)`` (one scope c); per-
+channel rows use ``1 − exp`` over that channel's metric tasks. The headline scopes
+(``overall``, the 4 categories, ``channel_<i>``) are each macro-averaged across
+attributes, dropping any model/key missing an attribute to keep the mean honest;
+the baseline's self-ratio is ``1`` (⇒ ``S_b = 0``).
 """
 
 from __future__ import annotations
@@ -34,6 +40,7 @@ from collections.abc import Iterable
 import numpy as np
 import pandas as pd
 
+from forecasting_evaluation.metrics import metric_spec as _spec
 from forecasting_evaluation.metrics.fairness_skill_score_summary import _task_cols
 
 DEFAULT_FAIRNESS_ATTRS: tuple[str, ...] = ("age_group", "sex")
@@ -79,60 +86,54 @@ def _build_subgroup_error_long(
     return pd.concat(frames, ignore_index=True)[columns]
 
 
-def _per_attribute_skill_keyed(
+def _per_task_disparity_log_ratio(
     df_attr: pd.DataFrame,
     *,
-    extra_keys: list[str],
     baseline_method: str,
     clip_lower: float,
     clip_upper: float,
 ) -> pd.DataFrame:
-    """Per-(model, *extra_keys) fairness skill score for one attribute.
+    """Per-task disparity log-ratios for one attribute (pre-aggregation).
 
     ``df_attr`` is the long per-subgroup error frame for one ``subgroup_attr``
-    value. Must contain ``model``, the task columns, ``subgroup_value``, ``E``,
-    plus every column in ``extra_keys`` (``"draw"`` for the bootstrap path;
-    ``[]`` for the point estimate).
-
-    For each task ``r`` and key tuple ``k = (*extra_keys)``, we restrict to the
-    **common subgroup set** that both the model and the baseline have data for
-    in that task/key, and then::
+    value (columns ``model``, the task columns, ``subgroup_value``, ``E``). For each
+    task ``r = (group, metric, channel)`` we restrict to the **common subgroup set**
+    that both the model and the baseline have data for, then::
 
         D_j = max_g E_j^{(g)} - min_g E_j^{(g)}     (over common subgroups)
         D_b = same, for the baseline b
         ratio = clip(D_j / D_b, clip_lower, clip_upper)
 
-    Drop tasks where fewer than two common subgroups exist, where the baseline
-    is already perfectly fair (D_b <= 0), or where any D is NaN. Then
-    ``S_attr = 1 - exp(mean_r log(ratio))``.
+    Drop tasks with fewer than two common subgroups, where the baseline is already
+    perfectly fair (``D_b <= 0``), or where any D is NaN. The sensor-category
+    ``scope`` (activity / physiology / sleep / workout) is attached per task.
 
-    The >=2-common-subgroup guard prevents a known failure mode where a model
-    that happens to have data for only one subgroup of a task/draw would yield
+    The >=2-common-subgroup guard prevents a known failure mode where a model that
+    happens to have data for only one subgroup of a task/draw would yield
     ``D_j = max - min = 0`` by construction, get clipped to ``clip_lower`` after
-    dividing by ``D_b > 0``, and earn a near-perfect ``S_attr ~= 1 - clip_lower``
-    for free. This can happen in the bootstrap path (per-draw row drop-outs from
-    non-finite metrics, missing manifest coverage) even when the upstream
+    dividing by ``D_b > 0``, and earn a near-perfect score for free. This can
+    happen in the bootstrap path (per-draw row drop-outs) even when the upstream
     subgroup universe is logically the same across models.
 
-    Returns one row per ``(model, *extra_keys)`` with columns
-    ``[model, *extra_keys, S_attr, n_tasks]``.
+    Returns one row per surviving task with columns
+    ``[model, group, metric, channel_idx, channel_name, scope, log_ratio]``.
     """
     task_cols = _task_cols()
-    task_keys = [*extra_keys, *task_cols]
-    model_task_keys = [*task_keys, "model"]
+    model_task_keys = [*task_cols, "model"]
+    out_cols = ["model", *task_cols, "scope", "log_ratio"]
 
-    # Pair each model row with the baseline's E for the same (task,
-    # subgroup_value). The inner merge restricts every (model, task) row set to
-    # subgroups the baseline also has data for, so D_j and D_b are computed over
-    # the SAME subgroup set per task, and excludes orphan rows that would
-    # collapse D_j to 0 when a model has only one subgroup row for a task/draw.
+    # Pair each model row with the baseline's E for the same (task, subgroup_value).
+    # The inner merge restricts every (model, task) row set to subgroups the baseline
+    # also has data for, so D_j and D_b are computed over the SAME subgroup set per
+    # task, and excludes orphan rows that would collapse D_j to 0 when a model has
+    # only one subgroup row for a task/draw.
     bl_rows = df_attr.loc[
         df_attr["model"] == baseline_method,
-        [*task_keys, "subgroup_value", "E"],
+        [*task_cols, "subgroup_value", "E"],
     ].rename(columns={"E": "E_b"})
-    aligned = df_attr.merge(bl_rows, on=[*task_keys, "subgroup_value"], how="inner")
+    aligned = df_attr.merge(bl_rows, on=[*task_cols, "subgroup_value"], how="inner")
     if aligned.empty:
-        return pd.DataFrame(columns=["model", *extra_keys, "S_attr", "n_tasks"])
+        return pd.DataFrame(columns=out_cols)
 
     grouped = aligned.groupby(model_task_keys, observed=True)
     D = pd.DataFrame(
@@ -143,27 +144,87 @@ def _per_attribute_skill_keyed(
         }
     ).reset_index()
 
-    # Drop tasks with <2 common (model ∩ baseline) subgroups (max-min is
-    # degenerate and would be rewarded as "perfect fairness" after clipping),
-    # where the baseline is already perfectly fair (D_b <= 0), or where any D is
-    # NaN. max-min is non-negative by construction.
     keep = (
         (D["n_sub"] >= 2) & (D["D_b"] > 0) & D["D_b"].notna() & D["D_j"].notna() & (D["D_j"] >= 0)
     )
     D = D.loc[keep].copy()
     if D.empty:
-        return pd.DataFrame(columns=["model", *extra_keys, "S_attr", "n_tasks"])
+        return pd.DataFrame(columns=out_cols)
 
     ratio = (D["D_j"] / D["D_b"]).clip(lower=clip_lower, upper=clip_upper)
     D["log_ratio"] = np.log(ratio.to_numpy())
+    D["scope"] = D["channel_idx"].map(_spec.category_scope_for_channel)
+    return D[out_cols]
 
+
+def _category_balanced_skill(tasks: pd.DataFrame) -> pd.DataFrame:
+    """Two-stage category-balanced fairness skill per model.
+
+    Stage 1: mean ``log_ratio`` within each sensor scope. Stage 2: equal mean across
+    the scopes present, ``fair_skill_score = 1 - exp(stage2)``. ``n_tasks`` is the
+    number of scopes present (<=4). Returns ``[model, fair_skill_score, n_tasks]``.
+    """
+    cols = ["model", "fair_skill_score", "n_tasks"]
+    valid = tasks[tasks["scope"].notna()]
+    if valid.empty:
+        return pd.DataFrame(columns=cols)
+    stage1 = (
+        valid.groupby(["model", "scope"], observed=True)["log_ratio"]
+        .mean()
+        .reset_index(name="scope_log")
+    )
     agg = (
-        D.groupby(["model", *extra_keys], observed=True)
+        stage1.groupby("model", observed=True)
+        .agg(log_ratio_mean=("scope_log", "mean"), n_tasks=("scope_log", "size"))
+        .reset_index()
+    )
+    agg["fair_skill_score"] = 1.0 - np.exp(agg["log_ratio_mean"])
+    return agg[cols]
+
+
+def _skill_by(tasks: pd.DataFrame, *, key_cols: list[str]) -> pd.DataFrame:
+    """Single-stage fairness skill at a given granularity.
+
+    ``1 - exp(mean log_ratio)`` over the tasks in each ``key_cols`` group. Returns
+    ``[*key_cols, fair_skill_score, n_tasks]`` (groups with a NaN key are dropped by
+    ``groupby``).
+    """
+    cols = [*key_cols, "fair_skill_score", "n_tasks"]
+    if tasks.empty:
+        return pd.DataFrame(columns=cols)
+    agg = (
+        tasks.groupby(key_cols, observed=True)
         .agg(log_ratio_mean=("log_ratio", "mean"), n_tasks=("log_ratio", "size"))
         .reset_index()
     )
-    agg["S_attr"] = 1.0 - np.exp(agg["log_ratio_mean"])
-    return agg[["model", *extra_keys, "S_attr", "n_tasks"]]
+    agg["fair_skill_score"] = 1.0 - np.exp(agg["log_ratio_mean"])
+    return agg[cols]
+
+
+def _macro_across_attrs(per_attr: dict[str, pd.DataFrame], *, key_cols: list[str]) -> pd.DataFrame:
+    """Macro-average ``fair_skill_score`` across attributes per ``key_cols`` tuple.
+
+    Drops any key tuple not present in EVERY attribute (the honesty rule used for the
+    ``overall`` row, applied at each granularity). ``n_tasks`` sums across attributes.
+    Returns ``[*key_cols, fair_skill_score, n_tasks]``.
+    """
+    cols = [*key_cols, "fair_skill_score", "n_tasks"]
+    n_attrs = len(per_attr)
+    if n_attrs == 0:
+        return pd.DataFrame(columns=cols)
+    stacked = pd.concat([df.assign(_attr=name) for name, df in per_attr.items()], ignore_index=True)
+    if stacked.empty:
+        return pd.DataFrame(columns=cols)
+    seen = stacked.groupby(key_cols, observed=True)["_attr"].transform("nunique")
+    stacked = stacked[seen == n_attrs]
+    if stacked.empty:
+        return pd.DataFrame(columns=cols)
+    agg = (
+        stacked.groupby(key_cols, observed=True)
+        .agg(fair_skill_score=("fair_skill_score", "mean"), n_tasks=("n_tasks", "sum"))
+        .reset_index()
+    )
+    return agg[cols]
 
 
 def compute_fair_skill_scores(
@@ -178,11 +239,23 @@ def compute_fair_skill_scores(
 
     Input ``errors`` is the long per-subgroup error frame from
     ``_build_subgroup_error_long``. Returns one row per ``(model, scope)`` with
-    columns ``[model, scope, fair_skill_score, n_tasks]``; ``scope`` is one entry
-    per attribute plus ``"overall"`` for the macro-average.
+    columns ``[model, scope, fair_skill_score, n_tasks]``. ``scope`` is:
+
+    * one entry per attribute (``age_group`` / ``sex``) — the **category-balanced**
+      per-attribute skill;
+    * ``overall`` — macro-average of the per-attribute skills;
+    * the 4 sensor categories (``activity`` / ``physiology`` / ``sleep`` /
+      ``workout``) and the per-channel ``channel_<i>`` rows — each macro-averaged
+      across attributes.
+
+    Per-attribute scores collapse to one value per sensor scope before averaging, so
+    the 10 workout channels can't dominate. The macro rows drop any model/key missing
+    from an attribute, keeping the average honest.
     """
     attrs = list(attrs)
-    per_attr_results: dict[str, pd.DataFrame] = {}
+    per_attr_overall: dict[str, pd.DataFrame] = {}
+    per_attr_scope: dict[str, pd.DataFrame] = {}
+    per_attr_channel: dict[str, pd.DataFrame] = {}
     results: list[dict] = []
 
     for attr in attrs:
@@ -193,51 +266,62 @@ def compute_fair_skill_scores(
             # max-min disparity is degenerate with a single subgroup.
             continue
 
-        per_attr = _per_attribute_skill_keyed(
+        tasks = _per_task_disparity_log_ratio(
             df_attr,
-            extra_keys=[],
             baseline_method=baseline_method,
             clip_lower=clip_lower,
             clip_upper=clip_upper,
         )
-        if per_attr.empty:
+        if tasks.empty:
             continue
-        per_attr_results[attr] = per_attr
+        attr_skill = _category_balanced_skill(tasks)
+        if attr_skill.empty:
+            continue
+        per_attr_overall[attr] = attr_skill
+        per_attr_scope[attr] = _skill_by(tasks, key_cols=["model", "scope"])
+        per_attr_channel[attr] = _skill_by(tasks, key_cols=["model", "channel_idx"])
 
-        for _, row in per_attr.iterrows():
+        for _, row in attr_skill.iterrows():
             results.append(
                 {
                     "model": row["model"],
                     "scope": attr,
-                    "fair_skill_score": float(row["S_attr"]),
+                    "fair_skill_score": float(row["fair_skill_score"]),
                     "n_tasks": int(row["n_tasks"]),
                 }
             )
 
-    # Macro-average across attributes per model — drop models missing any
-    # attribute so the mean stays honest.
-    if per_attr_results:
-        stacked = pd.concat(
-            [df.assign(attr=name) for name, df in per_attr_results.items()],
-            ignore_index=True,
+    # Macro-average across attributes at each granularity (overall / per-scope /
+    # per-channel), dropping any model[/key] missing an attribute.
+    for _, row in _macro_across_attrs(per_attr_overall, key_cols=["model"]).iterrows():
+        results.append(
+            {
+                "model": row["model"],
+                "scope": FAIRNESS_OVERALL_SCOPE,
+                "fair_skill_score": float(row["fair_skill_score"]),
+                "n_tasks": int(row["n_tasks"]),
+            }
         )
-        n_seen = stacked.groupby("model", observed=True)["attr"].nunique()
-        full = n_seen[n_seen == len(per_attr_results)].index
-        stacked = stacked[stacked["model"].isin(full)]
-        overall = (
-            stacked.groupby("model", observed=True)
-            .agg(S_fair=("S_attr", "mean"), n_tasks=("n_tasks", "sum"))
-            .reset_index()
+    for _, row in _macro_across_attrs(per_attr_scope, key_cols=["model", "scope"]).iterrows():
+        results.append(
+            {
+                "model": row["model"],
+                "scope": str(row["scope"]),
+                "fair_skill_score": float(row["fair_skill_score"]),
+                "n_tasks": int(row["n_tasks"]),
+            }
         )
-        for _, row in overall.iterrows():
-            results.append(
-                {
-                    "model": row["model"],
-                    "scope": FAIRNESS_OVERALL_SCOPE,
-                    "fair_skill_score": float(row["S_fair"]),
-                    "n_tasks": int(row["n_tasks"]),
-                }
-            )
+    for _, row in _macro_across_attrs(
+        per_attr_channel, key_cols=["model", "channel_idx"]
+    ).iterrows():
+        results.append(
+            {
+                "model": row["model"],
+                "scope": f"channel_{int(row['channel_idx'])}",
+                "fair_skill_score": float(row["fair_skill_score"]),
+                "n_tasks": int(row["n_tasks"]),
+            }
+        )
 
     if not results:
         return pd.DataFrame(columns=["model", "scope", "fair_skill_score", "n_tasks"])
