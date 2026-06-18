@@ -28,7 +28,7 @@ from downstream_evaluation.config import PROBE_BY_TASK_TYPE
 
 
 class LinearProbe:
-    """PCA-50 + a fixed linear head, selected by task type."""
+    """PCA (up to 50 components) + a fixed linear head, selected by task type."""
 
     def __init__(self, task_type: str, n_components: int | None = 50, seed: int = 42) -> None:
         """Build the probe for ``task_type``.
@@ -36,8 +36,8 @@ class LinearProbe:
         Args:
             task_type: one of ``"binary"``, ``"multiclass"``, ``"ordinal"``,
                 ``"regression"``.
-            n_components: PCA dimensionality applied before the head (``None``
-                disables PCA). Defaults to 50.
+            n_components: PCA dimensionality before the head, capped at the data rank
+                so small embeddings reduce gracefully (``None`` disables PCA). Defaults to 50.
             seed: random_state pinning PCA's randomized SVD solver and the
                 classifier, so the probe is reproducible.
         """

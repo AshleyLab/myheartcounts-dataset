@@ -5,10 +5,11 @@ Creates sklearn Pipelines with StandardScaler + classifier.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 import numpy as np
-from sklearn.base import BaseEstimator, ClassifierMixin
+from sklearn.base import BaseEstimator, ClassifierMixin, TransformerMixin
 from sklearn.linear_model import LinearRegression, LogisticRegression
 from sklearn.pipeline import Pipeline, make_pipeline
 from sklearn.preprocessing import StandardScaler
@@ -16,6 +17,46 @@ from xgboost import XGBClassifier
 
 if TYPE_CHECKING:
     from downstream_evaluation.config import ClassifierConfig
+
+logger = logging.getLogger(__name__)
+
+
+class _RankCappedPCA(BaseEstimator, TransformerMixin):
+    """PCA with n_components capped at the data rank min(n_samples, n_features).
+
+    Equals PCA(n_components) when the input has >= n_components dims; only caps for
+    smaller embeddings, which sklearn's PCA would otherwise reject.
+    """
+
+    def __init__(self, n_components: int, whiten: bool = False, random_state=None) -> None:
+        self.n_components = n_components
+        self.whiten = whiten
+        self.random_state = random_state
+
+    def _make_pca(self, X):
+        from sklearn.decomposition import PCA
+
+        n_capped = min(self.n_components, *X.shape)
+        if n_capped < self.n_components:
+            logger.info("PCA n_components capped %d -> %d (input %s)",
+                        self.n_components, n_capped, X.shape)
+        return PCA(n_components=n_capped, whiten=self.whiten, random_state=self.random_state)
+
+    def fit(self, X, y=None) -> "_RankCappedPCA":
+        X = np.asarray(X)
+        self.pca_ = self._make_pca(X).fit(X)
+        return self
+
+    # Delegate fit_transform to the inner PCA so the result is byte-identical to a bare
+    # PCA step (PCA.fit_transform uses the SVD U·S; TransformerMixin's default
+    # fit().transform() re-projects and differs at ~1e-6).
+    def fit_transform(self, X, y=None):
+        X = np.asarray(X)
+        self.pca_ = self._make_pca(X)
+        return self.pca_.fit_transform(X)
+
+    def transform(self, X):
+        return self.pca_.transform(np.asarray(X))
 
 
 class XGBOrdinalWrapper(BaseEstimator, ClassifierMixin):
@@ -272,14 +313,14 @@ def create_model(
 
     pca_n = getattr(config, "pca_n_components", None)
     if pca_n is not None:
-        from sklearn.decomposition import PCA
-
         pca_whiten = getattr(config, "pca_whiten", False)
         # random_state pins the randomized SVD solver that sklearn auto-selects for
         # wide feature matrices (e.g. MultiRocket's ~50k dims). Without it the probe
         # is non-reproducible: the rotated subspace varies run-to-run, swinging
         # rare-positive AUPRC by ~0.03. Seeded here so results are deterministic.
-        steps.append(PCA(n_components=pca_n, whiten=pca_whiten, random_state=random_state))
+        steps.append(
+            _RankCappedPCA(n_components=pca_n, whiten=pca_whiten, random_state=random_state)
+        )
 
     if steps:
         steps.append(clf)
