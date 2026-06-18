@@ -395,19 +395,35 @@ def _compute_mean_ranks(user_metric_df: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-def _compute_overall_category_balanced_ranks(user_metric_df: pd.DataFrame) -> pd.DataFrame:
-    """Category-balanced 'overall' mean rank across the 4 sensor-category scopes.
+def _compute_category_balanced_ranks(user_metric_df: pd.DataFrame) -> pd.DataFrame:
+    """Category-balanced ranks: the 4 sensor-category scopes + the ``overall`` headline.
 
-    Uses the per-channel rows (``scope_type in {continuous_channel, binary_channel}``).
-    Stage 1: for each ``(sensor scope, metric, channel)`` rank models within each
-    user (scale-free, so MAE and AUROC are comparable once ranked). Stage 2: per
-    ``(user, model)`` average those ranks within each scope — so a scope is one
-    voice regardless of channel/metric count — then average the (<=4) scope-ranks
-    equally. Finally average the per-user overall ranks over users per model. The
-    equal across-scope average is what stops the 10 workout channels dominating.
+    Mean-of-ranks, users-first — mirrors the canonical imputation track
+    (``imputation_evaluation`` ``_average_rankings_per_user`` +
+    ``aggregate_task_ranks_to_scopes`` on the ``feature/imputation-eval-impl`` branch,
+    minus its extra scenario level) and forecasting's own skill-overall user-first
+    collapse. Uses the per-channel rows
+    (``scope_type in {continuous_channel, binary_channel}``):
 
-    Returns ``[scope, metric, model, rank, rank_n_users]`` (scope/metric ==
-    ``"overall"``) — the same shape as ``_compute_mean_ranks`` so callers concat it.
+    Stage 0 (leaf, users-first): for each ``(category scope, metric, channel)`` rank
+    models within each user (scale-free, so MAE and AUROC are comparable once ranked),
+    then collapse users into one ``task_rank`` per ``(model, category scope, metric,
+    channel)`` (mean over users) — identical to the per-channel scope ranks
+    ``_compute_mean_ranks`` produces.
+
+    Category rows: average the per-channel task ranks within each ``(category scope,
+    metric)`` (one row per configured metric; default activity/physiology→mae,
+    sleep/workout→auroc).
+
+    Overall row: collapse metrics+channels within each category first (so a category is
+    one voice regardless of its channel/metric count), then average the (<=4) categories
+    equally — what stops the 10 workout channels dominating. ``rank_n_users`` is carried
+    as the max over tasks-in-scope, mirroring imputation's ``aggregate_task_ranks_to_scopes``.
+
+    Returns ``[scope, metric, model, rank, rank_n_users]`` — category scopes
+    (activity/physiology/sleep/workout, ``metric`` = the configured metric) plus a
+    synthetic ``scope == metric == "overall"`` row; the same shape as
+    ``_compute_mean_ranks`` so callers concat it.
     """
     out_cols = ["scope", "metric", "model", "rank", "rank_n_users"]
     if user_metric_df.empty:
@@ -424,9 +440,9 @@ def _compute_overall_category_balanced_ranks(user_metric_df: pd.DataFrame) -> pd
     if df.empty:
         return pd.DataFrame(columns=out_cols)
 
-    # Stage 1: per-user model ranks for each (scope, metric, channel) task.
+    # Stage 0: per-user model ranks for each (cat_scope, metric, channel) task.
     rank_rows: list[pd.DataFrame] = []
-    for (cat_scope, metric_name, _), grp in df.groupby(
+    for (cat_scope, metric_name, channel_idx), grp in df.groupby(
         ["cat_scope", "metric", "channel_idx"], sort=True
     ):
         pivot = grp.pivot(index="user_id", columns="model", values="metric_value")
@@ -436,21 +452,59 @@ def _compute_overall_category_balanced_ranks(user_metric_df: pd.DataFrame) -> pd
         long_rank = ranks.stack(future_stack=True).reset_index()
         long_rank.columns = ["user_id", "model", "rank"]
         long_rank["cat_scope"] = cat_scope
+        long_rank["metric"] = metric_name
+        long_rank["channel_idx"] = channel_idx
         rank_rows.append(long_rank)
     if not rank_rows:
         return pd.DataFrame(columns=out_cols)
     ranks_all = pd.concat(rank_rows, ignore_index=True)
 
-    # Stage 2: scope mean per (user, model), then equal mean across scopes.
-    scope_rank = ranks_all.groupby(["user_id", "model", "cat_scope"], as_index=False)["rank"].mean()
-    user_overall = scope_rank.groupby(["user_id", "model"], as_index=False)["rank"].mean()
+    # Collapse users -> one task_rank per (model, cat_scope, metric, channel).
+    task = ranks_all.groupby(
+        ["model", "cat_scope", "metric", "channel_idx"], as_index=False
+    ).agg(rank=("rank", "mean"), task_n_users=("user_id", "nunique"))
 
-    agg = user_overall.groupby("model", as_index=False).agg(
-        rank=("rank", "mean"), rank_n_users=("user_id", "nunique")
+    # Category rows: mean of per-channel task ranks within (cat_scope, metric).
+    category = (
+        task.groupby(["model", "cat_scope", "metric"], as_index=False)
+        .agg(rank=("rank", "mean"), rank_n_users=("task_n_users", "max"))
+        .rename(columns={"cat_scope": "scope"})
     )
-    agg["scope"] = "overall"
-    agg["metric"] = "overall"
-    return agg[out_cols]
+
+    # Overall row: collapse metrics+channels within each category, then 4-way mean.
+    cat_val = task.groupby(["model", "cat_scope"], as_index=False)["rank"].mean()
+    overall = cat_val.groupby("model", as_index=False).agg(rank=("rank", "mean"))
+    overall_n_users = task.groupby("model", as_index=False).agg(
+        rank_n_users=("task_n_users", "max")
+    )
+    overall = overall.merge(overall_n_users, on="model", how="left")
+    overall["scope"] = "overall"
+    overall["metric"] = "overall"
+
+    return pd.concat([category[out_cols], overall[out_cols]], ignore_index=True)
+
+
+def _compute_all_ranks(user_metric_df: pd.DataFrame) -> pd.DataFrame:
+    """Per-channel scope ranks + the category-balanced (category + overall) ranks.
+
+    Shared by the point flow (``_build_summary_tables``) and the bootstrap so both
+    produce identical rank rows (identity-draw == point). Per-channel ranks come from
+    the unchanged ``_compute_mean_ranks`` (run on the per-channel rows only); the 4
+    category scopes + overall come from ``_compute_category_balanced_ranks``
+    (mean-of-ranks, users-first).
+    """
+    out_cols = ["scope", "metric", "model", "rank", "rank_n_users"]
+    if user_metric_df.empty:
+        return pd.DataFrame(columns=out_cols)
+    per_channel = user_metric_df.loc[
+        user_metric_df["scope_type"].isin(("continuous_channel", "binary_channel"))
+    ]
+    channel_ranks = _compute_mean_ranks(user_metric_df=per_channel)
+    cat_overall = _compute_category_balanced_ranks(user_metric_df=user_metric_df)
+    frames = [frame for frame in (channel_ranks, cat_overall) if not frame.empty]
+    if not frames:
+        return pd.DataFrame(columns=out_cols)
+    return pd.concat(frames, ignore_index=True)
 
 
 def _build_summary_tables(
@@ -483,10 +537,9 @@ def _build_summary_tables(
         n_users=("user_id", "nunique"),
         n_values=("n_values", "sum"),
     )
-    rank_df = _compute_mean_ranks(user_metric_df=user_metric_df)
-    overall_rank_df = _compute_overall_category_balanced_ranks(user_metric_df=user_metric_df)
+    rank_df = _compute_all_ranks(user_metric_df=user_metric_df)
+    overall_rank_df = rank_df[rank_df["scope"] == "overall"].copy()
     if not overall_rank_df.empty:
-        rank_df = pd.concat([rank_df, overall_rank_df], ignore_index=True)
         # The overall scope has no single metric value; add NaN-metric mean rows so
         # the left-merge keeps the overall rank in the long/wide tables.
         overall_means = overall_rank_df.assign(

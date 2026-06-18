@@ -332,8 +332,10 @@ this per-channel → category → overall shape. See [METRICS.md](METRICS.md).
 - **Within-user aggregation** (default `micro`): continuous metrics pool all
 finite horizon cells across a user's windows; binary metrics are already
 pooled per user by the producer (so the toggle is a no-op for them).
-- **Rank**: per scope, rank the models within each user, then average ranks over
-users; the `overall` rank ranks each category per user and averages the 4 equally.
+- **Rank**: per channel, rank the models within each user, then average ranks over
+users (mean-of-ranks, users-first); each sensor category and the `overall` headline
+average those per-channel task ranks (overall = the 4 categories equally). Mirrors the
+imputation track and the skill score's user-first collapse.
 - **Fairness**: disparity-ratio fairness skill score across demographic subgroups,
 macro-averaged over `age_group` + `sex`, and reported per channel, per category,
 and as the category-balanced `overall`.

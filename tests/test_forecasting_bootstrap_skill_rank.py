@@ -22,7 +22,7 @@ from forecasting_evaluation.metrics.bootstrap_skill_rank import (
     bootstrap_skill_rank,
 )
 from forecasting_evaluation.metrics.grouped_metric_rank_summary import (
-    _compute_overall_category_balanced_ranks,
+    _compute_category_balanced_ranks,
 )
 from forecasting_evaluation.metrics.skill_score_summary import (
     _aggregate_overall_category_balanced_score,
@@ -262,14 +262,64 @@ def test_overall_rank_invariant_and_monotonic():
                                    metric_value=val, n_values=1))
         return pd.DataFrame(rs)
 
-    few = _compute_overall_category_balanced_ranks(user_rows([9, 10]))
-    many = _compute_overall_category_balanced_ranks(user_rows(range(9, 19)))
+    few = _compute_category_balanced_ranks(user_rows([9, 10]))
+    many = _compute_category_balanced_ranks(user_rows(range(9, 19)))
+    few = few[few["scope"] == "overall"]
+    many = many[many["scope"] == "overall"]
     assert set(few["scope"]) == {"overall"}
     assert set(few["metric"]) == {"overall"}
     fm = few.set_index("model")["rank"].to_dict()
     mm = many.set_index("model")["rank"].to_dict()
     assert fm["good"] < fm["baseline"] < fm["bad"]
     assert all(fm[k] == pytest.approx(mm[k]) for k in fm)
+
+
+def test_overall_rank_collapses_users_first_under_missingness():
+    """Category rank collapses users first, giving a tie under channel missingness.
+
+    Per-channel task rank = mean over users, then average channels — a 1.5/1.5 tie
+    here — rather than averaging per-user scope ranks and collapsing users last (which
+    would give 1.33/1.67).
+    """
+    # activity scope: channel 0 (A better) and channel 1 (B better), mae (lower better).
+    # u1, u2 have both channels; u3 is missing channel 1.
+    per_user_channels = {"u1": (0, 1), "u2": (0, 1), "u3": (0,)}
+    vals = {0: {"A": 0.1, "B": 0.9}, 1: {"A": 0.9, "B": 0.1}}
+    rows = [
+        dict(model=mdl, scope_type="continuous_channel", scope=f"channel_{ch}",
+             scope_label="", metric="mae", metric_display="", channel_idx=ch,
+             user_id=user, metric_value=vals[ch][mdl], n_values=1)
+        for user, channels in per_user_channels.items()
+        for ch in channels
+        for mdl in ("A", "B")
+    ]
+    out = _compute_category_balanced_ranks(pd.DataFrame(rows))
+    activity = out[out["scope"] == "activity"].set_index("model")["rank"].to_dict()
+    assert activity["A"] == pytest.approx(1.5)
+    assert activity["B"] == pytest.approx(1.5)
+
+
+def test_category_rank_is_mean_of_ranks_not_rank_of_mean():
+    """Per-category rank averages per-channel ranks (scale-free), not rank-of-mean.
+
+    A model that wins the large-scale channel and one that wins the small-scale channel
+    tie 1.5/1.5 — unlike the old rank-of-pooled-mean, which the large-scale channel
+    dominates (A=1, B=2).
+    """
+    # activity: channel 0 large scale (A wins), channel 1 small scale (B wins), mae.
+    vals = {0: {"A": 100.0, "B": 200.0}, 1: {"A": 2.0, "B": 1.0}}
+    rows = [
+        dict(model=mdl, scope_type="continuous_channel", scope=f"channel_{ch}",
+             scope_label="", metric="mae", metric_display="", channel_idx=ch,
+             user_id=user, metric_value=vals[ch][mdl], n_values=1)
+        for user in ("u1", "u2")
+        for ch in (0, 1)
+        for mdl in ("A", "B")
+    ]
+    out = _compute_category_balanced_ranks(pd.DataFrame(rows))
+    activity = out[out["scope"] == "activity"].set_index("model")["rank"].to_dict()
+    assert activity["A"] == pytest.approx(1.5)
+    assert activity["B"] == pytest.approx(1.5)
 
 
 def test_per_binary_channel_and_overall_in_bootstrap(tmp_path):

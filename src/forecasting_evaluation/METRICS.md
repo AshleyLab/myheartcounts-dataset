@@ -53,14 +53,21 @@ derived scope row), so doubling a scope's channel count cannot change it.
 
 ## 4. Average rank
 
-Per-user, scale-free ranks (lower error → better rank), then averaged
+Per-user, scale-free ranks (lower error → better rank), aggregated **mean-of-ranks,
+users-first** — mirroring the imputation track (`_average_rankings_per_user` +
+`aggregate_task_ranks_to_scopes`) and the skill score's user-first collapse
 (`grouped_metric_rank_summary.py`):
 
-- **per scope `(scope, metric)`**: rank models within each user, average over users.
-- **`overall`** (`_compute_overall_category_balanced_ranks`): per user, rank models
-  for each `(channel, metric)`, average within each scope, then average the 4 scopes
-  equally; finally average over users. Emitted under a synthetic `metric = overall`
-  (a cross-scope headline rank spans both metric families).
+- **per channel `(scope, metric)`** (`_compute_mean_ranks`): rank models within each
+  user, then average over users → one task rank per channel.
+- **per sensor category & `overall`** (`_compute_category_balanced_ranks`): average the
+  per-channel task ranks within each category (activity/physiology/sleep/workout), then
+  average the 4 categories equally for the `overall` headline (so the 10 workout channels
+  can't dominate). Because users are collapsed first (per-channel task rank = mean over
+  users) and then ranks are averaged — never rank-of-pooled-mean — mixed-scale channels
+  within a category (e.g. steps≈1000s vs flights≈1s) don't bias the result. `overall` is
+  emitted under a synthetic `metric = overall` (a cross-scope headline spans both metric
+  families).
 
 ## 5. Fairness-adjusted skill score
 
