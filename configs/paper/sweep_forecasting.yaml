@@ -57,13 +57,9 @@ models:
   - name: chronos2_finetuned
     type: chronos2
     release_dir: releases-fc/openmhc-chronos2-fc   # verify path before a real Phase-0 run
-  - name: toto_zeroshot
-    type: toto
-    overrides: [model.toto.context_length=2048]
-  - name: toto_finetuned
-    type: toto
-    release_dir: releases-fc/openmhc-toto-fc        # verify path before a real Phase-0 run
-    overrides: [model.toto.context_length=2048]
+  # Toto defaults to the 4k-context variant. The original 2048-context toto
+  # (toto_zeroshot / toto_finetuned) is excluded from the default sweep; its
+  # metrics still exist on disk under the canonical label if needed ad hoc.
   - name: toto_zeroshot_ctx4096
     type: toto
     overrides: [model.toto.context_length=4096]
