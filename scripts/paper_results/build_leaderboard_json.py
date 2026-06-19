@@ -98,19 +98,49 @@ OVERALL_FAIR_SCOPE = "overall"
 # ---------------------------------------------------------------------------
 
 
-def _load_overall(path: Path, *, scope: str = "overall") -> dict[str, float]:
+def _load_overall(
+    path: Path,
+    *,
+    scope: str = "overall",
+    column: str = "mean",
+    fallback_column: str | None = None,
+) -> dict[str, float]:
     """Load the headline metric from one bootstrap CSV.
 
     ``scope`` defaults to ``"overall"`` (the fairness CSV's macro row); the
     skill and rank CSVs pass ``"overall_binary_collapsed"`` so the headline
     aligns with the per-category ``cat_collapsed:*`` rows surfaced in
     :data:`SUBGROUP_FIELD`.
+
+    ``column`` selects the CSV column to read; defaults to ``mean`` (the
+    bootstrap mean). Fairness should read ``point`` (the deterministic
+    point estimate from the BCa augmentation — see METRICS.md §S7) since
+    the disparity ratio is downward-biased and ``mean`` underestimates.
+    ``fallback_column`` is read when ``column`` is missing from the CSV
+    (back-compat for pre-BCa fairness outputs).
     """
     out: dict[str, float] = {}
     with path.open() as f:
-        for r in csv.DictReader(f):
+        reader = csv.DictReader(f)
+        fieldnames = reader.fieldnames or []
+        effective = column if column in fieldnames else fallback_column
+        if effective is None:
+            raise SystemExit(
+                f"{path}: neither '{column}' nor fallback '{fallback_column}' "
+                f"is in the CSV header {fieldnames!r}."
+            )
+        if effective != column:
+            print(
+                f"[load] {path.name}: column '{column}' missing, "
+                f"falling back to '{effective}'.",
+                file=sys.stderr,
+            )
+        for r in reader:
             if r["scope"] == scope and r["split"] == "test":
-                out[r["method"]] = float(r["mean"])
+                val = r[effective]
+                if val == "" or val is None:
+                    continue
+                out[r["method"]] = float(val)
     return out
 
 
@@ -261,7 +291,13 @@ def main() -> None:
         paper_dir / "skill_scores_bootstrap.csv", scope=OVERALL_SKILL_SCOPE,
     )
     fair  = _load_overall(
-        paper_dir / "fairness_skill_score_bootstrap.csv", scope=OVERALL_FAIR_SCOPE,
+        paper_dir / "fairness_skill_score_bootstrap.csv",
+        scope=OVERALL_FAIR_SCOPE,
+        # Prefer the BCa point estimate (deterministic; unbiased) over the
+        # bootstrap mean (downward-biased for the max_g E - min_g E disparity
+        # ratio). Falls back to mean if the CSV is pre-BCa. See METRICS.md §S7.
+        column="point",
+        fallback_column="mean",
     )
     rank  = _load_overall(
         paper_dir / "avg_rankings_bootstrap.csv", scope=OVERALL_RANK_SCOPE,
