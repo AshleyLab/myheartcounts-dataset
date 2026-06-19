@@ -46,6 +46,7 @@ import pandas as pd
 from imputation_evaluation.evaluation.bootstrap_skill_rank import (
     compute_per_draw_errors,
     write_draws_parquet,
+    write_per_user_errors_parquet,
 )
 from imputation_evaluation.evaluation.pair_writer import load_sample_manifest
 
@@ -76,6 +77,21 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument(
         "--output", type=Path, required=True,
         help="Output Parquet (.parquet). Sidecar .meta.json written alongside.",
+    )
+    p.add_argument(
+        "--per-user-errors", type=Path, default=None,
+        help=(
+            "Output Parquet for per-user E values, the substrate for the Phase 2 "
+            "BCa LOO jackknife (METRICS.md §S7). Default: sibling of --output "
+            "named 'per_user_errors.parquet'. Pass --no-per-user-errors to skip."
+        ),
+    )
+    p.add_argument(
+        "--no-per-user-errors", action="store_true",
+        help=(
+            "Skip per-user errors emission. Phase 2 BCa will fall back to the "
+            "percentile CI for any caller that requested --bca."
+        ),
     )
     p.add_argument(
         "--n-boot", type=int, default=1000,
@@ -257,9 +273,18 @@ def main() -> int:
         channel_stds = np.load(args.channel_stds_path)
         logger.info("Using channel_stds from %s", args.channel_stds_path)
 
-    # Build per-draw errors
+    # Build per-draw errors (and, unless skipped, per-user errors for BCa).
+    emit_per_user = not args.no_per_user_errors
+    per_user_errors_path: Path | None = None
+    if emit_per_user:
+        per_user_errors_path = (
+            args.per_user_errors
+            if args.per_user_errors is not None
+            else args.output.parent / "per_user_errors.parquet"
+        )
+
     t0 = datetime.now()
-    df = compute_per_draw_errors(
+    result = compute_per_draw_errors(
         method_dirs={m: Path(p) for m, p in method_dirs.items()},
         scenarios=scenarios,
         splits=args.splits,
@@ -269,9 +294,17 @@ def main() -> int:
         channel_stds=channel_stds,
         include_auc=not args.no_auc,
         exclude_unknown=args.exclude_unknown,
+        emit_per_user_errors=emit_per_user,
     )
+    if emit_per_user:
+        df, per_user_df = result
+    else:
+        df = result
+        per_user_df = None
     t_elapsed = (datetime.now() - t0).total_seconds()
     logger.info("Per-draw errors: %d rows in %.1fs", len(df), t_elapsed)
+    if per_user_df is not None:
+        logger.info("Per-user errors: %d rows", len(per_user_df))
 
     if df.empty:
         logger.error("No errors produced; aborting before write")
@@ -290,12 +323,22 @@ def main() -> int:
         "exclude_unknown": args.exclude_unknown,
         "elapsed_seconds": t_elapsed,
         "n_rows": len(df),
+        "n_per_user_rows": int(len(per_user_df)) if per_user_df is not None else None,
+        "per_user_errors_path": str(per_user_errors_path) if per_user_errors_path else None,
         "git_commit": _git_commit(),
         "timestamp": datetime.utcnow().isoformat() + "Z",
         "argv": sys.argv,
     }
     write_draws_parquet(df, args.output, meta=meta)
     logger.info("Wrote %s and %s.meta.json", args.output, args.output)
+    if per_user_df is not None and per_user_errors_path is not None:
+        if per_user_df.empty:
+            logger.warning(
+                "Per-user errors frame is empty — writing %s anyway for schema stability",
+                per_user_errors_path,
+            )
+        write_per_user_errors_parquet(per_user_df, per_user_errors_path, meta=meta)
+        logger.info("Wrote %s", per_user_errors_path)
     return 0
 
 

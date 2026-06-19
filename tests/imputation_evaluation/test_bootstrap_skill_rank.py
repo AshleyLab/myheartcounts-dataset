@@ -521,3 +521,37 @@ def test_phase1_skips_check_without_subgroup_mappings(tmp_path):
     df = compute_per_draw_errors(**_phase1_kwargs(method_dirs, with_subgroups=False))
     # Empty is fine — the point is "did not raise". Schema must still match.
     assert list(df.columns) == DRAWS_PARQUET_COLUMNS
+
+
+# --------------------------------------------------------------------------
+# Per-user errors emission contract (BCa LOO substrate; METRICS.md §S7)
+# --------------------------------------------------------------------------
+
+
+def test_compute_per_draw_errors_returns_tuple_with_emit_per_user(tmp_path):
+    """``emit_per_user_errors=True`` returns a 2-tuple with the documented
+    per-user schema. With no pairs files in the synthetic tree the frames
+    are empty, but the schema contract must still hold."""
+    from imputation_evaluation.evaluation.bootstrap_skill_rank import (
+        PER_USER_ERRORS_PARQUET_COLUMNS,
+    )
+
+    _, method_dirs = _build_two_method_dirs(tmp_path, mismatch_kind="none")
+    result = compute_per_draw_errors(
+        **_phase1_kwargs(method_dirs, with_subgroups=False),
+        emit_per_user_errors=True,
+    )
+    assert isinstance(result, tuple) and len(result) == 2
+    draws_df, per_user_df = result
+    assert list(draws_df.columns) == DRAWS_PARQUET_COLUMNS
+    assert list(per_user_df.columns) == PER_USER_ERRORS_PARQUET_COLUMNS
+
+
+def test_compute_per_draw_errors_default_returns_dataframe(tmp_path):
+    """The default (``emit_per_user_errors=False``) still returns a single
+    DataFrame — backward-compat anchor."""
+    _, method_dirs = _build_two_method_dirs(tmp_path, mismatch_kind="none")
+    out = compute_per_draw_errors(**_phase1_kwargs(method_dirs, with_subgroups=False))
+    # Single DataFrame, not a tuple.
+    assert isinstance(out, pd.DataFrame)
+    assert list(out.columns) == DRAWS_PARQUET_COLUMNS

@@ -9,6 +9,8 @@ __all__ = [
     "aggregate_skill_rank_fairness",
     "read_draws_parquet",
     "write_draws_parquet",
+    "read_per_user_errors_parquet",
+    "write_per_user_errors_parquet",
 ]
 
 
@@ -50,4 +52,16 @@ def __getattr__(name: str):
         from imputation_evaluation.evaluation.bootstrap_skill_rank import write_draws_parquet
 
         return write_draws_parquet
+    elif name == "read_per_user_errors_parquet":
+        from imputation_evaluation.evaluation.bootstrap_skill_rank import (
+            read_per_user_errors_parquet,
+        )
+
+        return read_per_user_errors_parquet
+    elif name == "write_per_user_errors_parquet":
+        from imputation_evaluation.evaluation.bootstrap_skill_rank import (
+            write_per_user_errors_parquet,
+        )
+
+        return write_per_user_errors_parquet
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

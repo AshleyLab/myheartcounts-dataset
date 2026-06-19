@@ -191,6 +191,12 @@ def _phase1_bootstrap(cfg: dict, dry_run: bool, *, strict: bool = False) -> None
         cmd.append("--no-auc")
     if cfg.get("exclude_unknown", False):
         cmd.append("--exclude-unknown")
+    # Per-user errors emission (BCa LOO substrate). Empty / null disables.
+    per_user_path = cfg.get("per_user_errors_path")
+    if per_user_path:
+        cmd.extend(["--per-user-errors", str(per_user_path)])
+    else:
+        cmd.append("--no-per-user-errors")
     if strict:
         cmd.append("--strict")
     _run(cmd, dry_run)
@@ -239,6 +245,11 @@ def _phase2_aggregate(cfg: dict, dry_run: bool, *, strict: bool = False) -> None
     for d in cfg.get("disparity_fns", []) or []:
         cmd.extend(["--disparity-fn", d])
     cmd.extend(_method_filter_args(cfg))
+    if cfg.get("bca_skill_rank", False):
+        cmd.append("--bca-skill-rank")
+        per_user_path = cfg.get("per_user_errors_path")
+        if per_user_path:
+            cmd.extend(["--per-user-errors", str(per_user_path)])
     if strict:
         cmd.append("--strict")
     _run(cmd, dry_run)
@@ -266,6 +277,14 @@ def _phase2_fairness_skill_score(cfg: dict, dry_run: bool, *, strict: bool = Fal
         "--ci-level", str(cfg["ci_level"]),
     ]
     cmd.extend(_method_filter_args(cfg))
+    # BCa augmentation (default ON — see METRICS.md §S7).
+    if cfg.get("bca", True):
+        cmd.append("--bca")
+        per_user_path = cfg.get("per_user_errors_path")
+        if per_user_path:
+            cmd.extend(["--per-user-errors", str(per_user_path)])
+    else:
+        cmd.append("--no-bca")
     if strict:
         cmd.append("--strict")
     _run(cmd, dry_run)

@@ -10,6 +10,9 @@
 output_root: results/paper        # all paper artifacts land here
 runs_root: results/paper/runs     # one per-method run dir under this
 draws_path: results/paper/bootstrap_draws.parquet
+# Per-user errors Parquet (BCa LOO jackknife substrate; METRICS.md §S7).
+# Sibling of draws_path by default; set to null / empty to disable emission.
+per_user_errors_path: results/paper/per_user_errors.parquet
 manifest_path: configs/paper/bootstrap_method_dirs.json
 
 # Phase 0 (Hydra eval) — applied to every method
@@ -34,6 +37,16 @@ fairness_combine: linear_penalty
 ci_level: 0.95
 # Leave disparity_fns empty to use all registered.
 disparity_fns: []
+# BCa CI augmentation (METRICS.md §S7).
+#  bca:            point + BCa CI for the 3 published fairness scopes
+#                  (overall, age_group, sex). Default ON — the disparity ratio
+#                  max_g E - min_g E is skewed and downward-biased.
+#  bca_skill_rank: opt-in parity sanity-check; default OFF (skill / rank are
+#                  near-unbiased so the BCa interval is close to the percentile
+#                  CI in practice). Currently raises NotImplementedError until
+#                  the N-iteration LOO recompute is wired up.
+bca: true
+bca_skill_rank: false
 
 # Sweep — order matters only for logs. Add per-method overrides as needed.
 methods:

@@ -1176,7 +1176,8 @@ def compute_per_draw_errors(
     exclude_unknown: bool = False,
     n_channels: int = N_CHANNELS,
     progress_logger: Callable[[str], None] = logger.info,
-) -> pd.DataFrame:
+    emit_per_user_errors: bool = False,
+) -> pd.DataFrame | tuple[pd.DataFrame, pd.DataFrame]:
     """Phase-1 core: build a long-format DataFrame of per-draw errors and ratios.
 
     Two value columns are emitted per row:
@@ -1189,6 +1190,14 @@ def compute_per_draw_errors(
       :func:`compute_skill_scores` consumes: ``skill = 1 − exp(mean(log R))``
       over tasks in scope. Baseline-vs-self → R = 1 by construction (each
       user's ratio is 1), so the baseline's skill is 0.
+
+    When ``emit_per_user_errors=True``, the per-(user, channel) ``E`` matrix
+    that the rank kernel already builds (via :func:`_per_user_errors_for_cell`
+    and :func:`_per_user_collapsed_errors_for_cell`) is also emitted as a
+    second DataFrame — one finite row per (method, scenario, split, channel,
+    channel_type, subgroup_attr, subgroup_value, user_id). The substrate
+    consumed by the BCa leave-one-user-out jackknife in Phase 2 (see
+    :mod:`imputation_evaluation.evaluation.bca` and METRICS.md §S7).
 
     Args:
         method_dirs: ``{method: pairs_root}`` where ``pairs_root`` contains
@@ -1215,6 +1224,10 @@ def compute_per_draw_errors(
         exclude_unknown: skip subgroup_value=="unknown" cells.
         n_channels: number of channels per pairs/<scenario>/<split>/ dir.
         progress_logger: logger callable invoked with progress messages.
+        emit_per_user_errors: when True, also emit and return a per-user
+            errors DataFrame with one row per (method, scenario, split,
+            channel, channel_type, subgroup_attr, subgroup_value, user_id)
+            and column ``E_per_user``. NaN per-user values are dropped.
 
     Returns:
         Long-format DataFrame with columns
@@ -1224,6 +1237,11 @@ def compute_per_draw_errors(
         :func:`_rank_per_draw_for_cell`; Phase 2 aggregates it into
         per-(method, scope) ``avg_rank`` via
         :func:`paper_metrics_core.aggregate_task_ranks_to_scopes`.
+
+        When ``emit_per_user_errors=True``, returns a tuple
+        ``(draws_df, per_user_df)``; ``per_user_df`` columns are
+        ``[method, scenario, split, channel, channel_type, subgroup_attr,
+        subgroup_value, user_id, E_per_user]``.
     """
     methods = list(method_dirs.keys())
     if not methods:
@@ -1240,6 +1258,7 @@ def compute_per_draw_errors(
         raise ValueError(f"channel_stds has {channel_stds.shape[0]} entries, need {n_channels}")
 
     rows: list[dict] = []
+    per_user_rows: list[dict] = []  # only populated when emit_per_user_errors
 
     for split in splits:
         sg_map = (subgroup_mappings or {}).get(split)
@@ -1472,6 +1491,27 @@ def compute_per_draw_errors(
                                 }
                             )
 
+                        if emit_per_user_errors:
+                            # Per-user un-reduced E for this (method, cell, ch),
+                            # for the BCa LOO jackknife in Phase 2. Drop NaN
+                            # users (no data for this cell/channel).
+                            user_E_col = per_method_per_user_E[method][:, ch]
+                            finite_mask = np.isfinite(user_E_col)
+                            for uid_idx in np.flatnonzero(finite_mask):
+                                per_user_rows.append(
+                                    {
+                                        "method": method,
+                                        "scenario": scenario,
+                                        "split": split,
+                                        "channel": f"ch_{ch}",
+                                        "channel_type": ch_type,
+                                        "subgroup_attr": attr,
+                                        "subgroup_value": value,
+                                        "user_id": all_user_ids[uid_idx],
+                                        "E_per_user": float(user_E_col[uid_idx]),
+                                    }
+                                )
+
                     if method in per_method_E_cat:
                         E_cat = per_method_E_cat[method]
                         R_cat = per_method_R_cat[method]
@@ -1506,8 +1546,28 @@ def compute_per_draw_errors(
                                     }
                                 )
 
-    if not rows:
-        return pd.DataFrame(
+                            if emit_per_user_errors:
+                                user_E_col = per_method_per_user_E_cat[method][:, cat_idx]
+                                finite_mask = np.isfinite(user_E_col)
+                                for uid_idx in np.flatnonzero(finite_mask):
+                                    per_user_rows.append(
+                                        {
+                                            "method": method,
+                                            "scenario": scenario,
+                                            "split": split,
+                                            "channel": f"cat_collapsed:{cat_name}",
+                                            "channel_type": "binary_collapsed",
+                                            "subgroup_attr": attr,
+                                            "subgroup_value": value,
+                                            "user_id": all_user_ids[uid_idx],
+                                            "E_per_user": float(user_E_col[uid_idx]),
+                                        }
+                                    )
+
+    if rows:
+        draws_df = pd.DataFrame(rows)
+    else:
+        draws_df = pd.DataFrame(
             columns=[
                 "method",
                 "scenario",
@@ -1522,7 +1582,14 @@ def compute_per_draw_errors(
                 "rank",
             ]
         )
-    return pd.DataFrame(rows)
+    if not emit_per_user_errors:
+        return draws_df
+
+    if per_user_rows:
+        per_user_df = pd.DataFrame(per_user_rows)
+    else:
+        per_user_df = pd.DataFrame(columns=PER_USER_ERRORS_PARQUET_COLUMNS)
+    return draws_df, per_user_df
 
 
 # --------------------------------------------------------------------------
@@ -1575,6 +1642,65 @@ def write_draws_parquet(
 
 def read_draws_parquet(path: Path) -> tuple[pd.DataFrame, dict | None]:
     """Read the per-draw errors Parquet and its sidecar metadata if present."""
+    path = Path(path)
+    df = pd.read_parquet(path)
+    meta_path = path.with_suffix(path.suffix + ".meta.json")
+    meta: dict | None = None
+    if meta_path.exists():
+        meta = json.loads(meta_path.read_text())
+    return df, meta
+
+
+# --------------------------------------------------------------------------
+# Per-user errors Parquet IO (BCa LOO jackknife substrate — see METRICS.md §S7)
+# --------------------------------------------------------------------------
+
+PER_USER_ERRORS_PARQUET_COLUMNS = [
+    "method",
+    "scenario",
+    "split",
+    "channel",
+    "channel_type",
+    "subgroup_attr",
+    "subgroup_value",
+    "user_id",
+    "E_per_user",
+]
+
+
+def write_per_user_errors_parquet(
+    df: pd.DataFrame,
+    path: Path,
+    meta: dict | None = None,
+) -> None:
+    """Write the per-user errors DataFrame plus an optional sidecar metadata JSON.
+
+    Mirrors :func:`write_draws_parquet`: categorical dtypes for the string
+    keys, float32 ``E_per_user``, zstd compression.
+    """
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    df = df[PER_USER_ERRORS_PARQUET_COLUMNS].copy()
+    df["E_per_user"] = df["E_per_user"].astype("float32")
+    for col in (
+        "method",
+        "scenario",
+        "split",
+        "channel",
+        "channel_type",
+        "subgroup_attr",
+        "subgroup_value",
+        "user_id",
+    ):
+        df[col] = df[col].astype("category")
+    df.to_parquet(path, compression="zstd")
+    if meta is not None:
+        meta_path = path.with_suffix(path.suffix + ".meta.json")
+        meta_path.write_text(json.dumps(meta, indent=2, default=str))
+
+
+def read_per_user_errors_parquet(path: Path) -> tuple[pd.DataFrame, dict | None]:
+    """Read the per-user errors Parquet and its sidecar metadata if present."""
     path = Path(path)
     df = pd.read_parquet(path)
     meta_path = path.with_suffix(path.suffix + ".meta.json")

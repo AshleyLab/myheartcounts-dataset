@@ -447,22 +447,37 @@ n_boot      =  count of finite draws in this cell
 
 (`_summarize` in `bootstrap.py`, reused by Phase 2.)
 
-CI level is 0.95 by default (set in `sweep_methods.yaml:ci_level`); the
-percentile method is bias-uncorrected — we rely on the
-shared-resample-matrix structure to control pairing rather than
-attempting an analytic acceleration term.
+CI level is 0.95 by default (set in `sweep_methods.yaml:ci_level`).
+Pairing via the shared resample matrix controls sampling covariance, but it
+does **not** correct the shape bias of the `max_g E − min_g E` disparity
+ratio that powers the fairness skill score. Fairness rows therefore
+additionally carry a deterministic `point` estimate plus a BCa
+(bias-corrected & accelerated) CI alongside the percentile columns
+(§S7). Skill / rank rows stay percentile-only by default — they are
+near-unbiased, so BCa would not move them much — but a
+`bca_skill_rank` knob exists for parity sanity-checks.
 
 Fairness bootstrap follows the same shape: each draw computes
 `(D_j, D_b)` per task, ratio per task, geomean per attribute, macro
 average. SE / CI from `_summarize` over the 1000 draws
-(`aggregate_fairness_skill_score.py`).
+(`aggregate_fairness_skill_score.py`). The fairness CSV columns are
+`[method, scope, split, n_tasks, mean, se, ci_lo, ci_hi, n_boot,
+point, bca_lo, bca_hi]`; `mean / ci_lo / ci_hi` retain their legacy
+percentile semantics, and `point / bca_lo / bca_hi` carry the BCa
+augmentation for the 3 published fairness scopes (`overall`,
+`age_group`, `sex`).
 
 ### 8.1 Recomputing against a subset of methods
 
 The Phase 0 → Phase 1 → Phase 2 boundary is well-defined:
-`bootstrap_draws.parquet` is the canonical Phase-1 output, and any subset
-of the methods inside it can be re-aggregated in Phase 2 alone — no
-Phase 0 (per-method eval) or Phase 1 (resample) rerun needed.
+`bootstrap_draws.parquet` is the canonical Phase-1 output (plus its sibling
+`per_user_errors.parquet`, the BCa LOO substrate emitted by
+`bootstrap_imputation_draws.py --per-user-errors`), and any subset of the
+methods inside them can be re-aggregated in Phase 2 alone — no Phase 0
+(per-method eval) or Phase 1 (resample) rerun needed. The BCa point + LOO
+jackknife are themselves per-method recomputes against `baseline_method`
+(same invariant as the skill / fairness scores), so subset reruns stay
+bit-identical for the in-subset rows.
 
 Both Phase 2 aggregators take a `--method-filter` flag that pre-filters
 the parquet rows before any reducer runs:
@@ -580,6 +595,88 @@ single-task case where the mean collapses to one term.
 Bootstrap: repeat the per-user join with each draw's resampled cohort,
 get 1000 values of `S^{task,(b)}`, report
 `mean / se / ci_lo / ci_hi`.
+
+## §S7. BCa (bias-corrected & accelerated) CIs for fairness skill
+
+**Why.** The fairness skill score reduces a per-task max-min disparity
+ratio `D_{r}^{(G)} = max_g E_{r}^{(g)} − min_g E_{r}^{(g)}` clipped and
+geomean-averaged across tasks. `max − min` is a skewed, downward-biased
+statistic: the bootstrap mean `mean_b S^{(G),(b)}` sits below the
+deterministic point estimate `Ŝ^{(G)}`, and the plain percentile CI
+brackets 0 for most mid-pack methods. The shared-resample-matrix
+pairing in §8 addresses sampling **covariance**, not the shape **bias**
+of `max − min` — those are orthogonal concerns. BCa re-anchors the
+interval at `Ŝ^{(G)}` and corrects bias + skew (second-order accurate)
+without changing the reported point estimate.
+
+**Math.** For each headline `(method, scope)` cell:
+
+```
+draws         θ*_b  =  bootstrap S^{(G),(b)} from Phase 2
+point         θ̂      =  compute_fair_skill_scores(per_user → per_cell mean)
+jackknife    θ_{(i)} =  leave-one-user-out recompute of the point flow
+
+z_0           =  Φ⁻¹( frac of draws < θ̂ )                # bias correction
+a             =  Σ_i d_i^3 / (6 · (Σ_i d_i^2)^{3/2}),  d = mean(θ_{(i)}) − θ_{(i)}
+                                                          # acceleration
+α_lo, α_hi    =  Φ( z_0 + (z_0 + z_{α/2})  / (1 − a (z_0 + z_{α/2})) )
+                 Φ( z_0 + (z_0 + z_{1−α/2})/ (1 − a (z_0 + z_{1−α/2})) )
+bca_lo, hi    =  percentile_b θ*_b at (100 · α_lo, 100 · α_hi)
+```
+
+`Φ` / `Φ⁻¹` come from `statistics.NormalDist` (stdlib, no scipy).
+
+**Guards** (fall back to the plain percentile interval):
+
+- 0 finite draws or non-finite point → percentile (or NaN, NaN if
+  draws are empty).
+- All draws equal → `[point, point]` (degenerate).
+- Non-finite `z₀` or `a`; zero or non-finite denominator
+  `1 − a (z₀ + z_q)` → percentile.
+- `z₀ = a = 0` (symmetric draws, symmetric jackknife) → adjusted
+  percentiles collapse to `α/2` and `1 − α/2`: the BCa interval
+  equals the percentile interval exactly.
+
+**Headline scope gating.** BCa is gated to the
+headline-scope set (default ON for fairness):
+
+| Table                                     | Headline scopes for BCa                        | Default |
+|-------------------------------------------|------------------------------------------------|---------|
+| `fairness_skill_score_bootstrap.csv`      | `overall`, `age_group`, `sex` (all 3 emitted)  | **ON**  |
+| `skill_scores_bootstrap.csv` (opt-in)     | `overall` + sensor categories                  | off     |
+| `avg_rankings_bootstrap.csv` (opt-in)     | `overall` + sensor categories                  | off     |
+
+`point` is filled for every row (headline + non-headline); `bca_lo` /
+`bca_hi` are NaN outside the headline set. Per-channel rows therefore
+keep the percentile CI only, even when the opt-in flag is on.
+
+**Skill / rank opt-in caveat.** The `--bca-skill-rank` flag on
+`aggregate_imputation_paper_metrics.py` is wired through the CLI but
+the LOO jackknife of the skill / rank point flow is not yet
+implemented (each LOO recompute would run
+`compute_per_task_paired_R` + `compute_skill_scores` +
+`compute_average_rankings` once per user, ~N × per-iter at N ≈ 5K
+users in the production cohort). Turning the flag on currently raises
+`NotImplementedError` with a pointer back here. The flag is OFF by
+default so the legacy skill / rank CSVs are unchanged.
+
+**Backward compatibility.** The legacy columns
+`[method, scope, split, n_tasks, mean, se, ci_lo, ci_hi, n_boot]`
+keep their exact percentile semantics; `--no-bca` produces a CSV
+byte-identical to the pre-BCa output (asserted by
+`tests/imputation_evaluation/test_imputation_bca.py::test_fairness_bca_off_matches_legacy_csv`).
+
+**Implementation pointers.**
+
+- `src/imputation_evaluation/evaluation/bca.py` — `_jackknife_acceleration`,
+  `_bca_interval`, `_augment_with_bca` (stdlib only).
+- `src/imputation_evaluation/evaluation/bootstrap_skill_rank.py` —
+  `compute_per_draw_errors(emit_per_user_errors=True)` and the
+  `write_per_user_errors_parquet` / `read_per_user_errors_parquet`
+  helpers (Phase 1 substrate).
+- `scripts/paper_results/aggregate_fairness_skill_score.py` —
+  `_jackknife_fair_points_from_per_user`, `_per_user_to_per_cell_E`,
+  `compute_fairness_skill_scores(bca=True, per_user_df=...)`.
 
 ## See also
 

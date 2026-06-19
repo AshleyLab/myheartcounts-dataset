@@ -37,6 +37,7 @@ from pathlib import Path
 from imputation_evaluation.evaluation.bootstrap_skill_rank import (
     aggregate_skill_rank_fairness,
     read_draws_parquet,
+    read_per_user_errors_parquet,
 )
 from imputation_evaluation.evaluation.disparity_metrics import (
     DISPARITY_FUNCTIONS,
@@ -110,6 +111,33 @@ def _parse_args() -> argparse.Namespace:
              "(fairness_subgroup_scores_bootstrap.csv, "
              "fairness_summary_bootstrap.csv). Off by default.",
     )
+    bca_grp = p.add_mutually_exclusive_group()
+    bca_grp.add_argument(
+        "--bca-skill-rank", dest="bca_skill_rank", action="store_true",
+        default=False,
+        help=(
+            "Opt-in BCa CI augmentation for skill / rank tables, as a parity "
+            "sanity-check against the fairness BCa. Default OFF — skill and "
+            "rank are near-unbiased, so the BCa interval is close to the "
+            "percentile CI in practice. Requires --per-user-errors. NOTE: "
+            "the LOO jackknife required by BCa is currently not wired up for "
+            "skill / rank (it would require an N-iteration recompute of the "
+            "point flow); passing this flag currently raises "
+            "NotImplementedError. See METRICS.md §S7."
+        ),
+    )
+    bca_grp.add_argument(
+        "--no-bca-skill-rank", dest="bca_skill_rank", action="store_false",
+        help="Explicitly disable BCa for skill / rank (the default).",
+    )
+    p.add_argument(
+        "--per-user-errors", type=Path, default=None,
+        help=(
+            "Path to per_user_errors.parquet from Phase 1, required when "
+            "--bca-skill-rank is on. Defaults to "
+            "'<draws>.parent / per_user_errors.parquet'."
+        ),
+    )
     return p.parse_args()
 
 
@@ -146,6 +174,37 @@ def main() -> int:
             args.draws,
         )
         return 2
+
+    if args.bca_skill_rank:
+        # Validate the per-user-errors path exists even when stubbed so the
+        # CLI fails early on configuration errors. Once the LOO recompute is
+        # wired up the file is needed.
+        per_user_path = (
+            args.per_user_errors
+            if args.per_user_errors is not None
+            else args.draws.parent / "per_user_errors.parquet"
+        )
+        if not per_user_path.exists():
+            logger.error(
+                "--bca-skill-rank requires %s but the file does not exist; "
+                "pass --per-user-errors PATH or rerun Phase 1 without "
+                "--no-per-user-errors.",
+                per_user_path,
+            )
+            return 2
+        # Smoke-load to surface schema errors early (cheap; pyarrow lazy reads).
+        _per_user_df, _ = read_per_user_errors_parquet(per_user_path)
+        logger.info(
+            "Loaded %d per-user rows from %s", len(_per_user_df), per_user_path,
+        )
+        raise NotImplementedError(
+            "Skill / rank BCa is a planned parity sanity-check, but the LOO "
+            "jackknife requires N (~5K user) recomputes of the point flow "
+            "(compute_per_task_paired_R + compute_skill_scores + "
+            "compute_average_rankings). Wiring + optimisation is tracked as "
+            "follow-up work; for the leaderboard-relevant fairness BCa, see "
+            "scripts/paper_results/aggregate_fairness_skill_score.py --bca."
+        )
 
     tables = aggregate_skill_rank_fairness(
         df,
