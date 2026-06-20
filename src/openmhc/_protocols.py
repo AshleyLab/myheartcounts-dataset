@@ -6,8 +6,9 @@ No base class inheritance required -- just implement the right methods.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import Iterable, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 import numpy as np
 
@@ -44,6 +45,39 @@ class EvalContext:
 
 
 @runtime_checkable
+class CohortStream(Protocol):
+    """The cohort handed to ``fit`` / ``predict`` — iterate for one participant at a time.
+
+    A small (hourly) spec hands you a plain ``list`` of per-participant arrays; a large or
+    ``streaming`` spec hands you a lazy view with the **same iteration surface**, so the
+    whole cohort never sits in RAM. Both forms satisfy this protocol — program against it,
+    not against any concrete type. **Iterate — don't index** (``data[i]``) **or stack**
+    (``np.stack(data)``) the streaming form: those force the cohort into memory. ``load`` is
+    available on the streaming form for random access by participant id.
+
+    This is the public description of that handle; the engine's concrete streaming class
+    satisfies it structurally, so submitters never import an internal type.
+    """
+
+    def __iter__(self) -> Iterator[np.ndarray]:
+        """Yield one participant's array at a time, shaped to the model's ``data_spec``."""
+        ...
+
+    def __len__(self) -> int:
+        """Number of participants in the cohort."""
+        ...
+
+    def load(self, user_id) -> np.ndarray:
+        """Return one participant's array by id (streaming form only)."""
+        ...
+
+
+# What the ``data`` argument to ``fit`` / ``predict`` actually is: a materialized list for
+# small specs, or a streamed :class:`CohortStream` for large / streaming specs.
+ParticipantData = list | CohortStream
+
+
+@runtime_checkable
 class Method(Protocol):
     """The prediction-track model contract — **return one prediction per participant**.
 
@@ -74,7 +108,7 @@ class Method(Protocol):
         for x in data: ...        # x is that participant's array, shaped to your data_spec
 
     For small (hourly) specs ``data`` is a plain ``list``; for large specs (``minute``, or
-    whenever you set ``streaming = True``) it is a streamed :class:`~openmhc.CohortView`
+    whenever you set ``streaming = True``) it is a streamed :class:`~openmhc.CohortStream`
     that yields the *same* per-participant arrays one at a time, so the whole cohort never
     sits in memory. **Iterate — don't index** (``data[i]``) **or stack the raw cohort**
     (``np.stack(data)``): those force everything into RAM and break streaming. Encoding each
@@ -109,7 +143,7 @@ class Method(Protocol):
                 return self._probe.predict(np.stack([self._encode(x) for x in data]))
     """
 
-    def predict(self, data: Iterable[np.ndarray]) -> np.ndarray:
+    def predict(self, data: ParticipantData) -> np.ndarray:
         """Return one prediction per participant, in ``data`` order (the only required method).
 
         The optional ``fit(data, labels, task_type)`` / ``set_context(ctx)`` hooks are

@@ -143,7 +143,19 @@ def evaluate_prediction(
 
     Returns:
         A PredictionResults instance with per-task metrics.
+
+    Raises:
+        TypeError: If ``model`` does not satisfy the :class:`~openmhc.Method` contract
+            (no callable ``predict``).
     """
+    from openmhc._protocols import Method
+
+    if not isinstance(model, Method):
+        raise TypeError(
+            f"{type(model).__name__} does not satisfy openmhc.Method: a callable "
+            "predict(self, data) is required. See openmhc.Method for the contract."
+        )
+
     paths = _DatasetPaths.resolve(data_dir)
     _ensure_labels_env(paths.labels_dir)
 

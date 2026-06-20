@@ -22,10 +22,6 @@ from __future__ import annotations
 
 import numpy as np
 
-# Task type → the fixed linear head used for it (shared by every probe; config.py
-# is dataclasses-only, so this import keeps module load cheap).
-from downstream_evaluation.config import PROBE_BY_TASK_TYPE
-
 
 class LinearProbe:
     """PCA (up to 50 components) + a fixed linear head, selected by task type."""
@@ -41,14 +37,15 @@ class LinearProbe:
             seed: random_state pinning PCA's randomized SVD solver and the
                 classifier, so the probe is reproducible.
         """
+        # Imported lazily so ``import openmhc`` stays light — the engine (config,
+        # sklearn/xgboost) loads only when a probe is actually built.
+        from downstream_evaluation.config import PROBE_BY_TASK_TYPE, ClassifierConfig
+        from downstream_evaluation.models.registry import create_model
+
         if task_type not in PROBE_BY_TASK_TYPE:
             raise ValueError(
                 f"task_type must be one of {sorted(PROBE_BY_TASK_TYPE)}, got {task_type!r}"
             )
-        # Imported lazily so importing the class stays cheap (sklearn/xgboost load
-        # only when a probe is actually built).
-        from downstream_evaluation.config import ClassifierConfig
-        from downstream_evaluation.models.registry import create_model
 
         self.task_type = task_type
         config = ClassifierConfig(

@@ -6,6 +6,9 @@ into a list (eager, for small specs) or hands it to a model whose
 per-participant :meth:`load` — never the loader, the lookup, or the segment store
 (the design's public/internal boundary). Iterating yields one participant's array at a
 time, so peak memory is one participant, not the whole cohort.
+
+This concrete class is internal; it structurally satisfies the public
+:class:`openmhc.CohortStream` protocol, which is the type submitters program against.
 """
 
 from __future__ import annotations

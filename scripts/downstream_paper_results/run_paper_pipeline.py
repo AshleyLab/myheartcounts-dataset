@@ -63,7 +63,7 @@ def _phase1_bootstrap(cfg: dict, draws: Path, methods: list[str], dry_run: bool)
     )
 
 
-def _phase2_aggregate(cfg: dict, draws: Path, out_dir: Path, dry_run: bool) -> None:
+def _phase2_aggregate(cfg: dict, draws: Path, out_dir: Path, methods: list[str], dry_run: bool) -> None:
     agg = [
         sys.executable,
         str(HERE / "aggregate_downstream_paper_metrics.py"),
@@ -78,7 +78,17 @@ def _phase2_aggregate(cfg: dict, draws: Path, out_dir: Path, dry_run: bool) -> N
     ]
     for d in cfg.get("disparity_fns") or []:
         agg += ["--disparity-fn", d]
+    # Opt-in BCa for the (near-unbiased) skill / rank tables; needs predictions.
+    if cfg.get("bca_skill_rank"):
+        agg += [
+            "--bca-skill-rank",
+            "--predictions_dir", str(cfg["predictions_dir"]),
+            "--csvs_dir", str(cfg["csvs_dir"]),
+            "--methods", *methods,
+        ]
     _run(agg, dry_run)
+    # Pass the predictions through so the fairness reducer can run the leave-one-
+    # user-out jackknife and emit the BCa interval alongside the percentile CI.
     _run(
         [
             sys.executable,
@@ -89,6 +99,9 @@ def _phase2_aggregate(cfg: dict, draws: Path, out_dir: Path, dry_run: bool) -> N
             "--clip-lower", str(cfg["clip_lower"]),
             "--clip-upper", str(cfg["clip_upper"]),
             "--ci-level", str(cfg["ci_level"]),
+            "--predictions_dir", str(cfg["predictions_dir"]),
+            "--csvs_dir", str(cfg["csvs_dir"]),
+            "--methods", *methods,
         ],
         dry_run,
     )
@@ -140,7 +153,7 @@ def main() -> None:
     if not args.skip_phase1:
         _phase1_bootstrap(cfg, draws, methods, args.dry_run)
     if not args.skip_phase2:
-        _phase2_aggregate(cfg, draws, out_dir, args.dry_run)
+        _phase2_aggregate(cfg, draws, out_dir, methods, args.dry_run)
 
     log.info("Pipeline complete → %s", out_dir)
 

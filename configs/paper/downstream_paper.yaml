@@ -35,3 +35,7 @@ lambda_fairness: 0.5      # S - lambda*D weight (feeds fairness_summary's adjust
 fairness_combine: linear_penalty
 ci_level: 0.95
 disparity_fns: []         # empty = all registered disparity functions
+# Skill/rank are near-unbiased, so their percentile CI is normally enough and BCa
+# is off by default. Set true to also emit bca_lo/bca_hi for skill_scores +
+# avg_rankings (runs the leave-one-user-out jackknife over predictions_dir).
+bca_skill_rank: false

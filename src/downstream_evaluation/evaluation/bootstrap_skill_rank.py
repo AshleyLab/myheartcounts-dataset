@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
+from statistics import NormalDist
 
 import numpy as np
 import pandas as pd
@@ -551,6 +552,38 @@ def _summarise(values: list[float], ci_level: float, point: float | None = None)
     }
 
 
+def _warn_jack_drift(
+    label: str,
+    jack_point: dict[tuple[str, str], float],
+    nested_point: dict[str, dict[str, float]],
+    tol: float = 1e-3,
+) -> None:
+    """Warn when a full-cohort jackknife point drifts from the draws POINT_DRAW.
+
+    They are the same statistic on the same cohort and agree up to the draws
+    parquet's float32 round-trip (~1e-6); a gap above the tolerance means the
+    predictions and bootstrap_draws.parquet came from different runs, which would
+    put the BCa interval on a different cohort than the percentile CI.
+    """
+    worst, worst_key = 0.0, None
+    for (m, scope), value in jack_point.items():
+        pt = nested_point.get(m, {}).get(scope)
+        if pt is None or not (np.isfinite(pt) and np.isfinite(value)):
+            continue
+        drift = abs(float(value) - float(pt))
+        if drift > worst:
+            worst, worst_key = drift, (m, scope)
+    if worst > tol:
+        log.warning(
+            "%s jackknife point disagrees with the draws POINT_DRAW by up to %.3g (at %s) — "
+            "predictions and bootstrap_draws.parquet look like different runs; the BCa "
+            "interval would be inconsistent with the percentile CI.",
+            label,
+            worst,
+            worst_key,
+        )
+
+
 def aggregate_skill_rank_fairness(
     draws: pd.DataFrame,
     baseline: str,
@@ -562,6 +595,8 @@ def aggregate_skill_rank_fairness(
     fairness_combine_name: str = "linear_penalty",
     domain_map: dict[str, str] = TASK_DOMAIN_MAP,
     ci_level: float = 0.95,
+    aligned: dict[str, dict[str, dict]] | None = None,
+    bca_skill_rank: bool = False,
 ) -> dict[str, pd.DataFrame]:
     """Phase 2: summarise per-draw errors into skill / rank / fairness tables.
 
@@ -569,6 +604,12 @@ def aggregate_skill_rank_fairness(
     helpers, so per-draw skill/rank/fairness match the one-pass bootstrap exactly.
     Returns ``{skill_scores, avg_rankings, fairness_subgroup_scores,
     fairness_summary}`` (mean / se / ci at ``ci_level``).
+
+    When ``bca_skill_rank`` is set and ``aligned`` (the per-user predictions) is
+    given, the skill_scores and avg_rankings tables also carry ``bca_lo``/``bca_hi``
+    from the leave-one-user-out jackknife. Skill and rank are near-unbiased (their
+    bootstrap mean ≈ the point), so this is off by default and the percentile CI is
+    normally enough; the option exists for parity with the fairness interval.
     """
     from downstream_evaluation.evaluation.disparity_metrics import (
         DISPARITY_FUNCTIONS,
@@ -671,28 +712,42 @@ def aggregate_skill_rank_fairness(
                     fair_draws[m][f"disparity_{dname}"].append(mean_disp)
                     fair_draws[m][f"fairness_adjusted_{dname}"].append(fa)
 
+    # Optional BCa for the (near-unbiased) skill / rank headline scopes — needs the
+    # per-user predictions for the leave-one-user-out jackknife.
+    skill_jack: dict[tuple[str, str], np.ndarray] = {}
+    rank_jack: dict[tuple[str, str], np.ndarray] = {}
+    if bca_skill_rank and aligned is not None:
+        skill_jack, rank_jack, jk_skill_pt, jk_rank_pt = jackknife_skill_rank(
+            aligned, baseline, clip_lower=clip_lower, clip_upper=clip_upper, domain_map=domain_map
+        )
+        _warn_jack_drift("skill", jk_skill_pt, skill_point)
+        _warn_jack_drift("rank", jk_rank_pt, rank_point)
+
+    def _bca_pair(draws_list, point, jack) -> tuple[float, float]:
+        if jack is None or point is None or not np.isfinite(point):
+            return float("nan"), float("nan")
+        return _bca_interval(np.asarray(draws_list, dtype=np.float64), float(point), jack, ci_level)
+
     skill_rows, rank_rows = [], []
     for m in methods:
         for scope in ["Overall", *domains]:
             if scope in skill_draws[m]:
-                skill_rows.append(
-                    {
-                        "method": m,
-                        "scope": scope,
-                        **_summarise(skill_draws[m][scope], ci_level, skill_point[m].get(scope)),
-                        "n_boot": n_boot,
-                        "n_tasks": n_tasks.get(scope, 0),
-                    }
-                )
+                pt = skill_point[m].get(scope)
+                row = {"method": m, "scope": scope, **_summarise(skill_draws[m][scope], ci_level, pt)}
+                if bca_skill_rank and aligned is not None:
+                    lo, hi = _bca_pair(skill_draws[m][scope], pt, skill_jack.get((m, scope)))
+                    row["bca_lo"], row["bca_hi"] = lo, hi
+                row["n_boot"] = n_boot
+                row["n_tasks"] = n_tasks.get(scope, 0)
+                skill_rows.append(row)
             if scope in rank_draws[m]:
-                rank_rows.append(
-                    {
-                        "method": m,
-                        "scope": scope,
-                        **_summarise(rank_draws[m][scope], ci_level, rank_point[m].get(scope)),
-                        "n_boot": n_boot,
-                    }
-                )
+                pt = rank_point[m].get(scope)
+                row = {"method": m, "scope": scope, **_summarise(rank_draws[m][scope], ci_level, pt)}
+                if bca_skill_rank and aligned is not None:
+                    lo, hi = _bca_pair(rank_draws[m][scope], pt, rank_jack.get((m, scope)))
+                    row["bca_lo"], row["bca_hi"] = lo, hi
+                row["n_boot"] = n_boot
+                rank_rows.append(row)
 
     subgroup_rows = []
     for m in methods:
@@ -750,3 +805,309 @@ def aggregate_skill_rank_fairness(
         "fairness_subgroup_scores": pd.DataFrame(subgroup_rows),
         "fairness_summary": pd.DataFrame(summary_rows),
     }
+
+
+# ---------------------------------------------------------------------------
+# BCa (bias-corrected & accelerated) interval — a point-anchored alternative to
+# the percentile CI for the fairness disparity-ratio skill score, which is skewed
+# and downward-biased (its bootstrap mean sits below the point, so the percentile
+# CI is biased low). BCa re-anchors the interval near the reported point estimate
+# and corrects for bias (z0) and skew/acceleration (a), second-order accurate. The
+# acceleration is estimated from the leave-one-user-out jackknife. Φ / Φ⁻¹ come
+# from ``statistics.NormalDist`` (no scipy dependency).
+# ---------------------------------------------------------------------------
+
+_NORM = NormalDist()
+
+
+def _jackknife_acceleration(jack: np.ndarray) -> float:
+    """BCa acceleration from leave-one-out jackknife values (nan-aware).
+
+    ``a = Σ d³ / (6 · (Σ d²)^{3/2})`` with ``d = mean_i(θ₍ᵢ₎) − θ₍ᵢ₎``. Returns
+    ``0.0`` when fewer than two finite values are present or ``Σ d² == 0``.
+    """
+    arr = np.asarray(jack, dtype=np.float64)
+    finite = arr[np.isfinite(arr)]
+    if finite.size < 2:
+        return 0.0
+    d = finite.mean() - finite
+    s2 = float(np.sum(d**2))
+    if s2 == 0.0:
+        return 0.0
+    return float(np.sum(d**3)) / (6.0 * s2**1.5)
+
+
+def _bca_interval(
+    draws: np.ndarray, point: float, jack: np.ndarray, ci_level: float
+) -> tuple[float, float]:
+    """Bias-corrected & accelerated CI for one statistic.
+
+    Args:
+        draws: bootstrap draws ``θ*_b`` (NaN-dropped).
+        point: the deterministic point estimate ``θ̂`` (the reported value).
+        jack: leave-one-user-out jackknife values ``θ₍ᵢ₎`` (NaN-aware).
+        ci_level: e.g. 0.95 -> a 2.5/97.5 percentile-equivalent interval.
+
+    Guards (fall back to the plain percentile interval): empty/non-finite point,
+    non-finite ``z0``/``a``, or a zero BCa denominator ``1 − a(z0 + z_q)``. All
+    draws equal -> ``[point, point]``. When ``z0 = a = 0`` the adjusted percentiles
+    reduce to ``α/2`` and ``1 − α/2``, i.e. the percentile interval exactly.
+    """
+    arr = np.asarray(draws, dtype=np.float64)
+    finite = arr[np.isfinite(arr)]
+    n = int(finite.size)
+    alpha = 1.0 - ci_level
+
+    def _percentile() -> tuple[float, float]:
+        if n == 0:
+            return float("nan"), float("nan")
+        return (
+            float(np.percentile(finite, 100.0 * (alpha / 2.0))),
+            float(np.percentile(finite, 100.0 * (1.0 - alpha / 2.0))),
+        )
+
+    if n == 0 or not np.isfinite(point):
+        return _percentile()
+    if np.ptp(finite) == 0.0:
+        return float(point), float(point)
+
+    # Bias correction z0 from the fraction of draws below the point (clipped so
+    # an extreme point still yields a finite z0).
+    prop = float(np.count_nonzero(finite < point)) / n
+    prop = min(max(prop, 0.5 / n), 1.0 - 0.5 / n)
+    z0 = _NORM.inv_cdf(prop)
+    a = _jackknife_acceleration(jack)
+    if not (np.isfinite(z0) and np.isfinite(a)):
+        return _percentile()
+
+    out: list[float] = []
+    for z_q in (_NORM.inv_cdf(alpha / 2.0), _NORM.inv_cdf(1.0 - alpha / 2.0)):
+        denom = 1.0 - a * (z0 + z_q)
+        if denom == 0.0 or not np.isfinite(denom):
+            return _percentile()
+        adj = z0 + (z0 + z_q) / denom
+        if not np.isfinite(adj):
+            return _percentile()
+        frac = min(max(_NORM.cdf(adj), 0.0), 1.0)
+        out.append(float(np.percentile(finite, 100.0 * frac)))
+    return out[0], out[1]
+
+
+def _pad_jackknife_maps(per_user_maps: list[dict[tuple, float]]) -> dict[tuple, np.ndarray]:
+    """Align a list of per-user ``{key: value}`` maps into ``{key: array}``.
+
+    The k-th array entry is user k's leave-one-out value, NaN where that user's
+    recompute lacked the key (so every key spans all users, NaN-aware downstream).
+    """
+    keys: set[tuple] = set()
+    for m in per_user_maps:
+        keys |= m.keys()
+    return {
+        key: np.array([m.get(key, np.nan) for m in per_user_maps], dtype=np.float64) for key in keys
+    }
+
+
+# ---------------------------------------------------------------------------
+# Leave-one-user-out jackknife of the disparity-ratio fairness skill score.
+# Feeds the BCa acceleration term. Re-runs the *exact* point flow on the cohort
+# minus each user, so ``jackknife_fairness_skill(...)[1]`` (the full-cohort point)
+# reproduces the draws POINT_DRAW value by construction.
+# ---------------------------------------------------------------------------
+
+
+def _attr_disparity_ratio_skill(
+    g: pd.DataFrame,
+    methods: list[str],
+    baseline: str,
+    clip_lower: float,
+    clip_upper: float,
+) -> dict[str, float]:
+    """Disparity-ratio fairness skill ``{method: S}`` for one (attribute, draw) slice.
+
+    ``g`` carries columns ``task, method, subgroup_value, E``. Per task the
+    disparity ``D = max_v E − min_v E`` over subgroup values; ``ratio = clip(
+    D_model / D_baseline)`` dropping tasks where ``D_baseline ≤ 0`` or non-finite;
+    ``S = 1 − geomean_task(ratio)``. Shared by the draws path
+    (``aggregate_fairness_skill_score``) and the leave-one-user-out jackknife so
+    the two are identical by construction.
+    """
+    out: dict[str, float] = {}
+    disp = g.groupby(["task", "method"])["E"].agg(lambda x: x.max() - x.min()).unstack("method")
+    if baseline not in disp.columns:
+        return out
+    d_base = disp[baseline]
+    for m in methods:
+        if m not in disp.columns:
+            continue
+        d_model = disp[m]
+        mask = (d_base > 0) & np.isfinite(d_base) & np.isfinite(d_model)
+        if mask.sum() == 0:
+            continue
+        ratios = np.clip((d_model[mask] / d_base[mask]).to_numpy(), clip_lower, clip_upper)
+        out[m] = 1.0 - float(np.exp(np.mean(np.log(ratios))))
+    return out
+
+
+def _fairness_skill_from_indices(
+    aligned: dict[str, dict[str, dict]],
+    methods: list[str],
+    tasks: list[str],
+    attributes: tuple[str, ...],
+    attribute_masks: dict[str, dict[str, dict[str, np.ndarray]]],
+    idx_per_task: dict[str, np.ndarray],
+    baseline: str,
+    clip_lower: float,
+    clip_upper: float,
+) -> dict[tuple[str, str], float]:
+    """``{(method, scope): S}`` (scopes = each attribute + ``overall``) on given row indices.
+
+    Recomputes the per-(task, method, subgroup) error ``E = 1 − metric`` on the
+    supplied per-task row indices (mirrors phase-1's per-subgroup emit: skip a
+    subgroup cell that is empty, has < 2 users, or yields a non-finite metric),
+    then reduces with :func:`_attr_disparity_ratio_skill`. ``overall`` is the mean
+    over attributes that produced a score (mirrors the draws-path macro).
+    """
+    per_attr: dict[str, dict[str, float]] = {}
+    out: dict[tuple[str, str], float] = {}
+    for attr in attributes:
+        rows: list[dict] = []
+        values = sorted({v for t in tasks for v in attribute_masks[t][attr]})
+        for value in values:
+            masks_b: dict[str, np.ndarray] = {}
+            for t in tasks:
+                cm = attribute_masks[t][attr].get(value)
+                if cm is None:
+                    continue
+                m_b = cm[idx_per_task[t]]
+                if not m_b.any():
+                    continue
+                masks_b[t] = m_b
+            if not masks_b:
+                continue
+            per_task = _per_task_metric_on_indices(
+                aligned, methods, tasks, idx_per_task, mask_per_task=masks_b
+            )
+            for t, method_vals in per_task.items():
+                for m, metric in method_vals.items():
+                    if metric is None or not np.isfinite(metric):
+                        continue
+                    rows.append(
+                        {"task": t, "method": m, "subgroup_value": value, "E": 1.0 - float(metric)}
+                    )
+        if not rows:
+            continue
+        g = pd.DataFrame(rows, columns=["task", "method", "subgroup_value", "E"])
+        for m, s in _attr_disparity_ratio_skill(g, methods, baseline, clip_lower, clip_upper).items():
+            out[(m, attr)] = s
+            per_attr.setdefault(m, {})[attr] = s
+    for m in methods:
+        vals = [per_attr[m][a] for a in attributes if m in per_attr and a in per_attr[m]]
+        if vals:
+            out[(m, "overall")] = float(np.mean(vals))
+    return out
+
+
+def jackknife_fairness_skill(
+    aligned: dict[str, dict[str, dict]],
+    subgroup_map: dict[str, dict[str, str]],
+    attributes: tuple[str, ...],
+    baseline: str,
+    *,
+    clip_lower: float,
+    clip_upper: float,
+) -> tuple[dict[tuple[str, str], np.ndarray], dict[tuple[str, str], float]]:
+    """Exact leave-one-user-out jackknife of the disparity-ratio fairness skill score.
+
+    Re-runs the deterministic point flow (:func:`_fairness_skill_from_indices`) on
+    the aligned per-user predictions minus each user. Returns
+    ``(jack_by_key, point_by_key)`` where ``jack_by_key[(method, scope)]`` is the
+    array of leave-one-user-out S values over the cohort (NaN where a scope is
+    absent for that recompute) and ``point_by_key`` is the full-cohort S (== the
+    draws POINT_DRAW value). Scopes = each attribute in ``attributes`` + ``overall``.
+    ~U deterministic recomputes (U = distinct users across tasks).
+    """
+    methods = list(aligned.keys())
+    tasks = sorted(aligned[methods[0]].keys())
+    attribute_masks = _build_subgroup_masks(aligned, tasks, methods, subgroup_map, list(attributes))
+    full_idx = {t: np.arange(len(aligned[methods[0]][t]["uids"])) for t in tasks}
+    point = _fairness_skill_from_indices(
+        aligned, methods, tasks, attributes, attribute_masks, full_idx, baseline, clip_lower, clip_upper
+    )
+    pos = {t: {u: i for i, u in enumerate(aligned[methods[0]][t]["uids"])} for t in tasks}
+    users = sorted({u for t in tasks for u in aligned[methods[0]][t]["uids"]})
+    per_user_maps: list[dict[tuple, float]] = []
+    for u in users:
+        idx_u = {}
+        for t in tasks:
+            p = pos[t].get(u)
+            idx_u[t] = full_idx[t] if p is None else np.delete(full_idx[t], p)
+        per_user_maps.append(
+            _fairness_skill_from_indices(
+                aligned, methods, tasks, attributes, attribute_masks, idx_u, baseline, clip_lower, clip_upper
+            )
+        )
+    return _pad_jackknife_maps(per_user_maps), point
+
+
+def jackknife_skill_rank(
+    aligned: dict[str, dict[str, dict]],
+    baseline: str,
+    *,
+    clip_lower: float,
+    clip_upper: float,
+    domain_map: dict[str, str] = TASK_DOMAIN_MAP,
+) -> tuple[
+    dict[tuple[str, str], np.ndarray],
+    dict[tuple[str, str], np.ndarray],
+    dict[tuple[str, str], float],
+    dict[tuple[str, str], float],
+]:
+    """Exact leave-one-user-out jackknife of the macro skill score and average rank.
+
+    Recomputes the global per-task metric on the cohort minus each user, then the
+    same skill / rank reducers used per draw. Returns
+    ``(skill_jack, rank_jack, skill_point, rank_point)`` keyed by ``(method, scope)``
+    with scope = ``Overall`` + each domain; the ``*_jack`` maps span the cohort (NaN
+    where a scope is absent for a recompute) and the ``*_point`` maps are the
+    full-cohort values, which reproduce the draws POINT_DRAW by construction.
+    """
+    methods = list(aligned.keys())
+    tasks = sorted(aligned[methods[0]].keys())
+    full_idx = {t: np.arange(len(aligned[methods[0]][t]["uids"])) for t in tasks}
+
+    def _compute(idx_per_task: dict[str, np.ndarray]):
+        per_task = _per_task_metric_on_indices(aligned, methods, tasks, idx_per_task)
+        skill: dict[tuple[str, str], float] = {}
+        for m in methods:
+            ratios = _ratios_for_method(per_task, m, baseline)
+            for scope, val in _per_domain_skill_from_ratios(
+                ratios, domain_map, clip_lower, clip_upper
+            ).items():
+                if np.isfinite(val):
+                    skill[(m, scope)] = val
+        rank: dict[tuple[str, str], float] = {}
+        for scope, per_m in _per_domain_avg_rank(per_task, methods, domain_map).items():
+            for m, r in per_m.items():
+                if np.isfinite(r):
+                    rank[(m, scope)] = r
+        return skill, rank
+
+    skill_point, rank_point = _compute(full_idx)
+    pos = {t: {u: i for i, u in enumerate(aligned[methods[0]][t]["uids"])} for t in tasks}
+    users = sorted({u for t in tasks for u in aligned[methods[0]][t]["uids"]})
+    skill_maps: list[dict[tuple, float]] = []
+    rank_maps: list[dict[tuple, float]] = []
+    for u in users:
+        idx_u = {}
+        for t in tasks:
+            p = pos[t].get(u)
+            idx_u[t] = full_idx[t] if p is None else np.delete(full_idx[t], p)
+        s, r = _compute(idx_u)
+        skill_maps.append(s)
+        rank_maps.append(r)
+    return (
+        _pad_jackknife_maps(skill_maps),
+        _pad_jackknife_maps(rank_maps),
+        skill_point,
+        rank_point,
+    )

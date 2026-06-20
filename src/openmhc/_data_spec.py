@@ -3,7 +3,7 @@
 A model sets ``data_spec = DataSpec(...)`` as a class attribute; the benchmark
 materializes each participant's eligible data at that ``(resolution, window)`` and
 hands it over — eagerly as a ``list`` for small specs, or streamed one participant
-at a time (via a :class:`~openmhc.CohortView`) for specs too large to hold in RAM.
+at a time (via a :class:`~openmhc.CohortStream`) for specs too large to hold in RAM.
 This is the **single** public knob for input shape: submitters never see the loader,
 the lookup, or the segment store.
 

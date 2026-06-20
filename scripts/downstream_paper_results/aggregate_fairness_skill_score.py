@@ -18,12 +18,22 @@ Formulation (disparity-ratio vs the baseline, mirrors the skill-score machinery)
 Per-draw D_j and D_b share the same resampled cohort (the ``draw`` axis), so the
 pairing is preserved; summary statistics aggregate across draws.
 
+The reported value is the deterministic point estimate (full cohort). S is a
+geometric mean of clipped disparity ratios, so it is right-skewed and its
+bootstrap mean sits below the point — the plain percentile CI is therefore biased
+low. When per-user predictions are supplied (``--predictions_dir``/``--csvs_dir``)
+the reducer also emits a BCa (bias-corrected & accelerated) interval
+(``bca_lo``/``bca_hi``) that re-anchors the interval near the point and corrects
+for that bias and skew; its acceleration term is the exact leave-one-user-out
+jackknife of S. Without predictions the BCa columns are NaN (percentile CI only).
+
 Usage::
 
     PYTHONPATH=src python scripts/downstream_paper_results/aggregate_fairness_skill_score.py \
         --draws results/paper/bootstrap_draws.parquet \
         --output results/paper/fairness_skill_score_bootstrap.csv \
-        --baseline-method linear
+        --baseline-method linear \
+        --predictions_dir results/eval/final/predictions --csvs_dir results/eval/final
 """
 
 from __future__ import annotations
@@ -35,7 +45,15 @@ from pathlib import Path
 
 import numpy as np
 
-from downstream_evaluation.evaluation.bootstrap_skill_rank import POINT_DRAW, read_draws_parquet
+from downstream_evaluation.evaluation.bootstrap_skill_rank import (
+    POINT_DRAW,
+    _bca_interval,
+    align_across_methods,
+    jackknife_fairness_skill,
+    load_method_predictions,
+    load_subgroup_map,
+    read_draws_parquet,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 log = logging.getLogger(__name__)
@@ -63,6 +81,37 @@ def _summarise(values: list[float], ci_level: float, point: float | None = None)
     }
 
 
+def _warn_on_point_drift(
+    jack_point: dict[tuple[str, str], float],
+    point_by_key: dict[tuple[str, str], float | None],
+    tol: float = 1e-3,
+) -> None:
+    """Warn if the full-cohort jackknife point diverges from the draws POINT_DRAW.
+
+    The two are the same statistic on the same cohort, so they agree up to the
+    draws parquet's float32 round-trip (~1e-6). A drift well above that (the
+    tolerance is set to catch ~1e-2 differences) means the predictions and
+    bootstrap_draws.parquet were produced by different eval runs, which would put
+    the BCa acceleration and the bootstrap draws on inconsistent cohorts.
+    """
+    worst, worst_key = 0.0, None
+    for key, jp in jack_point.items():
+        pt = point_by_key.get(key)
+        if pt is None or not np.isfinite(pt) or not np.isfinite(jp):
+            continue
+        drift = abs(float(jp) - float(pt))
+        if drift > worst:
+            worst, worst_key = drift, key
+    if worst > tol:
+        log.warning(
+            "Jackknife point disagrees with the draws POINT_DRAW by up to %.3g (at %s) — "
+            "predictions and bootstrap_draws.parquet look like different runs; the BCa "
+            "interval and the percentile CI would be inconsistent.",
+            worst,
+            worst_key,
+        )
+
+
 def main() -> int:
     """Compute per-attribute + macro fairness skill scores from the draws parquet."""
     p = argparse.ArgumentParser(
@@ -77,7 +126,28 @@ def main() -> int:
     p.add_argument("--clip-lower", type=float, default=1e-2)
     p.add_argument("--clip-upper", type=float, default=100.0)
     p.add_argument("--ci-level", type=float, default=0.95)
+    p.add_argument(
+        "--predictions_dir",
+        type=Path,
+        default=None,
+        help="Per-(method, task) test.parquet root. When set, also emit a BCa CI "
+        "(bca_lo/bca_hi) from the leave-one-user-out jackknife.",
+    )
+    p.add_argument(
+        "--csvs_dir",
+        type=Path,
+        default=None,
+        help="Dir with eval_*.csv for task_type lookup. Required with --predictions_dir.",
+    )
+    p.add_argument(
+        "--methods",
+        nargs="+",
+        default=None,
+        help="Methods to load for the jackknife (default: every method in the draws).",
+    )
     args = p.parse_args()
+    if args.predictions_dir is not None and args.csvs_dir is None:
+        p.error("--csvs_dir is required when --predictions_dir is given")
 
     draws, _ = read_draws_parquet(args.draws)
     sub = draws[draws["subgroup_attr"].isin(SENSITIVE_ATTRS)]
@@ -86,10 +156,8 @@ def main() -> int:
         Path(args.output).parent.mkdir(parents=True, exist_ok=True)
         import pandas as pd
 
-        pd.DataFrame(columns=["method", "scope", "point", "se", "ci_lo", "ci_hi", "n_boot"]).to_csv(
-            args.output,
-            index=False,
-        )
+        cols = ["method", "scope", "point", "se", "ci_lo", "ci_hi", "bca_lo", "bca_hi", "n_boot"]
+        pd.DataFrame(columns=cols).to_csv(args.output, index=False)
         return 0
 
     methods = sorted(draws["method"].unique())
@@ -118,19 +186,15 @@ def main() -> int:
             )
             sg[m][attr][int(b)] = 1.0 - float(np.exp(np.mean(np.log(ratios))))
 
-    rows = []
+    # Bootstrap draws + point estimate per (method, scope); scope = each sensitive
+    # attribute plus the macro-average "overall".
+    scopes = (*SENSITIVE_ATTRS, "overall")
+    boot_by_key: dict[tuple[str, str], list[float]] = {}
+    point_by_key: dict[tuple[str, str], float | None] = {}
     for m in methods:
         for attr in SENSITIVE_ATTRS:
-            pt = sg[m][attr].get(POINT_DRAW)
-            boot = [v for b, v in sg[m][attr].items() if b != POINT_DRAW]
-            rows.append(
-                {
-                    "method": m,
-                    "scope": attr,
-                    **_summarise(boot, args.ci_level, pt),
-                    "n_boot": n_boot,
-                }
-            )
+            point_by_key[(m, attr)] = sg[m][attr].get(POINT_DRAW)
+            boot_by_key[(m, attr)] = [v for b, v in sg[m][attr].items() if b != POINT_DRAW]
         # Macro over the sensitive attributes, per draw; the point draw is the value.
         boot_draws = sorted({b for a in SENSITIVE_ATTRS for b in sg[m][a] if b != POINT_DRAW})
         macro_boot = []
@@ -139,15 +203,55 @@ def main() -> int:
             if vals:
                 macro_boot.append(float(np.mean(vals)))
         pt_vals = [sg[m][a][POINT_DRAW] for a in SENSITIVE_ATTRS if POINT_DRAW in sg[m][a]]
-        macro_point = float(np.mean(pt_vals)) if pt_vals else None
-        rows.append(
-            {
-                "method": m,
-                "scope": "overall",
-                **_summarise(macro_boot, args.ci_level, macro_point),
-                "n_boot": n_boot,
-            }
+        point_by_key[(m, "overall")] = float(np.mean(pt_vals)) if pt_vals else None
+        boot_by_key[(m, "overall")] = macro_boot
+
+    # Leave-one-user-out jackknife (for the BCa acceleration) needs per-user
+    # predictions, so it only runs when --predictions_dir is supplied.
+    jack_by_key: dict[tuple[str, str], np.ndarray] = {}
+    if args.predictions_dir is not None:
+        load_methods = args.methods or methods
+        aligned = align_across_methods(
+            {mm: load_method_predictions(args.predictions_dir, mm, args.csvs_dir) for mm in load_methods}
         )
+        subgroup_map = load_subgroup_map(args.predictions_dir)
+        if subgroup_map is None:
+            log.warning(
+                "No subgroup map under %s — emitting percentile CI only (BCa columns NaN).",
+                args.predictions_dir,
+            )
+        else:
+            jack_by_key, jack_point = jackknife_fairness_skill(
+                aligned,
+                subgroup_map,
+                SENSITIVE_ATTRS,
+                base,
+                clip_lower=args.clip_lower,
+                clip_upper=args.clip_upper,
+            )
+            _warn_on_point_drift(jack_point, point_by_key)
+
+    rows = []
+    for m in methods:
+        for scope in scopes:
+            pt = point_by_key.get((m, scope))
+            boot = boot_by_key.get((m, scope), [])
+            bca_lo, bca_hi = float("nan"), float("nan")
+            jack = jack_by_key.get((m, scope))
+            if jack is not None and pt is not None and np.isfinite(pt):
+                bca_lo, bca_hi = _bca_interval(
+                    np.asarray(boot, dtype=np.float64), float(pt), jack, args.ci_level
+                )
+            rows.append(
+                {
+                    "method": m,
+                    "scope": scope,
+                    **_summarise(boot, args.ci_level, pt),
+                    "bca_lo": bca_lo,
+                    "bca_hi": bca_hi,
+                    "n_boot": n_boot,
+                }
+            )
 
     import pandas as pd
 
