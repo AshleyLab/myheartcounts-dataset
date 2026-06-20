@@ -610,6 +610,9 @@ def evaluate_imputation(
     n_days: int = 1,
     bootstrap: bool | dict = False,
     max_samples: int | None = None,
+    num_workers: int = 0,
+    num_eval_workers: int = 1,
+    pin_memory: bool = False,
 ) -> ImputationResults:
     """Run imputation evaluation with a custom imputer.
 
@@ -655,6 +658,23 @@ def evaluate_imputation(
         max_samples: Limit samples per split for testing/debugging (None =
             no limit). Mirrors ``evaluate_forecasting``. Plumbs into
             ``DataConfig.max_samples_per_split``.
+        num_workers: DataLoader worker processes for loading, mask generation,
+            and the one train pass that computes metric-normalization stats.
+            Defaults to ``0`` (synchronous; notebook-safe). Raise toward your
+            CPU count to overlap I/O with compute. Plumbs into
+            ``DataConfig.num_workers``.
+        num_eval_workers: Parallel processes for the evaluation loop. Defaults
+            to ``1`` (sequential). With ``> 1`` the harness evaluates batches
+            concurrently via ``ProcessPoolExecutor`` (batch-level, all
+            scenarios per worker) — dramatically faster on the full split, with
+            results numerically identical to the sequential path. Caveat: the
+            imputer is pickled to each worker, so it must be importable; a class
+            defined in a notebook cell can fail under the ``spawn`` start method
+            (works under Linux ``fork``). Plumbs into
+            ``DataConfig.num_eval_workers``.
+        pin_memory: DataLoader ``pin_memory`` flag. Defaults to ``False``; set
+            ``True`` to speed host→GPU transfer for a GPU imputer. Plumbs into
+            ``DataConfig.pin_memory``.
 
     Returns:
         An ImputationResults instance with per-scenario, per-split metrics.
@@ -738,9 +758,9 @@ def evaluate_imputation(
         split_file=str(paths.splits_file),
         split_seed=seed,
         batch_size=5000,
-        num_workers=0,
-        num_eval_workers=1,
-        pin_memory=False,
+        num_workers=num_workers,
+        num_eval_workers=num_eval_workers,
+        pin_memory=pin_memory,
         n_days=n_days,
         max_samples_per_split=max_samples,
     )
@@ -948,6 +968,8 @@ def evaluate_forecasting(
     data_dir: str | Path | None = None,
     seed: int = 42,
     max_samples: int | None = None,
+    *,
+    num_workers: int = 4,
 ) -> ForecastingResults:
     """Run forecasting evaluation (Track 3) with a custom forecaster.
 
@@ -966,6 +988,11 @@ def evaluate_forecasting(
             ``MHC_DATA_DIR`` must be set.
         seed: Random seed.
         max_samples: Limit prediction samples per user (debugging).
+        num_workers: DataLoader worker processes for loading trajectories.
+            Defaults to ``4``. The forecasting evaluator is sequential-only
+            (no parallel-eval mode), so this only affects data loading;
+            ``max_samples`` remains the main lever for keeping a run fast.
+            Plumbs into ``DataConfig.num_workers``.
 
     Returns:
         :class:`ForecastingResults` with per-channel metrics.
@@ -1005,6 +1032,7 @@ def evaluate_forecasting(
         day_remain_mask=str(paths.forecasting_sample_index_dir / "day_remain_mask.json"),
         sample_index_file=str(sample_index_file),
         split_seed=seed,
+        num_workers=num_workers,
         max_samples=max_samples,
     )
     forecasting_cfg = ForecastingConfig(forecasting_length=forecasting_length)

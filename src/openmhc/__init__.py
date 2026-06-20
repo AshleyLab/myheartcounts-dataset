@@ -102,6 +102,9 @@ def evaluate_imputation(
     n_days: int = 1,
     bootstrap: bool | dict = False,
     max_samples: int | None = None,
+    num_workers: int = 0,
+    num_eval_workers: int = 1,
+    pin_memory: bool = False,
 ) -> ImputationResults:
     """Run imputation evaluation with a custom imputer.
 
@@ -125,6 +128,14 @@ def evaluate_imputation(
             shape of the option.
         max_samples: Limit samples per split for testing/debugging
             (None = no limit). Mirrors ``evaluate_forecasting``.
+        num_workers: DataLoader worker processes (default ``0``). Raise toward
+            your CPU count to overlap data loading with compute.
+        num_eval_workers: Parallel processes for the evaluation loop (default
+            ``1`` = sequential). ``> 1`` runs batches concurrently — much faster
+            on the full split, with identical results. The imputer must be
+            picklable (a class defined in a notebook cell can fail under the
+            ``spawn`` start method; works under Linux ``fork``).
+        pin_memory: DataLoader ``pin_memory`` flag (default ``False``).
 
     Returns:
         ImputationResults with per-scenario, per-split metrics.
@@ -140,6 +151,9 @@ def evaluate_imputation(
         n_days=n_days,
         bootstrap=bootstrap,
         max_samples=max_samples,
+        num_workers=num_workers,
+        num_eval_workers=num_eval_workers,
+        pin_memory=pin_memory,
     )
 
 
@@ -150,6 +164,8 @@ def evaluate_forecasting(
     data_dir: str | Path | None = None,
     seed: int = 42,
     max_samples: int | None = None,
+    *,
+    num_workers: int = 4,
 ) -> ForecastingResults:
     """Run forecasting evaluation (Track 3) with a custom forecaster.
 
@@ -163,6 +179,10 @@ def evaluate_forecasting(
             ``MHC_DATA_DIR`` must be set.
         seed: Random seed.
         max_samples: Limit prediction samples per user (debugging only).
+        num_workers: DataLoader worker processes for loading trajectories
+            (default ``4``). The forecasting evaluator is sequential-only, so
+            this only affects data loading; ``max_samples`` is the main speed
+            lever.
 
     Returns:
         ForecastingResults with per-channel metrics.
@@ -176,6 +196,7 @@ def evaluate_forecasting(
         data_dir=data_dir,
         seed=seed,
         max_samples=max_samples,
+        num_workers=num_workers,
     )
 
 
