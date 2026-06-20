@@ -7,13 +7,44 @@ lives. Without this, ``download_dataset`` would write to one location and
 
 from __future__ import annotations
 
+import importlib
 import os
 from pathlib import Path
 
+import pandas as pd
 import pytest
 
-from openmhc._dataset import data_dir
+import json
+
+import openmhc
+from openmhc._dataset import (
+    DATASET_VERSION_FILENAME,
+    bundled_metadata_dir,
+    data_dir,
+    write_dataset_marker,
+)
 from openmhc._evaluate import _DatasetPaths
+
+
+def _write_minimal_split(root: Path, version: str = "full") -> None:
+    """Build a minimal version-tagged dataset root.
+
+    Writes both the split file (with the canonical user count for the
+    requested version) and the ``dataset_version.json`` marker, so
+    ``_DatasetPaths.resolve(root, version=...)`` is happy without needing
+    the full payload on disk.
+    """
+    expected = {"full": 11894, "xs": 593}[version]
+    name = {
+        "full": "sharable_users_seed42_2026.json",
+        "xs": "sharable_users_seed42_2026_xs.json",
+    }[version]
+    split_dir = root / "splits"
+    split_dir.mkdir(parents=True, exist_ok=True)
+    users = [f"u{i}" for i in range(expected)]
+    payload = {"train": users, "validation": [], "test": []}
+    (split_dir / name).write_text(json.dumps(payload))
+    write_dataset_marker(root, version=version, n_users=expected)
 
 
 @pytest.fixture(autouse=True)
@@ -29,15 +60,20 @@ def _isolate_env(monkeypatch):
         "LABELS_DATA_PATH",
         "CONTEXT_LABELS_PATH",
         "ENROLLMENT_DATA_PATH",
+        "LABEL_VALIDITY_PATH",
+        "HEALTHKIT_DAILY_PATH",
+        "LABEL_TYPES_PATH",
+        "ORDINAL_DICTIONARY_PATH",
+        "VALIDITY_CONFIG_PATH",
     ):
         monkeypatch.delenv(var, raising=False)
     yield
 
 
 class TestDataDir:
-    def test_default_under_user_cache(self):
-        result = data_dir()
-        assert result == Path.home() / ".cache" / "openmhc" / "data"
+    def test_raises_when_not_configured(self):
+        with pytest.raises(ValueError, match="MHC_DATA_DIR"):
+            data_dir()
 
     def test_explicit_override_wins(self, tmp_path):
         result = data_dir(tmp_path / "explicit")
@@ -61,12 +97,9 @@ class TestDataDir:
 class TestDatasetPaths:
     """Confirm the eval pipeline routes through ``data_dir`` consistently."""
 
-    def test_default_root_matches_data_dir(self):
-        paths = _DatasetPaths.resolve()
-        assert paths.root == data_dir()
-
     def test_all_subpaths_under_root(self, tmp_path):
-        paths = _DatasetPaths.resolve(tmp_path)
+        _write_minimal_split(tmp_path, version="full")
+        paths = _DatasetPaths.resolve(tmp_path, version="full")
         assert paths.daily_hourly_hf == tmp_path / "processed" / "daily_hourly_hf"
         assert paths.daily_hf == tmp_path / "processed" / "daily_hf"
         assert paths.window_index == tmp_path / "processed" / "window_index_w7_s7_d5.parquet"
@@ -80,22 +113,52 @@ class TestDatasetPaths:
         assert paths.labels_dir == tmp_path / "labels"
 
     def test_env_override_propagates(self, monkeypatch, tmp_path):
+        _write_minimal_split(tmp_path, version="full")
         monkeypatch.setenv("MHC_DATA_DIR", str(tmp_path))
-        paths = _DatasetPaths.resolve()
+        paths = _DatasetPaths.resolve(version="full")
         assert paths.root == tmp_path.resolve()
         assert paths.daily_hf.parent.parent == tmp_path.resolve()
 
     def test_explicit_override_propagates(self, tmp_path):
-        paths = _DatasetPaths.resolve(tmp_path / "explicit")
+        root = tmp_path / "explicit"
+        _write_minimal_split(root, version="full")
+        paths = _DatasetPaths.resolve(root, version="full")
         assert paths.root == (tmp_path / "explicit").resolve()
+
+    def test_version_required(self, tmp_path):
+        _write_minimal_split(tmp_path, version="full")
+        with pytest.raises(ValueError, match="version='xs' or version='full'"):
+            _DatasetPaths.resolve(tmp_path)
+
+    def test_marker_required(self, tmp_path):
+        # split file present but no marker
+        split_dir = tmp_path / "splits"
+        split_dir.mkdir()
+        (split_dir / "sharable_users_seed42_2026.json").write_text("{}")
+        with pytest.raises(FileNotFoundError, match=DATASET_VERSION_FILENAME):
+            _DatasetPaths.resolve(tmp_path, version="full")
+
+    def test_marker_version_mismatch_rejected(self, tmp_path):
+        _write_minimal_split(tmp_path, version="xs")
+        with pytest.raises(ValueError, match="is version 'xs'"):
+            _DatasetPaths.resolve(tmp_path, version="full")
+
+    def test_split_user_count_mismatch_rejected(self, tmp_path):
+        # Marker claims full (11894 users), but split file holds only 5.
+        split_dir = tmp_path / "splits"
+        split_dir.mkdir()
+        (split_dir / "sharable_users_seed42_2026.json").write_text(
+            '{"train": ["u0","u1","u2"], "validation": ["u3"], "test": ["u4"]}'
+        )
+        write_dataset_marker(tmp_path, version="full")  # n_users defaults to 11894
+        with pytest.raises(ValueError, match="contains 5 users"):
+            _DatasetPaths.resolve(tmp_path, version="full")
 
 
 class TestLabelsEnvWiring:
     """Verify the labels.api env-var bridge is set when missing."""
 
-    def test_sets_labels_path_when_unset(self, monkeypatch, tmp_path):
-        monkeypatch.delenv("LABELS_DATA_PATH", raising=False)
-        monkeypatch.delenv("CONTEXT_LABELS_PATH", raising=False)
+    def test_sets_payload_paths_when_unset(self, monkeypatch, tmp_path):
         from openmhc._evaluate import _ensure_labels_env
 
         _ensure_labels_env(tmp_path / "labels")
@@ -103,19 +166,90 @@ class TestLabelsEnvWiring:
         assert os.environ["CONTEXT_LABELS_PATH"] == str(
             tmp_path / "labels" / "context_labels.json"
         )
+        assert os.environ["ENROLLMENT_DATA_PATH"] == str(
+            tmp_path / "labels" / "enrollment_info.json"
+        )
+        assert os.environ["LABEL_VALIDITY_PATH"] == str(
+            tmp_path / "labels" / "label_validity.json"
+        )
+        assert os.environ["HEALTHKIT_DAILY_PATH"] == str(
+            tmp_path / "labels" / "healthkit_daily.json"
+        )
 
     def test_respects_user_overrides(self, monkeypatch, tmp_path):
         monkeypatch.setenv("LABELS_DATA_PATH", "/somewhere/else.json")
         monkeypatch.setenv("CONTEXT_LABELS_PATH", "/somewhere/ctx.json")
+        monkeypatch.setenv("ENROLLMENT_DATA_PATH", "/somewhere/enrollment.json")
         from openmhc._evaluate import _ensure_labels_env
 
         _ensure_labels_env(tmp_path / "labels")
         assert os.environ["LABELS_DATA_PATH"] == "/somewhere/else.json"
         assert os.environ["CONTEXT_LABELS_PATH"] == "/somewhere/ctx.json"
+        assert os.environ["ENROLLMENT_DATA_PATH"] == "/somewhere/enrollment.json"
+        assert os.environ["LABEL_VALIDITY_PATH"] == str(
+            tmp_path / "labels" / "label_validity.json"
+        )
+
+
+class TestLabelsApiResolution:
+    def test_bundled_metadata_remains_repo_default(self):
+        import labels.api as api
+
+        api = importlib.reload(api)
+
+        assert api.BUNDLED_METADATA_DIR == bundled_metadata_dir()
+        assert api.LABEL_TYPES_PATH == bundled_metadata_dir() / "label_types.json"
+        assert api.ORDINAL_DICTIONARY_PATH == bundled_metadata_dir() / "ordinal_dictionary.json"
+        assert api.VALIDITY_CONFIG_PATH == bundled_metadata_dir() / "validity_config.json"
+        assert api.LABELS_PATH is None
+        assert len(api.TARGET_NAMES) > 0
+
+    def test_large_payloads_resolve_from_dataset_root(self, monkeypatch, tmp_path):
+        labels_dir = tmp_path / "labels"
+        labels_dir.mkdir()
+        monkeypatch.setenv("MHC_DATA_DIR", str(tmp_path))
+        import labels.api as api
+
+        api = importlib.reload(api)
+
+        assert api.LABELS_PATH == labels_dir / "last_labels.json"
+        assert api.CONTEXT_LABELS_PATH == labels_dir / "context_labels.json"
+        assert api.ENROLLMENT_PATH == labels_dir / "enrollment_info.json"
+        assert api.LABEL_VALIDITY_PATH == labels_dir / "label_validity.json"
+        assert api.HEALTHKIT_DAILY_PATH == labels_dir / "healthkit_daily.json"
+        assert api.LABEL_TYPES_PATH == bundled_metadata_dir() / "label_types.json"
+
+    def test_per_file_env_overrides_dataset_root(self, monkeypatch, tmp_path):
+        custom = tmp_path / "custom" / "labels.json"
+        custom.parent.mkdir(parents=True)
+        monkeypatch.setenv("MHC_DATA_DIR", str(tmp_path / "dataset"))
+        monkeypatch.setenv("LABELS_DATA_PATH", str(custom))
+        import labels.api as api
+
+        api = importlib.reload(api)
+
+        assert api.LABELS_PATH == custom.resolve()
+        assert api.ENROLLMENT_PATH == (tmp_path / "dataset" / "labels" / "enrollment_info.json")
+
+    def test_large_payload_access_raises_without_explicit_root(self):
+        import labels.api as api
+
+        api = importlib.reload(api)
+
+        with pytest.raises(ValueError, match="data_dir=|MHC_DATA_DIR"):
+            api.get_labels(
+                health_code="user-123",
+                timestamp=pd.Timestamp("2020-01-01"),
+                label=api.TARGET_NAMES[0],
+            )
 
 
 class TestDownloadDatasetSurface:
     """Verify the download helper signature and error paths."""
+
+    def test_requires_explicit_destination(self):
+        with pytest.raises(ValueError, match="MHC_DATA_DIR"):
+            openmhc.download_dataset(version="xs")
 
     def test_unknown_version_raises(self):
         from openmhc import download_dataset
@@ -128,3 +262,29 @@ class TestDownloadDatasetSurface:
 
         with pytest.raises(ValueError, match="not yet published"):
             download_dataset(version="full")
+
+
+class TestPublicApisRequireDatasetRoot:
+    def test_evaluate_prediction_fails_fast(self):
+        class DummyEncoder:
+            def encode(self, weekly_tensors):
+                return weekly_tensors
+
+        with pytest.raises(ValueError, match="MHC_DATA_DIR"):
+            openmhc.evaluate_prediction(DummyEncoder(), version="xs")
+
+    def test_evaluate_imputation_fails_fast(self):
+        class DummyImputer:
+            def impute(self, data, observed_mask, target_mask):
+                return data
+
+        with pytest.raises(ValueError, match="MHC_DATA_DIR"):
+            openmhc.evaluate_imputation(DummyImputer(), version="xs")
+
+    def test_evaluate_forecasting_fails_fast(self):
+        class DummyForecaster:
+            def predict(self, history, horizon):
+                return history
+
+        with pytest.raises(ValueError, match="MHC_DATA_DIR"):
+            openmhc.evaluate_forecasting(DummyForecaster(), version="xs")

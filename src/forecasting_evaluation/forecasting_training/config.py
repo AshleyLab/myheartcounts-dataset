@@ -105,7 +105,7 @@ class TrainingConfig:
     batch_size: int = 64
     patience: int = 10
     optimizer_lr: float = 1.0e-3
-    device: str = "cuda"
+    device: str = "auto"
     disable_data_parallel: bool = True
     # LoRA-specific (Chronos-2)
     lora_r: int = 8

@@ -44,48 +44,82 @@ class Encoder(Protocol):
 class Imputer(Protocol):
     """Protocol for imputation evaluation.
 
+    Implementations only need to define ``impute``. All setup — loading
+    checkpoints, computing statistics from the training split, building
+    per-user state — is the implementation's responsibility, typically
+    done in ``__init__``. The benchmark harness does not call any
+    preparation method.
+
+    The optional metadata kwargs are keyword-only with ``None`` defaults.
+    The harness inspects each implementation's ``impute`` signature once
+    and forwards only the kwargs the implementation actually declares,
+    so simple methods can keep the three-argument form below.
+
     Example:
         >>> class MeanImputer:
-        ...     def fit(self, data, masks):
-        ...         self.means = np.nanmean(data, axis=(0, 2))
+        ...     def __init__(self):
+        ...         import openmhc
+        ...         data_sum, data_count = 0.0, 0
+        ...         for data, mask in openmhc.iter_train_data():
+        ...             obs = (mask > 0.5) & np.isfinite(data)
+        ...             data_sum = data_sum + np.where(obs, data, 0.0).sum(axis=(0, 2))
+        ...             data_count = data_count + obs.sum(axis=(0, 2))
+        ...         self.means = data_sum / np.maximum(data_count, 1)
         ...     def impute(self, data, observed_mask, target_mask):
         ...         result = data.copy()
         ...         for ch in range(19):
-        ...             target = target_mask[:, ch, :] == 1
-        ...             result[:, ch, :][target] = self.means[ch]
-        ...         return result
+        ...             result[:, ch, :][target_mask[:, ch, :] == 1] = self.means[ch]
+        ...         return result.astype(np.float32, copy=False)
+
+    See ``openmhc.imputers`` for ready-to-use reference implementations
+    (mean, mode, linear, LOCF, temporal, personalized, and a generic
+    ``TorchImputer`` wrapper).
     """
-
-    def fit(self, data: np.ndarray, masks: np.ndarray) -> None:
-        """Fit on training data.
-
-        Args:
-            data: Daily sensor values of shape (N, 19, 1440). NaN at missing
-                positions.
-            masks: Binary masks of shape (N, 19, 1440). 1 = observed,
-                0 = missing.
-        """
-        ...
 
     def impute(
         self,
         data: np.ndarray,
         observed_mask: np.ndarray,
         target_mask: np.ndarray,
+        *,
+        sample_indices: np.ndarray | None = None,
+        user_ids: list[str] | None = None,
+        dates: list[str] | None = None,
+        day_offsets: np.ndarray | None = None,
     ) -> np.ndarray:
         """Impute artificially masked positions.
 
         Args:
-            data: Sensor values of shape (N, 19, 1440) with NaN at masked
-                positions.
-            observed_mask: Binary mask of shape (N, 19, 1440). 1 = originally
-                observed, 0 = naturally missing.
-            target_mask: Binary mask of shape (N, 19, 1440). 1 = positions to
-                impute (a subset of observed_mask).
+            data: Sensor values of shape (N, 19, T) with NaN at both
+                naturally missing positions and artificially masked
+                positions. ``T = 1440`` for daily evaluation (the default);
+                ``T = n_days * 1440`` when the caller sets ``n_days > 1``
+                in ``evaluate_imputation`` (1-7).
+            observed_mask: Binary mask of shape (N, 19, T). 1 =
+                originally observed, 0 = naturally missing.
+            target_mask: Binary mask of shape (N, 19, T). 1 = positions
+                to impute (always a subset of ``observed_mask``).
+            sample_indices: Optional split-local indices, shape (N,).
+                Useful for any implementation that keeps per-sample state.
+            user_ids: Optional list of N user-identifier strings, one per
+                sample. Used by personalized methods.
+            dates: Optional list of N ISO date strings (``YYYY-MM-DD``),
+                one per sample.
+            day_offsets: Optional int64 array of shape ``(N, n_days)``,
+                only forwarded when ``n_days > 1``. Each row gives the
+                calendar-day deltas of that window's day slots from the
+                first non-padded day; ``-1`` marks left-padded slots that
+                have no real data. Used by calendar-aware models (e.g.
+                RoPE day embeddings in ``LSM2WeeklySparseImputer``) to
+                encode real-world gaps between days in a non-contiguous
+                window. Declaring this kwarg in your ``impute`` signature
+                opts your imputer in — the harness inspects the signature
+                once and only forwards declared kwargs.
 
         Returns:
-            Array of shape (N, 19, 1440) with imputed values at target
-            positions. Must be float32.
+            Array of shape (N, 19, T) with imputed values at
+            ``target_mask == 1`` positions. Must be float32. ``T`` matches
+            the input ``T`` (i.e. ``1440`` or ``n_days * 1440``).
         """
         ...
 

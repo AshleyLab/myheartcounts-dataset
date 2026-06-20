@@ -4,20 +4,31 @@ The dataset is hosted on Harvard Dataverse. This module provides a thin
 wrapper around the Dataverse access API so users don't have to remember
 the DOI or directory layout.
 
-Two versions are planned:
+Two versions are available:
 
-- ``"tiny"`` — small subset suitable for reviewers and quickstart notebooks
-- ``"full"`` — full release matching the paper (not yet published)
+- ``"xs"`` — 593-user subset suitable for reviewers and quickstart notebooks (~1.9 GB)
+- ``"full"`` — full 11,894-user release matching the paper (~38 GB, not yet published)
 
-Resolution order for the local data directory:
+Large benchmark payloads are always resolved from one explicit dataset root:
 
-1. Explicit ``data_dir=`` argument
+1. Explicit ``data_dir=`` / ``dest=`` argument
 2. ``MHC_DATA_DIR`` environment variable
-3. ``~/.cache/openmhc/data`` (default)
+
+If neither is provided, OpenMHC raises instead of silently falling back to a
+cache directory.
+
+Every dataset root carries a ``dataset_version.json`` marker file written by
+:func:`download_dataset`. The marker pins the version and expected user count
+so the resolver can fail loudly if a directory ever ends up holding mismatched
+contents (e.g. an XS bundle whose split file got renamed to the canonical
+"full" name). For existing roots that predate the marker, use
+:func:`write_dataset_marker` to write one explicitly.
 """
 
 from __future__ import annotations
 
+import io
+import json
 import os
 import shutil
 import tarfile
@@ -25,38 +36,154 @@ import tempfile
 import urllib.request
 import zipfile
 from pathlib import Path
+from typing import Literal
 
 _DATAVERSE_BASE = "https://dataverse.harvard.edu"
 
-# DOIs per version. Set to None for versions that haven't been published.
+# DOIs per version. Set to None for versions that haven't been published yet.
 _VERSION_DOIS: dict[str, str | None] = {
-    "tiny": "doi:10.7910/DVN/ZYMJF6",
-    "full": None,
+    "xs": "doi:10.7910/DVN/ZYMJF6",
+    "full": None,  # doi:10.7910/DVN/XNBITM — set once the Dataverse deposit is public
 }
 
-_DEFAULT_CACHE = Path.home() / ".cache" / "openmhc" / "data"
+# Expected user count per version (sum across train/validation/test in the
+# canonical split file). The resolver cross-checks the loaded split file
+# against these numbers, so a renamed/swapped split fails loudly.
+EXPECTED_N_USERS: dict[str, int] = {
+    "xs": 593,
+    "full": 11894,
+}
+
+DATASET_VERSION_FILENAME = "dataset_version.json"
+
+Version = Literal["xs", "full"]
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+_BUNDLED_METADATA_DIR = _REPO_ROOT / "data" / "labels"
+
+
+def bundled_metadata_dir() -> Path:
+    """Return the repo-owned directory for small tracked metadata files."""
+    return _BUNDLED_METADATA_DIR
+
+
+def _missing_dataset_root_error() -> ValueError:
+    return ValueError(
+        "OpenMHC dataset root is required for large benchmark payloads. "
+        "Provide it with `data_dir=` / `dest=` or set `MHC_DATA_DIR`. "
+        "For example, use `openmhc.download_dataset(dest='~/.cache/openmhc/data')` "
+        "or `export MHC_DATA_DIR=~/.cache/openmhc/data`."
+    )
 
 
 def data_dir(override: str | Path | None = None) -> Path:
-    """Resolve the local dataset directory.
+    """Resolve the explicit dataset directory for large payloads.
 
     Args:
         override: Explicit path. If provided, returned as-is.
 
     Returns:
-        Absolute path to the dataset directory. May not exist yet — call
-        :func:`download_dataset` first.
+        Absolute path to the dataset directory. May not exist yet.
+
+    Raises:
+        ValueError: If neither ``override`` nor ``MHC_DATA_DIR`` is provided.
     """
     if override is not None:
         return Path(override).expanduser().resolve()
     env = os.getenv("MHC_DATA_DIR")
     if env:
         return Path(env).expanduser().resolve()
-    return _DEFAULT_CACHE
+    raise _missing_dataset_root_error()
+
+
+def write_dataset_marker(
+    root: str | Path,
+    version: Version,
+    *,
+    n_users: int | None = None,
+    daily_hf_rows: int | None = None,
+) -> Path:
+    """Write a ``dataset_version.json`` marker to an existing dataset root.
+
+    Use this when you have a dataset root that predates the marker file
+    (e.g. an old XS cache) and need to make it usable with the strict
+    resolver.
+
+    Args:
+        root: Path to the dataset root that contains ``processed/``,
+            ``splits/``, ``labels/``, etc.
+        version: ``"xs"`` or ``"full"``. Stored verbatim and cross-checked
+            by :class:`_DatasetPaths`.
+        n_users: Expected user count across all splits. Defaults to the
+            canonical count for ``version``.
+        daily_hf_rows: Expected row count of ``processed/daily_hf/``.
+            Optional; if omitted the resolver skips that check.
+
+    Returns:
+        Path to the written marker file.
+    """
+    if version not in EXPECTED_N_USERS:
+        raise ValueError(
+            f"version must be one of {sorted(EXPECTED_N_USERS)}, got {version!r}"
+        )
+    root_path = Path(root).expanduser().resolve()
+    if not root_path.exists():
+        raise FileNotFoundError(f"dataset root does not exist: {root_path}")
+    payload: dict = {
+        "version": version,
+        "n_users": int(n_users) if n_users is not None else EXPECTED_N_USERS[version],
+    }
+    if daily_hf_rows is not None:
+        payload["daily_hf_rows"] = int(daily_hf_rows)
+    marker = root_path / DATASET_VERSION_FILENAME
+    marker.write_text(json.dumps(payload, indent=2) + "\n")
+    return marker
+
+
+def read_dataset_marker(root: str | Path) -> dict:
+    """Read ``dataset_version.json`` from a dataset root.
+
+    Args:
+        root: Path to the dataset root.
+
+    Returns:
+        Parsed marker payload.
+
+    Raises:
+        FileNotFoundError: If the marker is missing. The error message
+            includes instructions for backfilling it with
+            :func:`write_dataset_marker`.
+        ValueError: If the marker is malformed.
+    """
+    root_path = Path(root).expanduser().resolve()
+    marker = root_path / DATASET_VERSION_FILENAME
+    if not marker.exists():
+        raise FileNotFoundError(
+            f"Missing dataset version marker: {marker}\n\n"
+            "Every OpenMHC dataset root must contain a `dataset_version.json` "
+            "file declaring which release ('xs' or 'full') lives there. "
+            "`download_dataset` writes this automatically; for a pre-existing "
+            "root, run:\n"
+            "    openmhc.write_dataset_marker(root, version='xs')  # or 'full'\n"
+        )
+    try:
+        payload = json.loads(marker.read_text())
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"malformed dataset marker {marker}: {exc}") from exc
+    if not isinstance(payload, dict) or "version" not in payload:
+        raise ValueError(
+            f"dataset marker {marker} is missing required 'version' field"
+        )
+    if payload["version"] not in EXPECTED_N_USERS:
+        raise ValueError(
+            f"dataset marker {marker} has unknown version "
+            f"{payload['version']!r}; expected one of {sorted(EXPECTED_N_USERS)}"
+        )
+    return payload
 
 
 def download_dataset(
-    version: str = "tiny",
+    version: str = "xs",
     dest: str | Path | None = None,
     api_token: str | None = None,
 ) -> Path:
@@ -68,8 +195,10 @@ def download_dataset(
     ``DATAVERSE_API_TOKEN`` environment variable.
 
     Args:
-        version: ``"tiny"`` (reviewer subset) or ``"full"`` (paper release).
-        dest: Where to put the data. Defaults to :func:`data_dir`.
+        version: ``"xs"`` (593-user reviewer subset, ~1.9 GB) or
+            ``"full"`` (11,894-user paper release, ~38 GB).
+        dest: Where to put the data. Must be provided explicitly here or via
+            ``MHC_DATA_DIR``.
         api_token: Optional Dataverse API token for restricted datasets.
 
     Returns:
@@ -113,7 +242,14 @@ def download_dataset(
     finally:
         os.unlink(archive_path)
 
-    print(f"Done. Set MHC_DATA_DIR={target} to skip the lookup next time.")
+    if version == "xs":
+        _post_process_xs(target)
+    elif version == "full":
+        _post_process_full(target)
+
+    write_dataset_marker(target, version)
+
+    print(f"Done. Reuse this root via MHC_DATA_DIR={target} or data_dir={target!s}.")
     return target
 
 
@@ -165,3 +301,89 @@ def _extract_one(archive: Path, dest: Path) -> None:
         f"could not detect archive format for {archive!r}; "
         "expected zip or tar/tar.gz"
     )
+
+
+def _post_process_xs(dest: Path) -> None:
+    """Fix directory names and file placement after XS bundle extraction.
+
+    The XS HuggingFace Arrow archives unpack with a version suffix
+    (``_tiny`` or ``_xs``) that must be stripped to match the canonical
+    paths the evaluation API expects.  Also moves ``normalization_stats.json``
+    from the bundle root into ``processed/``.
+    """
+    processed = dest / "processed"
+
+    # Rename suffixed HF dataset directories to canonical names.
+    _rename_suffixed = [
+        (processed, "daily_hf"),
+        (processed, "daily_hourly_hf"),
+        (dest, "hourly_trajectory"),
+        (dest, "minute_trajectory"),
+    ]
+    for parent, canonical in _rename_suffixed:
+        target = parent / canonical
+        if target.exists():
+            continue
+        for suffix in ("_xs", "_tiny"):
+            candidate = parent / f"{canonical}{suffix}"
+            if candidate.exists():
+                candidate.rename(target)
+                break
+
+    # Move normalization_stats.json from bundle root into processed/.
+    root_stats = dest / "normalization_stats.json"
+    if root_stats.exists() and not (processed / "normalization_stats.json").exists():
+        processed.mkdir(parents=True, exist_ok=True)
+        root_stats.rename(processed / "normalization_stats.json")
+
+
+def _post_process_full(dest: Path) -> None:
+    """Handle multi-part archives left in place after full bundle extraction.
+
+    Dataverse serves each ``*.tar.gz.part-NN`` as a separate file.  After the
+    outer ZIP is extracted these parts sit in ``archives/`` and must be
+    concatenated and streamed into ``tarfile`` before they can be unpacked.
+    The part files are removed on success.
+    """
+    archives_dir = dest / "archives"
+    if not archives_dir.exists():
+        return
+
+    # Group part files by their base tar.gz name.
+    groups: dict[str, list[Path]] = {}
+    for part in archives_dir.glob("*.tar.gz.part-*"):
+        base = part.name.split(".part-")[0] + ".tar.gz"
+        groups.setdefault(base, []).append(part)
+
+    # Resolve each group's extraction target from the archive name.
+    _dest_map = {
+        "daily_hf_full.tar.gz": dest / "processed",
+        "hdf5_sharable_2026_full.tar.gz": dest / "hdf5",
+        "minute_trajectory_full.tar.gz": dest,
+    }
+
+    for base_name, parts in groups.items():
+        parts.sort()
+        target_dir = _dest_map.get(base_name, dest)
+        target_dir.mkdir(parents=True, exist_ok=True)
+
+        # Stream concatenated parts through tarfile without writing a temp file.
+        class _CatStream(io.RawIOBase):
+            def __init__(self, paths: list[Path]) -> None:
+                self._files = [open(p, "rb") for p in paths]
+                self._idx = 0
+
+            def readinto(self, b: bytearray) -> int:
+                while self._idx < len(self._files):
+                    n = self._files[self._idx].readinto(b)
+                    if n:
+                        return n
+                    self._files[self._idx].close()
+                    self._idx += 1
+                return 0
+
+        with tarfile.open(fileobj=io.BufferedReader(_CatStream(parts))) as tf:
+            tf.extractall(target_dir)
+
+        for part in parts:
+            part.unlink(missing_ok=True)

@@ -1,6 +1,7 @@
 """User split utilities for imputation evaluation.
 
-Copied from downstream_evaluation/data/splits.py for independence.
+Copied from downstream_evaluation/data/splits.py for independence. 
+# FIXME: Copying code is not a good idea -> manual review this and ensure copying is the correct approach.
 """
 
 from __future__ import annotations

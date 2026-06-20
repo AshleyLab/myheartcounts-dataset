@@ -18,11 +18,11 @@ Python ≥ 3.10. Installs the `openmhc` package and its evaluation dependencies.
 
 ## Quickstart
 
-Download the tiny version of the dataset (small subset for reviewers and quickstart):
+Download the XS version of the dataset (small subset for reviewers and quickstart):
 
 ```python
 import openmhc
-openmhc.download_dataset(version="tiny")
+openmhc.download_dataset(version="xs")
 ```
 
 Then evaluate a model. Models implement one of three duck-typed protocols — no inheritance required.
@@ -64,6 +64,29 @@ results = openmhc.evaluate_imputation(MeanImputer())
 print(results.summary())
 ```
 
+For the paper baselines (BRITS, TimesNet, DLinear, FEDformer, LSM2 daily / weekly /
+weekly-sparse), `openmhc.imputers` ships pre-trained-checkpoint wrappers loadable in
+one line from a release bundle:
+
+```python
+from openmhc.imputers import LSM2Imputer
+imp = LSM2Imputer.from_release("path/to/openmhc-lsm2-daily/")
+```
+
+See [`docs/neural-imputers.md`](docs/neural-imputers.md) for the full reference
+(architecture hyperparameters, paper checkpoint sources, release bundle format,
+and the `tools/build_manifest.py` converter for staging your own bundles).
+
+For reproducible runs (W&B logging, SLURM sweeps, manifest-traceable releases),
+the `mhc-impute-eval` Hydra CLI composes YAML configs at `configs/imputation/`:
+
+```bash
+mhc-impute-eval method=brits method.release_dir=path/to/openmhc-brits-paper/
+mhc-impute-eval --multirun method=brits,timesnet,lsm2 masking=all_six
+```
+
+See [`src/imputation_evaluation/README.md`](src/imputation_evaluation/README.md#part-15--reproducible-runs-via-mhc-impute-eval) for the full guide (configs, overrides, SLURM dispatch, adding new methods).
+
 ### Track 3 — forecasting (`Forecaster`)
 
 ```python
@@ -94,7 +117,7 @@ body = results.to_submission_yaml(
 print(body)
 ```
 
-`to_submission_yaml` returns a paste-ready body matching the textareas in the [submission issue template](../../issues/new?template=submission.yml). For Track 2 imputation, skill scores and per-category subgroup scores are computed locally against the frozen LOCF baseline; for Tracks 1 and 3, those fields are filled in by the maintainers from `raw_metrics` during ingestion (Linear + Seasonal Naive baseline files aren't shipped yet). The HuggingFace Space ingests merged submissions and the public leaderboard rebuilds automatically.
+`to_submission_yaml` returns a paste-ready body matching the textareas in the [submission issue template](../../issues/new?template=submission.yml). Skill scores, fair skill scores, and average ranks are filled in by the maintainers from `raw_metrics` during ingestion for **all three tracks** (Track 1 vs Linear, Track 2 vs LOCF, Track 3 vs Seasonal Naive). The maintainer-side reducer is a paired per-user geomean of clipped error ratios — MAE for continuous channels, `max(1 − AUC_u, 0.005)` for binary — matching the formula in `forecasting_evaluation/metrics/skill_score_summary.py::compute_skill_from_errors` so the same word means the same thing across tracks. Submitters only paste the absolute per-channel MAE / AUC. The HuggingFace Space ingests merged submissions and the public leaderboard rebuilds automatically.
 
 Submissions must follow the standard evaluation protocol — same split file, masking config, and label-validity criterion as the paper. The submission template enforces required fields.
 
@@ -105,6 +128,7 @@ Submissions must follow the standard evaluation protocol — same split file, ma
 | `src/openmhc/` | Public API (`evaluate_prediction`, `evaluate_imputation`, `evaluate_forecasting`, `download_dataset`, …) |
 | `src/downstream_evaluation/` | Track 1 internals (linear probes, time-window selection, metrics) |
 | `src/imputation_evaluation/` | Track 2 internals (masking scenarios, per-channel metrics) |
+| `src/imputation_training/` | Track 2 training pipeline — `mhc-impute-train` for BRITS/DLinear/TimesNet/FEDformer. See [`docs/neural-imputers.md`](docs/neural-imputers.md#training-your-own-imputer) |
 | `src/forecasting_evaluation/` | Track 3 internals (window cache, point + quantile metrics) |
 | `src/labels/` | Label registry + type lookup |
 | `data/labels/` | Schema-only registry files (label types, ordinal vocab, validity config) |

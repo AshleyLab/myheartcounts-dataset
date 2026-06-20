@@ -346,17 +346,18 @@ class MaskCache:
             Loaded MaskCache instance.
         """
         cache = cls()
+        missing: list[Path] = []
 
         for split in splits:
             split_dir = masks_dir / split
             if not split_dir.exists():
-                logger.warning(f"Split directory not found: {split_dir}")
+                missing.append(split_dir)
                 continue
 
             for scenario in scenarios:
                 filepath = split_dir / f"{scenario}.npz"
                 if not filepath.exists():
-                    logger.warning(f"Mask file not found: {filepath}")
+                    missing.append(filepath)
                     continue
 
                 scenario_masks = ScenarioMasks.load(filepath)
@@ -365,6 +366,16 @@ class MaskCache:
                     f"Loaded {scenario_masks.n_applicable} masks "
                     f"for {split}/{scenario} from {filepath}"
                 )
+
+        if missing:
+            lines = "\n".join(f"  {p}" for p in missing)
+            raise FileNotFoundError(
+                f"MaskCache.load: missing pre-computed mask files under "
+                f"{masks_dir}:\n{lines}\n\n"
+                "Every requested split/scenario must have its `.npz` file. "
+                "Either regenerate the missing masks or pass a different "
+                "`masks_file` directory."
+            )
 
         return cache
 

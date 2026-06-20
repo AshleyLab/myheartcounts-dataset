@@ -1,0 +1,10 @@
+# @package model
+type: toto
+toto:
+  pretrained_model_name_or_path: Datadog/Toto-Open-Base-1.0
+  device: auto
+  context_length: 2048
+  num_samples: 256
+  samples_per_batch: 256
+  use_kv_cache: true
+  time_interval_seconds: 3600

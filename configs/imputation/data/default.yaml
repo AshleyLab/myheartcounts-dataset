@@ -1,0 +1,8 @@
+# @package data
+daily_hf_dir: data/hf_daily
+split_file: null
+version: ???   # caller must set to "xs" or "full"; no default to prevent silent mismatch
+batch_size: 5000
+num_workers: 4
+num_eval_workers: 1
+n_days: 1

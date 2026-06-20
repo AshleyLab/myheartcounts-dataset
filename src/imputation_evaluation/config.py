@@ -32,6 +32,11 @@ class DataConfig:
 
     daily_hf_dir: str = "data/hf_daily"
     split_file: str | None = None
+    # OpenMHC dataset version this run targets ("xs" or "full"). Threaded
+    # through the registry so the constructed imputer's BaseImputer.__init__
+    # gets a matching version, and the dataset root's dataset_version.json
+    # marker can be cross-checked. No default — must be set in YAML.
+    version: str = "???"
     train_ratio: float = 0.6
     val_ratio: float = 0.1
     split_seed: int = 42
@@ -66,8 +71,8 @@ class RandomNoiseConfig:
     """Random noise masking configuration."""
 
     enabled: bool = True
-    patch_size: int = 10  # Consecutive minutes per patch
-    mask_ratio: float = 0.8  # Fraction of valid data to mask
+    patch_size: int = 30  # Consecutive minutes per patch
+    mask_ratio: float = 0.5  # Fraction of valid data to mask
 
 
 @dataclass
@@ -75,7 +80,7 @@ class TemporalSliceConfig:
     """Temporal slice masking configuration."""
 
     enabled: bool = True
-    mask_ratio: float = 0.5  # Fraction of valid timesteps to mask
+    mask_ratio: float = 0.25  # Fraction of valid timesteps to mask
     min_block_size: int = 30  # Min contiguous block (minutes)
     max_block_size: int = 60  # Max contiguous block (minutes)
 
@@ -138,19 +143,19 @@ class MaskingConfig:
 
 
 @dataclass
-class MAEMethodConfig:
-    """MAE-specific method configuration."""
+class LSM2MethodConfig:
+    """LSM2 (formerly MAE) method configuration."""
 
-    checkpoint_path: str = ""  # Path to trained MAE checkpoint (.ckpt)
-    device: str = "cuda"  # Device for inference ("cuda", "cuda:0", "cpu")
+    checkpoint_path: str = ""  # Path to trained LSM2 checkpoint (.ckpt)
+    device: str = "auto"  # Device for inference ("auto", "cuda", "cuda:0", "cpu")
     inference_batch_size: int = 64  # Batch size for GPU inference
 
-    # Must match MAE training config (configs/mae/default.yaml)
-    # 1e12 = global/population normalization (default for MAE training)
+    # Must match LSM2 training config (configs/lsm2/default.yaml in the private repo).
+    # 1e12 = global/population normalization (default for LSM2 training)
     # 0 = instance normalization; >0 = hybrid
     normalization_prior_count: float = 1.0e12
     stats_max_samples: int | None = 10000  # Max samples for computing normalization stats
-    inference_dropout_removal_ratio: float | None = None  # Override dropout removal at inference (None = use checkpoint value)
+    inference_dropout_removal_ratio: float | None = None  # Override dropout removal at inference (None = inherit wrapper default = 0.0; set explicitly to override)
 
 
 @dataclass
@@ -159,7 +164,7 @@ class PyPOTSMethodConfig:
 
     model_path: str = ""  # Path to saved PyPOTS model directory
     model_name: str = "brits"  # PyPOTS model class name (brits, saits)
-    device: str = "cuda"  # Device for inference ("cuda", "cuda:0", "cpu")
+    device: str = "auto"  # Device for inference ("auto", "cuda", "cuda:0", "cpu")
     inference_batch_size: int = 64  # Batch size for inference
     normalization_stats_path: str | None = None  # Path to normalization_stats.json from H5 export
     # Architecture params needed to construct model before loading weights
@@ -175,7 +180,9 @@ class PyPOTSMethodConfig:
     moving_avg_window_size: int = 25  # FEDformer
     dropout: float = 0.1  # TimesNet, FEDformer
     apply_nonstationary_norm: bool = False  # TimesNet
-    version: str = "Fourier"  # FEDformer
+    # FEDformer basis flavor — passed to FEDformerImputer as ``variant=``
+    # so it doesn't collide with the OpenMHC dataset version.
+    variant: str = "Fourier"  # FEDformer ("Fourier" or "Wavelets")
     modes: int = 32  # FEDformer
     mode_select: str = "random"  # FEDformer
     trmf_lags: list[int] = field(default_factory=lambda: [1, 2, 3, 4, 5])  # TRMF
@@ -202,15 +209,23 @@ class MethodConfig:
         "temporal_mode",
         "linear",
         "locf",
-        "mae",
-        "mae_weekly_sparse",
+        "lsm2",
+        "lsm2_weekly_sparse",
         "pypots",
+        "brits",
+        "timesnet",
+        "dlinear",
+        "dlinear_weekly",
+        "fedformer",
         "personalized_mean",
         "personalized_mode",
         "personalized_temporal_mean",
     ] = "mean"
     decimal_precision: int = 1  # Rounding precision for mode computation
-    mae: MAEMethodConfig = field(default_factory=MAEMethodConfig)  # MAE-specific config
+    release_dir: str | None = None  # Manifest-bundled release dir (paper checkpoints)
+    device: str = "auto"  # Inference device for neural imputers
+    inference_batch_size: int = 64  # Inference batch size for neural imputers
+    lsm2: LSM2MethodConfig = field(default_factory=LSM2MethodConfig)  # LSM2-specific config
     pypots: PyPOTSMethodConfig = field(default_factory=PyPOTSMethodConfig)  # PyPOTS-specific config
 
 
@@ -228,12 +243,22 @@ class OutputConfig:
 class EvalConfig:
     """Evaluation configuration."""
 
-    include_ks: bool = True  # Set False to reduce memory (no continuous value storage for KS)
-    include_wasserstein: bool = (
-        True  # Compute per-sample Wasserstein distance for continuous channels
-    )
     compute_metrics: bool = True  # If False, only save pairs (no MetricAccumulator)
     save_pairs: bool = True  # Save raw (gt, pred) pairs to Parquet
+    # Which splits to evaluate. Default ``["val", "test"]`` preserves the
+    # historical behavior; for leaderboard-only reruns (paper pipeline reads
+    # ``--splits test`` exclusively) pass ``[test]`` to skip val. Skipping
+    # val shrinks the in-memory mask cache (~30% reduction on the full
+    # split) and halves the fork-CoW amplification cost when
+    # ``num_eval_workers > 1`` — meaningful headroom on memory-tight
+    # allocations.
+    eval_splits: list[str] = field(default_factory=lambda: ["val", "test"])
+    # Headline continuous metric for the leaderboard. ``"MAE"`` mirrors the
+    # forecasting track (commit 79c8628). ``compute_skill_scores`` and the
+    # live ``results.json`` aggregator both quote against this metric;
+    # per-channel normalization cancels in the skill ratio so the choice
+    # is purely a reporting-units decision.
+    continuous_metric: str = "MAE"
 
 
 @dataclass
@@ -262,6 +287,24 @@ class SensitivityConfig:
 
 
 @dataclass
+class BootstrapConfig:
+    """Participant-level cluster bootstrap for imputation metric CIs.
+
+    When ``enabled``, the runner forces pair-saving on and computes percentile
+    confidence intervals + standard errors by resampling users (clusters), not
+    rows. See ``src/imputation_evaluation/evaluation/bootstrap.py``.
+    """
+
+    enabled: bool = False
+    n_boot: int = 1000
+    ci_level: float = 0.95
+    seed: int = 42
+    include_auc: bool = True
+    # Where to write structured bootstrap_metrics.json (None = next to results.json).
+    output_path: str | None = None
+
+
+@dataclass
 class WandbConfig:
     """Weights & Biases logging configuration."""
 
@@ -284,4 +327,5 @@ class ImputationEvalConfig:
     evaluation: EvalConfig = field(default_factory=EvalConfig)
     visualization: VisualizationConfig = field(default_factory=VisualizationConfig)
     sensitivity: SensitivityConfig = field(default_factory=SensitivityConfig)
+    bootstrap: BootstrapConfig = field(default_factory=BootstrapConfig)
     wandb: WandbConfig = field(default_factory=WandbConfig)

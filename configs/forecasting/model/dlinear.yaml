@@ -1,0 +1,9 @@
+# @package model
+# Learned forecaster — set ``model.dlinear.checkpoint_path`` to a trained ckpt.
+type: dlinear
+dlinear:
+  checkpoint_path: ???
+  device: auto
+  batch_size: 64
+  moving_avg_window_size: 25
+  individual: false

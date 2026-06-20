@@ -16,16 +16,18 @@ This module exposes a fast, in-memory lookup for label values and age computatio
 - [`context.get_context`](../context/README.md) — discoverable wrapper that validates the label is a context variable (not a prediction target).
 
 ## Data sources
-- `labels.json`: per-label → healthCode → `timestamps`/`values`.
+- `last_labels.json`: per-label → healthCode → `timestamps`/`values`.
+- `context_labels.json`: context-label payload merged into the same lookup index when available.
 - `enrollment_info.json`: per-healthCode metadata with de-identified `birth_year`.
 - `label_types.json`: maps each label to its semantic type (`binary`, `ordinal`, `categorical`, `multi_categorical`, `continuous`).
 
 ## Variable dictionary
 See [`data/labels/survey_documentation/INDEX.md`](../../data/labels/survey_documentation/INDEX.md) for a per-variable reference (question text, answer options, observed value distributions, iOS source) covering all 169 labels.
 
-By default the module loads data from the `data/labels/` directory. Override with:
+Small schema metadata (`label_types.json`, `ordinal_dictionary.json`, `validity_config.json`) is bundled in the repo under `data/labels/`. Large payload files resolve from your explicit dataset root (`data_dir=` / `MHC_DATA_DIR`) unless you override them per file:
 ```bash
-export LABELS_DATA_PATH=/path/to/labels.json
+export MHC_DATA_DIR=/path/to/openmhc-dataset
+export LABELS_DATA_PATH=/path/to/last_labels.json
 export ENROLLMENT_DATA_PATH=/path/to/enrollment_info.json
 ```
 

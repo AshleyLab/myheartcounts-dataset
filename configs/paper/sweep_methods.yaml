@@ -1,0 +1,82 @@
+# Method sweep for the paper bootstrap pipeline.
+#
+# Each method block names a Hydra ``method=<name>`` choice from
+# ``configs/imputation/method/`` plus optional ``overrides`` (Hydra dot-key
+# strings). Methods whose configs require checkpoints (``release_dir``) MUST
+# supply that path here, otherwise the run will fail.
+#
+# Consumed by scripts/paper_results/run_paper_pipeline.py.
+
+output_root: results/paper        # all paper artifacts land here
+runs_root: results/paper/runs     # one per-method run dir under this
+draws_path: results/paper/bootstrap_draws.parquet
+# Per-user errors Parquet (BCa LOO jackknife substrate; METRICS.md §S7).
+# Sibling of draws_path by default; set to null / empty to disable emission.
+per_user_errors_path: results/paper/per_user_errors.parquet
+manifest_path: configs/paper/bootstrap_method_dirs.json
+
+# Phase 0 (Hydra eval) — applied to every method
+common_overrides:
+  - evaluation.save_pairs=true
+
+# Phase 1 (bootstrap_imputation_draws.py)
+n_boot: 1000
+seed: 42
+splits: [test]
+include_fairness: true
+include_auc: true
+age_bins: [18, 30, 40, 50, 60]
+exclude_unknown: false
+
+# Phase 2 (aggregate_imputation_paper_metrics.py)
+baseline_method: locf
+clip_lower: 0.01
+clip_upper: 100.0
+lambda_fairness: 0.5
+fairness_combine: linear_penalty
+ci_level: 0.95
+# Leave disparity_fns empty to use all registered.
+disparity_fns: []
+# BCa CI augmentation (METRICS.md §S7).
+#  bca:            point + BCa CI for the 3 published fairness scopes
+#                  (overall, age_group, sex). Default ON — the disparity ratio
+#                  max_g E - min_g E is skewed and downward-biased.
+#  bca_skill_rank: opt-in parity sanity-check; default OFF (skill / rank are
+#                  near-unbiased so the BCa interval is close to the percentile
+#                  CI in practice). Currently raises NotImplementedError until
+#                  the N-iteration LOO recompute is wired up.
+bca: true
+bca_skill_rank: false
+
+# Sweep — order matters only for logs. Add per-method overrides as needed.
+methods:
+  - name: mean
+  - name: mode
+  - name: locf
+  - name: linear
+  - name: temporal_mean
+  - name: temporal_mode
+  - name: personalized_mean
+  - name: personalized_mode
+  - name: personalized_temporal_mean
+  - name: lsm2
+    overrides:
+      - method.release_dir=PLEASE_FILL_IN
+  - name: lsm2_weekly_sparse
+    overrides:
+      - method.release_dir=PLEASE_FILL_IN
+  - name: brits
+    overrides:
+      - method.release_dir=PLEASE_FILL_IN
+  - name: timesnet
+    overrides:
+      - method.release_dir=PLEASE_FILL_IN
+  - name: dlinear
+    overrides:
+      - method.release_dir=PLEASE_FILL_IN
+  - name: dlinear_weekly
+    overrides:
+      - method.release_dir=PLEASE_FILL_IN
+  - name: fedformer
+    overrides:
+      - method.release_dir=PLEASE_FILL_IN

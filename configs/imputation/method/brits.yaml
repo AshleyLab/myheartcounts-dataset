@@ -1,0 +1,19 @@
+# @package method
+# Recommended: pass ``release_dir`` to a manifest-bundled checkpoint release.
+# The CLI reads ``openmhc_manifest.json``, validates ``kind == "brits"``, and
+# reconstructs the architecture kwargs automatically. The manifest is copied
+# into the run dir so the result is traceable to the exact checkpoint.
+#
+# Run with:
+#   mhc-impute-eval method=brits method.release_dir=/path/to/brits-release
+type: brits
+release_dir: ???   # required at run-time
+device: auto
+inference_batch_size: 64
+# Inline-arch fallback (only consulted when ``release_dir`` is unset):
+pypots:
+  model_path: ""
+  model_name: brits
+  n_steps: 1440
+  n_features: 19
+  rnn_hidden_size: 128

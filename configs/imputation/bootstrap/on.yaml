@@ -1,0 +1,6 @@
+# @package bootstrap
+enabled: true
+n_boot: 1000
+ci_level: 0.95
+seed: 42
+include_auc: true

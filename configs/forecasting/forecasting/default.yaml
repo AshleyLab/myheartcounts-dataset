@@ -1,0 +1,3 @@
+# @package forecasting
+forecasting_length: 24
+daily_start_hour_offset: 0

@@ -1,0 +1,11 @@
+# @package model
+# Learned forecaster — set ``model.mixlinear.checkpoint_path`` to a trained ckpt.
+type: mixlinear
+mixlinear:
+  checkpoint_path: ???
+  device: auto
+  batch_size: 64
+  period_len: 24
+  lpf: 2
+  alpha: 0.5
+  rank: 2

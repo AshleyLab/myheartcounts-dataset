@@ -1,0 +1,6 @@
+# @package model
+type: chronos2
+chronos2:
+  pretrained_model_name_or_path: amazon/chronos-2
+  device: auto
+  torch_dtype: auto

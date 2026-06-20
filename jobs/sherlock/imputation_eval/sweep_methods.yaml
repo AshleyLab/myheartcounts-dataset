@@ -1,0 +1,96 @@
+# Sherlock overlay of configs/paper/sweep_methods.yaml.
+#
+# All paths point at /scratch (home is quota-limited). Release dirs reference
+# the bundles downloaded by jobs/sherlock/imputation_eval/00_setup.sh.
+#
+# ``${VAR}`` placeholders are expanded by ``run_paper_pipeline.py`` from the
+# process environment. Defaults are set by ``jobs/sherlock/_env.sh`` so the
+# file works for any Sherlock user without editing.
+#
+# Consumed by:
+#   scripts/paper_results/run_paper_pipeline.py \
+#       --sweep-config jobs/sherlock/imputation_eval/sweep_methods.yaml \
+#       --skip-eval
+#
+# Phase 0 (eval) is performed by the per-method sbatches under
+# jobs/sherlock/imputation_eval/run_*.sbatch — they write to runs_root/<name>/
+# so the manifest reconstruction in `_phase0_run_methods` finds them.
+
+output_root: ${SCRATCH_RUN_ROOT}/openmhc-imputation-eval/paper
+runs_root:   ${SCRATCH_RUN_ROOT}/openmhc-imputation-eval/runs
+draws_path:  ${SCRATCH_RUN_ROOT}/openmhc-imputation-eval/paper/bootstrap_draws.parquet
+manifest_path: ${SCRATCH_RUN_ROOT}/openmhc-imputation-eval/paper/bootstrap_method_dirs.json
+
+# Phase 0 (Hydra eval) — kept here for completeness so that a direct
+# `run_paper_pipeline.py` invocation (without --skip-eval) would reproduce the
+# same runs. The per-method sbatches set these same overrides explicitly.
+common_overrides:
+  - evaluation.save_pairs=true
+  - data.version=full
+  - data.daily_hf_dir=${MHC_CACHE}/processed/daily_hf
+  - data.split_file=${MHC_CACHE}/splits/sharable_users_seed42_2026.json
+  - +masking.masks_file=${SCRATCH_RUN_ROOT}/openmhc-imputation-eval/masks/sharable_users_seed42_2026_max91d
+  - bootstrap=on
+  - seed=42
+
+# Phase 1 (bootstrap_imputation_draws.py)
+n_boot: 1000
+seed: 42
+splits: [test]
+include_fairness: true
+include_auc: true
+age_bins: [18, 30, 40, 50, 60]
+exclude_unknown: false
+
+# Phase 2 (aggregate_imputation_paper_metrics.py)
+baseline_method: locf
+clip_lower: 0.01
+clip_upper: 100.0
+lambda_fairness: 0.5
+fairness_combine: linear_penalty
+ci_level: 0.95
+disparity_fns: []
+
+# Optional: restrict Phase 2 to a subset of methods. When unset / null /
+# empty, every method in bootstrap_draws.parquet contributes to the rank
+# comparison pool. When set, both aggregators (skill+rank and fairness)
+# get ``--method-filter <names>``. Skill / fairness values are unchanged
+# (they're pairwise vs. the baseline); avg_rank values shift because
+# the comparison pool changes.
+# CAVEAT: ``baseline_method`` must be in this list — the pipeline
+# driver raises if you exclude it. See METRICS.md §8.1.
+method_filter: null
+
+# Methods. Order matters only for logs. Names match
+# src/imputation_evaluation/hydra/registry.py keys.
+#
+# Personalized variants are registry-only (no YAML preset under
+# configs/imputation/method/); confirmed working via Hydra's `method=<name>`
+# composition. Smoke-test before trusting.
+methods:
+  - {name: mean}
+  - {name: mode}
+  - {name: locf}
+  - {name: linear}
+  - {name: temporal_mean}
+  - {name: temporal_mode}
+  - {name: personalized_mean}
+  - {name: personalized_mode}
+  - {name: personalized_temporal_mean}
+  - name: brits
+    overrides: ["method.release_dir=${RELEASES}/brits"]
+  - name: dlinear
+    overrides: ["method.release_dir=${RELEASES}/dlinear"]
+  # 7-day DLinear (W&B v48). Note the release dir is dlinear-7day (kebab),
+  # decoupled from the registry key dlinear_weekly. Sweep entry name must
+  # match the registry key; the path lives only in the override.
+  - name: dlinear_weekly
+    overrides: ["method.release_dir=${RELEASES}/dlinear-7day"]
+  - name: fedformer
+    overrides: ["method.release_dir=${RELEASES}/fedformer"]
+  - name: timesnet
+    overrides: ["method.release_dir=${RELEASES}/timesnet"]
+  - name: lsm2
+    overrides: ["method.release_dir=${RELEASES}/lsm2"]
+  - name: lsm2_weekly_sparse
+    overrides: ["method.release_dir=${RELEASES}/lsm2_weekly_sparse"]

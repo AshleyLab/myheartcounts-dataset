@@ -27,3 +27,7 @@ env/
 .cache/
 data/.hf_cache/
 data/processed/
+
+# Generated outputs (eval run results, notebook-side artifacts)
+notebooks/data/
+results/
