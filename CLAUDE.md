@@ -12,6 +12,8 @@ Before implementing:
 ## 2. Simplicity First
 Minimum code that solves the problem. Nothing speculative.
 
+- No silent fallbacks, prefer failure over obscure behavior.
+- No backwards compatibility by default, only if user requests explicitely.
 - No features beyond what was asked.
 - No abstractions for single-use code.
 - No “flexibility” that wasn't requested.
