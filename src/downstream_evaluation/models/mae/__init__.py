@@ -1,9 +1,8 @@
 """MAE / LSM2 downstream method: dense ViT encoder + cohort pooling.
 
-Self-contained package. ``model.py`` holds the ``MAE`` encoder, which extracts
-per-day 384-d embeddings using the ``MaskedAutoencoderViT1D_LSM2`` architecture in
-this package (``mae_vit1d``/``blocks``/``positional``/``utils``) and mean-pools them
-per cohort; the engine then adds the uniform PCA-50 + linear probe.
+``model.py`` holds the ``MAE`` encoder, which extracts per-day 384-d embeddings
+using the ``LSM2ViT1D`` architecture from ``openmhc.models.lsm2`` and mean-pools
+them per cohort; the engine then adds the uniform PCA-50 + linear probe.
 """
 
 from __future__ import annotations

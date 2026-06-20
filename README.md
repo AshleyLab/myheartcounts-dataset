@@ -62,8 +62,18 @@ print(results.summary())
 ```
 
 `predict` is the only required method; `fit` is optional — a zero-shot / pretrained
-model omits it and is scored as-is. The full Track-1 guide (data contract, baselines,
-paper reproduction) is in
+model omits it and is scored as-is.
+
+For reproducible runs (config provenance, sweeps, cluster dispatch), the
+`mhc-downstream-eval` Hydra CLI runs the bundled baselines from composable configs
+at `configs/downstream/`:
+
+```bash
+mhc-downstream-eval method=xgboost
+mhc-downstream-eval --multirun method=linear,mae,xgboost
+```
+
+The full Track-1 guide (data contract, baselines, CLI, paper reproduction) is in
 [`src/downstream_evaluation/README.md`](src/downstream_evaluation/README.md).
 
 ### Track 2 — imputation (`Imputer`)

@@ -30,7 +30,6 @@ logger = logging.getLogger(__name__)
 N_CHANNELS = 19
 N_CONTINUOUS = 7  # channels 0–6 are z-scored by the global priors; 7–18 pass through
 EMBED_DIM = 384
-PATCH_SIZE = 10
 BATCH_SIZE = 64
 # min_wear_fraction=0.5 → keep days with at most (1-0.5)*1440 = 720 nonwear minutes.
 MAX_NONWEAR_MINUTES = 720
@@ -44,50 +43,19 @@ DEFAULT_CHECKPOINT = os.environ.get("MAE_CHECKPOINT", "hf://MyHeartCounts/openmh
 # Stage-1 helpers: model load and input transforms.
 # --------------------------------------------------------------------------- #
 def _load_mae_model(checkpoint: str, device):
-    """Load + freeze the LSM2 MAE from a Lightning checkpoint.
+    """Load + freeze the LSM2 MAE encoder from a Lightning checkpoint.
 
-    Strips the ``model.`` prefix from the Lightning ``state_dict`` and rebuilds the
-    architecture from the checkpoint's ``hyper_parameters`` (falling back to the
-    pretrained dims). The dense encoder path used here needs no decoder, but the full
-    module is loaded so ``load_state_dict`` is strict (a wrong dim fails loudly).
+    ``LSM2Module.load_from_checkpoint`` rebuilds the architecture from the
+    checkpoint's saved hyperparameters and loads the weights; ``.model`` is the
+    ``LSM2ViT1D`` encoder. Frozen + eval for inference-only feature extraction.
     """
-    import torch
-
     from utils.checkpoints import resolve_checkpoint_path
 
-    from downstream_evaluation.models.mae.mae_vit1d import MaskedAutoencoderViT1D_LSM2
+    from openmhc.models.lsm2.modules import LSM2Module
 
     resolved = resolve_checkpoint_path(checkpoint)
     logger.info("loading MAE checkpoint: %s", resolved)
-    ckpt = torch.load(resolved, map_location="cpu", weights_only=False)
-
-    if "state_dict" in ckpt:
-        state_dict = {
-            k.removeprefix("model."): v
-            for k, v in ckpt["state_dict"].items()
-            if k.startswith("model.")
-        }
-        hp = ckpt.get("hyper_parameters", {})
-        model = MaskedAutoencoderViT1D_LSM2(
-            seq_length=hp.get("seq_length", 1440),
-            patch_size=hp.get("patch_size", PATCH_SIZE),
-            in_channels=hp.get("in_channels", N_CHANNELS),
-            embed_dim=hp.get("embed_dim", EMBED_DIM),
-            depth=hp.get("depth", 12),
-            num_heads=hp.get("num_heads", 6),
-            decoder_embed_dim=hp.get("decoder_embed_dim", 256),
-            decoder_depth=hp.get("decoder_depth", 4),
-            decoder_num_heads=hp.get("decoder_num_heads", 4),
-            mlp_ratio=hp.get("mlp_ratio", 4.0),
-            qkv_bias=hp.get("qkv_bias", True),
-            dropout_removal_ratio=hp.get("dropout_removal_ratio", 0.5),
-            mask_ratio=hp.get("mask_ratio", 0.5),
-        )
-        model.load_state_dict(state_dict)
-    else:
-        model = MaskedAutoencoderViT1D_LSM2()
-        model.load_state_dict(ckpt)
-
+    model = LSM2Module.load_from_checkpoint(str(resolved), map_location=device).model
     model = model.to(device).eval()
     for p in model.parameters():
         p.requires_grad = False
@@ -154,7 +122,7 @@ def extract_mae_embeddings(
 
     from downstream_evaluation.data.provider import lookup_filename
     from downstream_evaluation.data.splits import load_split_file
-    from downstream_evaluation.models.mae.utils import create_inherited_mask
+    from openmhc.models.lsm2.utils import create_inherited_mask
 
     torch.manual_seed(seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
