@@ -172,7 +172,6 @@ class _LSM2ImputerBase(ReleaseLoadableMixin, BaseImputer):
         A patch is "missing" (value 1) if ANY minute is unobserved — except
         for the heart-rate channel where the rule is ALL minutes missing.
         """
-        torch = self._torch
         B, C, L = valid_mask.shape
         patch_size = int(self._model.patch_size)
         num_patches_per_channel = L // patch_size
@@ -294,6 +293,7 @@ class LSM2Imputer(_LSM2ImputerBase):
         data_dir: str | Path | None = None,
         **_extra: Any,
     ) -> None:
+        """Construct an LSM2 daily imputer; see the class docstring for args."""
         self._declared_arch = {
             "seq_length": seq_length,
             "patch_size": patch_size,
@@ -348,9 +348,7 @@ class LSM2Imputer(_LSM2ImputerBase):
             # Deterministic fast path: keep every token, skip the unseeded
             # torch.rand + argsort shuffle entirely. Identity permutation.
             len_keep = N
-            ids_restore = (
-                torch.arange(N, device=x.device).unsqueeze(0).expand(B, N)
-            )
+            ids_restore = torch.arange(N, device=x.device).unsqueeze(0).expand(B, N)
             x_masked = x_patched
             kept_mask_status = total_mask
         else:
@@ -366,9 +364,7 @@ class LSM2Imputer(_LSM2ImputerBase):
             kept_mask_status = torch.gather(total_mask, dim=1, index=ids_keep)
 
         attn_mask = torch.zeros(B, 1, 1, len_keep, device=x.device)
-        attn_mask.masked_fill_(
-            kept_mask_status.unsqueeze(1).unsqueeze(2).bool(), float("-inf")
-        )
+        attn_mask.masked_fill_(kept_mask_status.unsqueeze(1).unsqueeze(2).bool(), float("-inf"))
 
         latent = model.encoder(x_masked, attn_mask=attn_mask)
         pred = model.forward_decoder(latent, ids_restore, total_mask)
@@ -429,6 +425,7 @@ class LSM2WeeklySparseImputer(_LSM2ImputerBase):
         data_dir: str | Path | None = None,
         **_extra: Any,
     ) -> None:
+        """Construct an LSM2 weekly-sparse imputer; see the class docstring for args."""
         self._declared_arch = {
             "num_days": num_days,
             "window_minutes": window_minutes,
@@ -499,9 +496,7 @@ class LSM2WeeklySparseImputer(_LSM2ImputerBase):
             batch_data = data[start:end]
             batch_valid = valid[start:end]
             batch_target = target_mask[start:end]
-            batch_offsets = (
-                day_offsets[start:end] if day_offsets is not None else None
-            )
+            batch_offsets = day_offsets[start:end] if day_offsets is not None else None
 
             x_norm = self._normalize(batch_data)
             x_filled = np.where(np.isfinite(x_norm), x_norm, 0.0).astype(np.float32)
@@ -511,9 +506,7 @@ class LSM2WeeklySparseImputer(_LSM2ImputerBase):
             inherited_mask = self._create_inherited_mask(valid_t)
 
             with torch.no_grad():
-                pred = self._inference_forward(
-                    x_t, inherited_mask, day_offsets=batch_offsets
-                )
+                pred = self._inference_forward(x_t, inherited_mask, day_offsets=batch_offsets)
                 reconstructed = self._model.unpatchify(pred)
                 if getattr(self._model, "use_hybrid_loss", False):
                     reconstructed[:, 7:, :] = torch.sigmoid(reconstructed[:, 7:, :])
@@ -534,9 +527,7 @@ class LSM2WeeklySparseImputer(_LSM2ImputerBase):
 
         offsets_tensor = None
         if day_offsets is not None:
-            offsets_tensor = torch.as_tensor(
-                day_offsets, dtype=torch.long, device=self._device
-            )
+            offsets_tensor = torch.as_tensor(day_offsets, dtype=torch.long, device=self._device)
 
         # (B, C, D*L) → (B*D, C, L)
         x_days = x.reshape(B, model.in_channels, D, model.seq_length)
@@ -548,9 +539,7 @@ class LSM2WeeklySparseImputer(_LSM2ImputerBase):
 
         # Channel-major (B, C*D*T_per_day) → per-day (B*D, C*T_per_day).
         inh_days = (
-            inherited_mask.reshape(
-                B, model.in_channels, D, model.patches_per_channel_per_day
-            )
+            inherited_mask.reshape(B, model.in_channels, D, model.patches_per_channel_per_day)
             .permute(0, 2, 1, 3)
             .contiguous()
             .reshape(B * D, model.tokens_per_day)
@@ -572,9 +561,7 @@ class LSM2WeeklySparseImputer(_LSM2ImputerBase):
             # Deterministic fast path: keep every token, skip the unseeded
             # torch.rand + argsort shuffle entirely. Identity permutation.
             len_keep = N
-            ids_restore = (
-                torch.arange(N, device=x_tokens.device).unsqueeze(0).expand(BD, N)
-            )
+            ids_restore = torch.arange(N, device=x_tokens.device).unsqueeze(0).expand(BD, N)
             x_masked = x_tokens
             kept_mask_status = total_mask
         else:
@@ -590,9 +577,7 @@ class LSM2WeeklySparseImputer(_LSM2ImputerBase):
             kept_mask_status = torch.gather(total_mask, dim=1, index=ids_keep)
 
         attn_mask = torch.zeros(BD, 1, 1, len_keep, device=x_tokens.device)
-        attn_mask.masked_fill_(
-            kept_mask_status.unsqueeze(1).unsqueeze(2).bool(), float("-inf")
-        )
+        attn_mask.masked_fill_(kept_mask_status.unsqueeze(1).unsqueeze(2).bool(), float("-inf"))
 
         latent = model.encoder(x_masked, attn_mask=attn_mask)
 

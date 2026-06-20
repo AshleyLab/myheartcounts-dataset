@@ -26,6 +26,7 @@ def _parse_named_paths(items: list[str]) -> dict[str, str]:
         parsed[key] = path
     return parsed
 
+
 def build_parser() -> argparse.ArgumentParser:
     """Build CLI parser."""
     parser = argparse.ArgumentParser(

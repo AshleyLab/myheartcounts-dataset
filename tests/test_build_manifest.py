@@ -70,6 +70,7 @@ def _seed_private_repo(tmp_path: Path) -> tuple[Path, Path]:
 
 
 def test_build_release_writes_manifest_and_copies_files(tmp_path):
+    """A BRITS release copies the checkpoint/stats and writes an arch-filtered manifest."""
     repo, ckpt = _seed_private_repo(tmp_path)
     cfg = _write_brits_config(
         repo, "models/pypots/brits/20260409_T005730/BRITS_epoch5_MAE0.0945.pypots"
@@ -115,6 +116,7 @@ def test_build_release_resolves_directory_checkpoint(tmp_path):
 
 
 def test_build_release_skips_wandb_refs(tmp_path):
+    """A wandb: model_path is skipped (no local checkpoint to copy)."""
     repo, _ = _seed_private_repo(tmp_path)
     cfg = _write_brits_config(repo, "wandb:MHC_Dataset/mhc-pypots-dlinear/dlinear:v48")
     result = build_manifest.build_release(
@@ -125,6 +127,7 @@ def test_build_release_skips_wandb_refs(tmp_path):
 
 
 def test_build_release_skips_unsupported_kind(tmp_path):
+    """A config naming an unsupported model kind is skipped with that kind in the reason."""
     repo, _ = _seed_private_repo(tmp_path)
     cfg = _write_brits_config(
         repo, "models/pypots/brits/20260409_T005730/BRITS_epoch5_MAE0.0945.pypots"
@@ -142,6 +145,7 @@ def test_build_release_skips_unsupported_kind(tmp_path):
 
 
 def test_build_release_refuses_overwrite_without_flag(tmp_path):
+    """A second build into an existing release dir is skipped unless overwrite=True."""
     repo, _ = _seed_private_repo(tmp_path)
     cfg = _write_brits_config(
         repo, "models/pypots/brits/20260409_T005730/BRITS_epoch5_MAE0.0945.pypots"
@@ -334,6 +338,7 @@ def test_build_release_lsm2_extracts_arch_and_stats(tmp_path):
 
 
 def test_build_release_lsm2_round_trips_through_load_manifest(tmp_path):
+    """An emitted LSM2 release loads back via load_manifest with its arch and ckpt."""
     from openmhc.imputers import load_manifest
 
     repo, cfg = _seed_lsm2_repo(tmp_path)

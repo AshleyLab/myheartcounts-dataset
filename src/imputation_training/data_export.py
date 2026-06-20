@@ -71,6 +71,15 @@ def h5_cache_subdir(base_dir: str | Path, data_config, h5_export_config) -> Path
 
 
 def h5_files_exist(output_dir: str | Path, splits: tuple[str, ...] = SPLITS) -> bool:
+    """Return whether an ``<split>.h5`` file exists for every split.
+
+    Args:
+        output_dir: Directory expected to hold the per-split H5 files.
+        splits: Split names to check for.
+
+    Returns:
+        ``True`` only if every split's H5 file is present.
+    """
     output_dir = Path(output_dir)
     return all((output_dir / f"{split}.h5").exists() for split in splits)
 

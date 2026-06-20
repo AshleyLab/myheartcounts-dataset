@@ -76,6 +76,10 @@ class TorchImputer(BaseImputer):
         model_name: str | None = None,
         data_dir: str | Path | None = None,
     ) -> None:
+        """Move the model to ``device``, set ``eval()``, and fit norm stats.
+
+        See the class docstring for the meaning of each argument.
+        """
         import torch  # local import — torch is a heavy dep
 
         super().__init__(version=version, data_dir=data_dir)
@@ -162,6 +166,22 @@ class TorchImputer(BaseImputer):
         observed_mask: np.ndarray,
         target_mask: np.ndarray,
     ) -> np.ndarray:
+        """Run the wrapped model and write its predictions into masked cells.
+
+        Fills NaNs, optionally normalizes, runs the forward pass in
+        ``inference_batch_size`` chunks under ``no_grad``, denormalizes,
+        and writes only ``target_mask == 1`` positions into a copy of
+        ``data``.
+
+        Args:
+            data: ``(N, C, T)`` float32 batch with NaN at missing cells.
+            observed_mask: ``(N, C, T)``; 1 where a value is observed.
+            target_mask: ``(N, C, T)``; 1 at positions to impute.
+
+        Returns:
+            A copy of ``data`` with masked positions filled by the model;
+            ``(N, C, T)`` float32.
+        """
         torch = self._torch
         x, valid_mask = self._prepare_input(data, observed_mask, target_mask)
         N = x.shape[0]

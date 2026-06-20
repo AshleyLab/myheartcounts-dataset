@@ -196,7 +196,9 @@ def accumulate_hour_of_day_scale_statistics(
     """
     value_arr = np.asarray(values, dtype=float)
     if value_arr.ndim != 2:
-        raise ValueError(f"Expected values with shape (n_features, trajectory_length), got {value_arr.shape}")
+        raise ValueError(
+            f"Expected values with shape (n_features, trajectory_length), got {value_arr.shape}"
+        )
     if season_length <= 0:
         raise ValueError(f"season_length must be positive, got {season_length}")
 
@@ -283,7 +285,9 @@ def accumulate_global_scale_statistics(
     """
     value_arr = np.asarray(values, dtype=float)
     if value_arr.ndim != 2:
-        raise ValueError(f"Expected values with shape (n_features, trajectory_length), got {value_arr.shape}")
+        raise ValueError(
+            f"Expected values with shape (n_features, trajectory_length), got {value_arr.shape}"
+        )
     if season_length <= 0:
         raise ValueError(f"season_length must be positive, got {season_length}")
 
@@ -356,9 +360,7 @@ def select_hour_of_day_scale(
 
     scales = np.asarray(scales_by_hour, dtype=float).reshape(-1)
     if scales.shape[0] != season_length:
-        raise ValueError(
-            f"scales_by_hour must have length {season_length}, got {scales.shape[0]}"
-        )
+        raise ValueError(f"scales_by_hour must have length {season_length}, got {scales.shape[0]}")
     return float(scales[int(target_idx % season_length)])
 
 
@@ -395,9 +397,7 @@ def compute_mase(
     pred_errors = np.abs(predictions - ground_truth).reshape(-1)
     scales = np.asarray(scales_by_hour, dtype=float).reshape(-1)
     if scales.shape[0] != season_length:
-        raise ValueError(
-            f"scales_by_hour must have length {season_length}, got {scales.shape[0]}"
-        )
+        raise ValueError(f"scales_by_hour must have length {season_length}, got {scales.shape[0]}")
 
     target_indices = np.arange(target_start_idx, target_start_idx + pred_errors.shape[0], dtype=int)
     scale_by_horizon = np.full(pred_errors.shape, np.nan, dtype=float)
@@ -486,8 +486,8 @@ def compute_point_metrics(
     mase_per_feature: dict[str, list[float]] = {}
 
     for i, var_name in enumerate(variable_names):
-        feature_pred = predictions[i:i + 1, :]
-        feature_truth = ground_truth[i:i + 1, :]
+        feature_pred = predictions[i : i + 1, :]
+        feature_truth = ground_truth[i : i + 1, :]
 
         mae_per_feature[var_name] = compute_mae(feature_pred, feature_truth)
         mse_per_feature[var_name] = compute_mse(feature_pred, feature_truth)

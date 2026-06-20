@@ -24,6 +24,7 @@ def _errors(aurocs):
 
 
 def test_perfect_baseline_user_is_kept_with_floor():
+    """A perfect-baseline user is floored to ε > 0, so all four users pair up."""
     model_e = _errors(MODEL_AUROC)
     base_e = _errors(BASE_AUROC)
 
@@ -39,6 +40,7 @@ def test_perfect_baseline_user_is_kept_with_floor():
 
 
 def test_floor_changes_result_vs_old_drop_guard():
+    """The floor admits exactly the one user the old zero-error drop guard removed."""
     model_e = _errors(MODEL_AUROC)
     floored = _errors(BASE_AUROC)
 

@@ -70,9 +70,7 @@ _PAPER_CHECKPOINT_CLASSES: dict[str, type] = {
 }
 
 
-def _build_reference(
-    cls: type, method_cfg: "MethodConfig", data_cfg: "DataConfig"
-) -> tuple[Any, None]:
+def _build_reference(cls: type, method_cfg: MethodConfig, data_cfg: DataConfig) -> tuple[Any, None]:
     # Reference imputers take the dataset *root* (looking for
     # ``splits/`` and ``processed/daily_hf`` underneath). The runner's
     # ``data.daily_hf_dir`` is a different concept (the HF disk path
@@ -89,8 +87,8 @@ def _build_reference(
 
 
 def _build_paper_checkpoint(
-    cls: type, method_cfg: "MethodConfig", data_cfg: "DataConfig"
-) -> tuple[Any, "Manifest | None"]:
+    cls: type, method_cfg: MethodConfig, data_cfg: DataConfig
+) -> tuple[Any, Manifest | None]:
     """Construct a paper-checkpoint imputer from a release dir or inline arch.
 
     Preferred: ``method.release_dir`` points at a manifest-bundled release. We
@@ -168,7 +166,6 @@ def _make_builder(kind: str):
 METHOD_REGISTRY = MethodRegistry(
     name="imputation method",
     builders={
-        kind: _make_builder(kind)
-        for kind in (*_REFERENCE_CLASSES, *_PAPER_CHECKPOINT_CLASSES)
+        kind: _make_builder(kind) for kind in (*_REFERENCE_CLASSES, *_PAPER_CHECKPOINT_CLASSES)
     },
 )

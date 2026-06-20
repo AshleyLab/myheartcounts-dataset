@@ -54,9 +54,7 @@ _SUMMARY_COLUMNS = ["model", "scope", "mean", "se", "ci_lo", "ci_hi", "n_boot"]
 
 def _fairness_headline_scopes(attrs: tuple[str, ...]) -> frozenset[str]:
     """Headline fairness scopes: ``overall`` + the 4 sensor categories + each attr."""
-    return frozenset(
-        {FAIRNESS_OVERALL_SCOPE, *(name for name, _ in _spec.CATEGORY_SCOPES), *attrs}
-    )
+    return frozenset({FAIRNESS_OVERALL_SCOPE, *(name for name, _ in _spec.CATEGORY_SCOPES), *attrs})
 
 
 def _jackknife_fair_points(

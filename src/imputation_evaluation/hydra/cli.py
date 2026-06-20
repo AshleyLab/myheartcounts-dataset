@@ -74,6 +74,12 @@ _CONFIG_PATH = str(Path(__file__).resolve().parents[3] / "configs" / "imputation
     config_name="eval",
 )
 def main(cfg: DictConfig) -> dict[str, Any]:
+    """Run one imputation evaluation from the composed Hydra config.
+
+    Builds the imputer via the method registry, runs ``run_eval``, writes
+    run artifacts (and optional W&B logging) into the Hydra run directory,
+    and returns the results dict.
+    """
     OmegaConf.resolve(cfg)
     typed_cfg: ImputationEvalConfig = dict_to_dataclass(ImputationEvalConfig, cfg)
 
@@ -99,9 +105,7 @@ def main(cfg: DictConfig) -> dict[str, Any]:
     logger.info("Running imputation eval (method=%s) → %s", cfg.method.type, run_dir)
     results = run_eval(typed_cfg, method=method)
 
-    (run_dir / "results.json").write_text(
-        json.dumps(results, indent=2, default=_json_serializer)
-    )
+    (run_dir / "results.json").write_text(json.dumps(results, indent=2, default=_json_serializer))
 
     if typed_cfg.wandb.enabled:
         log_results(results)

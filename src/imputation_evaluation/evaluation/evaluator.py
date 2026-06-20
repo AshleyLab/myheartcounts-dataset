@@ -618,9 +618,7 @@ def _evaluate_batch_all_scenarios(
 
                 # Substitute NaN target cells with the channel-aware fallback fill
                 # so they get scored (not silently dropped) and report visibility.
-                fb_sub, fb_asked = _apply_fallback(
-                    imputed, batch_art_masks, _worker_fallback_fill
-                )
+                fb_sub, fb_asked = _apply_fallback(imputed, batch_art_masks, _worker_fallback_fill)
                 if accumulator is not None:
                     accumulator.add_fallback(fb_sub, fb_asked)
 
@@ -730,9 +728,7 @@ def _evaluate_batch_all_scenarios(
 
                 # Substitute NaN target cells once on the full multi-day window.
                 # Per-channel counts sum across days via the (0,2) reduction.
-                fb_sub, fb_asked = _apply_fallback(
-                    imputed, batch_art_masks, _worker_fallback_fill
-                )
+                fb_sub, fb_asked = _apply_fallback(imputed, batch_art_masks, _worker_fallback_fill)
                 if accumulator is not None:
                     accumulator.add_fallback(fb_sub, fb_asked)
 
@@ -904,7 +900,9 @@ class ImputationEvaluator:
         # iteration) and never spawn the DataLoader's prefetch workers.
         for split_name, loader in [("val", val_loader), ("test", test_loader)]:
             if loader is None:
-                logger.info("Skipping %s split (loader is None — see evaluation.eval_splits)", split_name)
+                logger.info(
+                    "Skipping %s split (loader is None — see evaluation.eval_splits)", split_name
+                )
                 continue
             logger.info(f"\n{'=' * 60}")
             logger.info(f"Evaluating {split_name} split...")
@@ -1006,10 +1004,7 @@ class ImputationEvaluator:
         # Per-scenario metric accumulators (only if computing metrics)
         accumulators = {}
         if compute_metrics:
-            accumulators = {
-                name: MetricAccumulator(channel_stds)
-                for name in self.scenarios
-            }
+            accumulators = {name: MetricAccumulator(channel_stds) for name in self.scenarios}
 
         # Per-scenario subgroup accumulators: scenario -> attr -> group -> MetricAccumulator
         subgroup_accs: dict[str, dict[str, dict[str, MetricAccumulator]]] = {}

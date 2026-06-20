@@ -60,22 +60,14 @@ def _require_dataset_payload_path(
 
 
 LABELS_PATH = _resolve_dataset_payload_path("LABELS_DATA_PATH", "last_labels.json")
-CONTEXT_LABELS_PATH = _resolve_dataset_payload_path(
-    "CONTEXT_LABELS_PATH", "context_labels.json"
-)
+CONTEXT_LABELS_PATH = _resolve_dataset_payload_path("CONTEXT_LABELS_PATH", "context_labels.json")
 ORDINAL_DICTIONARY_PATH = _resolve_bundled_metadata_path(
     "ORDINAL_DICTIONARY_PATH", "ordinal_dictionary.json"
 )
-ENROLLMENT_PATH = _resolve_dataset_payload_path(
-    "ENROLLMENT_DATA_PATH", "enrollment_info.json"
-)
+ENROLLMENT_PATH = _resolve_dataset_payload_path("ENROLLMENT_DATA_PATH", "enrollment_info.json")
 LABEL_TYPES_PATH = _resolve_bundled_metadata_path("LABEL_TYPES_PATH", "label_types.json")
-LABEL_VALIDITY_PATH = _resolve_dataset_payload_path(
-    "LABEL_VALIDITY_PATH", "label_validity.json"
-)
-HEALTHKIT_DAILY_PATH = _resolve_dataset_payload_path(
-    "HEALTHKIT_DAILY_PATH", "healthkit_daily.json"
-)
+LABEL_VALIDITY_PATH = _resolve_dataset_payload_path("LABEL_VALIDITY_PATH", "label_validity.json")
+HEALTHKIT_DAILY_PATH = _resolve_dataset_payload_path("HEALTHKIT_DAILY_PATH", "healthkit_daily.json")
 VALIDITY_CONFIG_PATH = _resolve_bundled_metadata_path(
     "VALIDITY_CONFIG_PATH", "validity_config.json"
 )
@@ -261,26 +253,20 @@ def _to_tuple_of_int(value: Any, label: str) -> tuple[int, ...]:
     """
     if not isinstance(value, (list, tuple)):
         raise LabelTypeError(
-            f"multi_categorical label '{label}' expects list/tuple, "
-            f"got {type(value).__name__}"
+            f"multi_categorical label '{label}' expects list/tuple, got {type(value).__name__}"
         )
     if len(value) == 0:
-        raise LabelTypeError(
-            f"multi_categorical label '{label}' has empty selection"
-        )
+        raise LabelTypeError(f"multi_categorical label '{label}' has empty selection")
     coerced: list[int] = []
     for elem in value:
         if isinstance(elem, bool):
-            raise LabelTypeError(
-                f"multi_categorical '{label}' element is bool: {elem!r}"
-            )
+            raise LabelTypeError(f"multi_categorical '{label}' element is bool: {elem!r}")
         if isinstance(elem, int):
             coerced.append(elem)
         elif isinstance(elem, float):
             if not elem.is_integer():
                 raise LabelTypeError(
-                    f"multi_categorical '{label}' element is non-integer "
-                    f"float: {elem}"
+                    f"multi_categorical '{label}' element is non-integer float: {elem}"
                 )
             coerced.append(int(elem))
         else:
@@ -402,8 +388,7 @@ class LabelSeries:
         """
         if aggregation not in _VALID_AGGREGATIONS:
             raise ValueError(
-                f"Unknown aggregation '{aggregation}', "
-                f"expected one of {_VALID_AGGREGATIONS}"
+                f"Unknown aggregation '{aggregation}', expected one of {_VALID_AGGREGATIONS}"
             )
         if not self.timestamps_ns:
             raise KeyError("No timestamps available for windowed query")
@@ -589,10 +574,7 @@ class LabelsStore:
                     filename="last_labels.json",
                 )
             )
-            if (
-                self.context_labels_path is not None
-                and self.context_labels_path.exists()
-            ):
+            if self.context_labels_path is not None and self.context_labels_path.exists():
                 ctx = _load_labels(self.context_labels_path)
                 for label, per_user in ctx.items():
                     if label not in index:
@@ -631,13 +613,8 @@ class LabelsStore:
         Returns None if healthkit_daily.json does not exist.
         """
         if self._daily_index is None:
-            if (
-                self.healthkit_daily_path is not None
-                and self.healthkit_daily_path.exists()
-            ):
-                self._daily_index = LabelsIndex(
-                    _load_labels(self.healthkit_daily_path)
-                )
+            if self.healthkit_daily_path is not None and self.healthkit_daily_path.exists():
+                self._daily_index = LabelsIndex(_load_labels(self.healthkit_daily_path))
         return self._daily_index
 
     def _ensure_validity_loaded(self) -> None:
@@ -902,8 +879,11 @@ def get_labels_one_hot(
             f"got '{label}' (type={LABEL_TYPES.get(label)!r})"
         )
     selected = get_labels(
-        health_code, timestamp, label,
-        enforce_type=True, return_valid_only=return_valid_only,
+        health_code,
+        timestamp,
+        label,
+        enforce_type=True,
+        return_valid_only=return_valid_only,
     ).value
     if options is None:
         ord_dict = _load_ordinal_dictionary(ORDINAL_DICTIONARY_PATH)
@@ -938,10 +918,15 @@ def get_labels_count(
             f"get_labels_count only supports multi_categorical labels, "
             f"got '{label}' (type={LABEL_TYPES.get(label)!r})"
         )
-    return len(get_labels(
-        health_code, timestamp, label,
-        enforce_type=True, return_valid_only=return_valid_only,
-    ).value)
+    return len(
+        get_labels(
+            health_code,
+            timestamp,
+            label,
+            enforce_type=True,
+            return_valid_only=return_valid_only,
+        ).value
+    )
 
 
 def get_labels_contains(
@@ -973,8 +958,11 @@ def get_labels_contains(
             f"got '{label}' (type={LABEL_TYPES.get(label)!r})"
         )
     selected = get_labels(
-        health_code, timestamp, label,
-        enforce_type=True, return_valid_only=return_valid_only,
+        health_code,
+        timestamp,
+        label,
+        enforce_type=True,
+        return_valid_only=return_valid_only,
     ).value
     return option in selected
 

@@ -33,65 +33,76 @@ import os
 import sys
 from pathlib import Path
 
-_SCRATCH = Path(os.environ.get(
-    "SCRATCH_RUN_ROOT", f"/scratch/users/{os.environ.get('USER', 'unknown')}",
-))
+_SCRATCH = Path(
+    os.environ.get(
+        "SCRATCH_RUN_ROOT",
+        f"/scratch/users/{os.environ.get('USER', 'unknown')}",
+    )
+)
 OUT_BASE = Path(os.environ.get("OUT_BASE", str(_SCRATCH / "openmhc-imputation-eval")))
 RUNS_ROOT = OUT_BASE / "runs"
 PAPER_OUT = OUT_BASE / "paper"
 
 # Parity references — point at your own MHC-benchmark layout via env vars.
-OLD_ROOT = Path(os.environ.get(
-    "MHC_BENCHMARK_RESULTS",
-    str(_SCRATCH / "mhc-benchmark-results"),
-)) / "imputation_eval"
-OLD_PAPER = Path(os.environ.get(
-    "MHC_BENCHMARK_PAPER",
-    str(Path.home() / "MHC-benchmark" / "results" / "paper"),
-))
+OLD_ROOT = (
+    Path(
+        os.environ.get(
+            "MHC_BENCHMARK_RESULTS",
+            str(_SCRATCH / "mhc-benchmark-results"),
+        )
+    )
+    / "imputation_eval"
+)
+OLD_PAPER = Path(
+    os.environ.get(
+        "MHC_BENCHMARK_PAPER",
+        str(Path.home() / "MHC-benchmark" / "results" / "paper"),
+    )
+)
 
 # Map openmhc method name -> glob pattern under OLD_ROOT for the matching
 # MHC-benchmark max91d run. Multiple matches are allowed; we'll pick the
 # newest one (by mtime). None means no parity reference available.
 OLD_PATTERNS: dict[str, list[str]] = {
-    "mean":                       ["baselines_max91d_*_imputation_mean_*"],
-    "mode":                       ["baselines_max91d_*_imputation_mode_*"],
-    "linear":                     ["baselines_max91d_*_imputation_linear_*"],
-    "locf":                       ["baselines_max91d_*_imputation_locf_*"],
-    "temporal_mean":              ["baselines_max91d_*_imputation_temporal_mean_*"],
-    "temporal_mode":              ["baselines_max91d_*_imputation_temporal_mode_*"],
-    "personalized_mean":          ["baselines_max91d_*_imputation_personalized_mean_*"],
-    "personalized_mode":          ["baselines_max91d_*_imputation_personalized_mode_*"],
+    "mean": ["baselines_max91d_*_imputation_mean_*"],
+    "mode": ["baselines_max91d_*_imputation_mode_*"],
+    "linear": ["baselines_max91d_*_imputation_linear_*"],
+    "locf": ["baselines_max91d_*_imputation_locf_*"],
+    "temporal_mean": ["baselines_max91d_*_imputation_temporal_mean_*"],
+    "temporal_mode": ["baselines_max91d_*_imputation_temporal_mode_*"],
+    "personalized_mean": ["baselines_max91d_*_imputation_personalized_mean_*"],
+    "personalized_mode": ["baselines_max91d_*_imputation_personalized_mode_*"],
     "personalized_temporal_mean": ["baselines_max91d_*_imputation_personalized_temporal_mean_*"],
-    "brits":                      ["brits_max91d_*"],
-    "dlinear":                    ["dlinear_max91d_*", "pypots_dlinear_max91d_*"],
-    "dlinear_weekly":             ["pypots_dlinear_7day_max91d_*"],
-    "fedformer":                  ["pypots_fedformer_max91d_*"],
-    "timesnet":                   ["pypots_timesnet_max91d_*"],
-    "lsm2":                       ["mae_daily_nodropout_max91d_*"],
-    "lsm2_weekly_sparse":         ["mae_weekly_sparse_max91d_*"],
+    "brits": ["brits_max91d_*"],
+    "dlinear": ["dlinear_max91d_*", "pypots_dlinear_max91d_*"],
+    "dlinear_weekly": ["pypots_dlinear_7day_max91d_*"],
+    "fedformer": ["pypots_fedformer_max91d_*"],
+    "timesnet": ["pypots_timesnet_max91d_*"],
+    "lsm2": ["mae_daily_nodropout_max91d_*"],
+    "lsm2_weekly_sparse": ["mae_weekly_sparse_max91d_*"],
 }
 
 # Tolerances ---------------------------------------------------------------
-TOL_CONT_RELATIVE = 0.01       # 1 % relative
-TOL_BIN_ABSOLUTE = 0.005       # 0.5 pp absolute
+TOL_CONT_RELATIVE = 0.01  # 1 % relative
+TOL_BIN_ABSOLUTE = 0.005  # 0.5 pp absolute
 
 # Headline metrics ---------------------------------------------------------
 HEADLINE = [
-    ("continuous", "mean_normalized_rmse",   "cont_nrmse",  "rel"),
-    ("continuous", "mean_normalized_mae",    "cont_nmae",   "rel"),
-    ("binary",     "macro_balanced_accuracy","bin_bacc",    "abs"),
-    ("binary",     "macro_roc_auc",          "bin_auc",     "abs"),
+    ("continuous", "mean_normalized_rmse", "cont_nrmse", "rel"),
+    ("continuous", "mean_normalized_mae", "cont_nmae", "rel"),
+    ("binary", "macro_balanced_accuracy", "bin_bacc", "abs"),
+    ("binary", "macro_roc_auc", "bin_auc", "abs"),
 ]
 
 
 # ----------------------- loaders ------------------------------------------
 
+
 def _load_metrics(run_dir: Path) -> dict | None:
     """Load aggregated metrics, trying common file layouts."""
     candidates = [
-        run_dir / "pairs" / "aggregated_metrics.json",   # MHC-benchmark layout
-        run_dir / "results.json",                        # openmhc layout
+        run_dir / "pairs" / "aggregated_metrics.json",  # MHC-benchmark layout
+        run_dir / "results.json",  # openmhc layout
         run_dir / "results_aggregated.json",
     ]
     for c in candidates:
@@ -126,6 +137,7 @@ def _find_old_run(method: str) -> Path | None:
 
 # ----------------------- comparison ---------------------------------------
 
+
 def _is_finite(x) -> bool:
     return isinstance(x, (int, float)) and math.isfinite(x)
 
@@ -146,7 +158,10 @@ def _row_ok(old: float, new: float, kind: str) -> tuple[bool, str]:
 
 
 def _diff_block(
-    method: str, old: dict, new: dict, splits: tuple[str, ...] = ("test",),
+    method: str,
+    old: dict,
+    new: dict,
+    splits: tuple[str, ...] = ("test",),
 ) -> list[tuple]:
     """Yield rows: (method, scenario, split, metric_label, old, new, delta, ok)."""
     rows = []
@@ -168,12 +183,15 @@ def _diff_block(
 
 # ----------------------- print --------------------------------------------
 
+
 def _print_table(rows: list[tuple]) -> int:
     if not rows:
         print("(no rows to compare)")
         return 0
-    print(f"{'method':<28} {'scenario':<20} {'split':<5} {'metric':<10} "
-          f"{'old':>10} {'new':>10} {'Δ':>10}  ok")
+    print(
+        f"{'method':<28} {'scenario':<20} {'split':<5} {'metric':<10} "
+        f"{'old':>10} {'new':>10} {'Δ':>10}  ok"
+    )
     print("-" * 110)
     fails = 0
     for method, scenario, split, label, o, n, delta, ok in rows:
@@ -182,8 +200,10 @@ def _print_table(rows: list[tuple]) -> int:
             fails += 1
         o_s = f"{o:.4f}" if _is_finite(o) else "  N/A"
         n_s = f"{n:.4f}" if _is_finite(n) else "  N/A"
-        print(f"{method:<28} {scenario:<20} {split:<5} {label:<10} "
-              f"{o_s:>10} {n_s:>10} {delta:>10}  {flag}")
+        print(
+            f"{method:<28} {scenario:<20} {split:<5} {label:<10} "
+            f"{o_s:>10} {n_s:>10} {delta:>10}  {flag}"
+        )
     print()
     if fails:
         print(f"FAIL: {fails}/{len(rows)} rows outside tolerance")
@@ -193,6 +213,7 @@ def _print_table(rows: list[tuple]) -> int:
 
 
 # ----------------------- paper bootstrap parity ---------------------------
+
 
 def _check_paper_csvs() -> None:
     """Print a quick side-by-side of the headline paper CSVs, if both exist."""
@@ -213,13 +234,26 @@ def _check_paper_csvs() -> None:
 
 # ----------------------- main ---------------------------------------------
 
+
 def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--methods", nargs="+", default=None,
-                    help="Restrict to subset of method names (default: all in RUNS_ROOT)")
-    ap.add_argument("--splits", nargs="+", default=["test"],
-                    help="Which splits to compare (default: test)")
+    """Diff new SC-cluster eval metrics against the MHC-benchmark references.
+
+    Returns:
+        Process exit code: ``2`` if no new runs exist, otherwise the table
+        check code from :func:`_print_table`.
+    """
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    ap.add_argument(
+        "--methods",
+        nargs="+",
+        default=None,
+        help="Restrict to subset of method names (default: all in RUNS_ROOT)",
+    )
+    ap.add_argument(
+        "--splits", nargs="+", default=["test"], help="Which splits to compare (default: test)"
+    )
     args = ap.parse_args()
 
     if not RUNS_ROOT.exists():

@@ -162,7 +162,8 @@ class OfflineMetricsPipeline:
                 history_lengths = [
                     history_length
                     for row in rows
-                    if (history_length := coerce_non_negative_int(row.get("history_length"))) is not None
+                    if (history_length := coerce_non_negative_int(row.get("history_length")))
+                    is not None
                 ]
                 (
                     scale_sum,
@@ -216,7 +217,9 @@ class OfflineMetricsPipeline:
         """Accumulate hour-bucketed and global seasonal scales for many windows."""
         value_arr = np.asarray(values, dtype=float)
         if value_arr.ndim != 2:
-            raise ValueError(f"Expected values with shape (n_features, trajectory_length), got {value_arr.shape}")
+            raise ValueError(
+                f"Expected values with shape (n_features, trajectory_length), got {value_arr.shape}"
+            )
         if season_length <= 0:
             raise ValueError(f"season_length must be positive, got {season_length}")
 
@@ -246,9 +249,7 @@ class OfflineMetricsPipeline:
         target_indices = starts[:, None] + offsets[None, :]
         previous_indices = target_indices - season_length
         valid_pair_mask = (
-            (target_indices >= 0)
-            & (target_indices < trajectory_length)
-            & (previous_indices >= 0)
+            (target_indices >= 0) & (target_indices < trajectory_length) & (previous_indices >= 0)
         )
         if not np.any(valid_pair_mask):
             return scale_sum_arr, scale_count_arr, global_scale_sum_arr, global_scale_count_arr
@@ -425,7 +426,6 @@ class OfflineMetricsPipeline:
         """
         output_run_dir = Path(pipeline_inputs["output_run_dir"])
         metrics_dir = Path(pipeline_inputs["metrics_dir"])
-        model_key = sanitize_name(str(pipeline_inputs["model_name"]))
 
         output_run_dir.mkdir(parents=True, exist_ok=True)
         copy_run_config(self.run_path, output_run_dir)

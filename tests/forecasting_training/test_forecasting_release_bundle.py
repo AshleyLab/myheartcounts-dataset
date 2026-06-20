@@ -34,6 +34,7 @@ def _make_scaler_stats(tmp_path, n_features: int):
 
 
 def test_release_bundle_roundtrip(tmp_path) -> None:
+    """write_release emits the four bundle files; both loaders agree and arch matches config."""
     ckpt = tmp_path / "src.pypots"
     ckpt.write_bytes(b"dummy-checkpoint")
     cfg = ForecastingTrainingConfig()  # default dlinear, whether_standardscaler=True
@@ -77,6 +78,7 @@ def test_release_bundle_roundtrip(tmp_path) -> None:
 
 
 def test_release_requires_scaler_when_standardized(tmp_path) -> None:
+    """write_release raises when whether_standardscaler is True but no scaler stats given."""
     ckpt = tmp_path / "src.pypots"
     ckpt.write_bytes(b"dummy")
     cfg = ForecastingTrainingConfig()  # whether_standardscaler=True
@@ -92,6 +94,7 @@ def test_release_requires_scaler_when_standardized(tmp_path) -> None:
 
 
 def test_release_rejects_stats_when_not_standardized(tmp_path) -> None:
+    """write_release raises when scaler stats are supplied but whether_standardscaler is False."""
     ckpt = tmp_path / "src.pypots"
     ckpt.write_bytes(b"dummy")
     cfg = ForecastingTrainingConfig()

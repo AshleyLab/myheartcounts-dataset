@@ -25,12 +25,17 @@ def _ch(*cells: float) -> np.ndarray:
 
 
 def test_pooled_auroc_differs_from_mean_of_window_auroc():
+    """Pooled AUROC scores the concatenated pool, not the mean of per-window AUROCs."""
     # Window 1: perfectly separated -> AUROC 1.0; Window 2: reversed -> AUROC 0.0.
     gt1, pred1 = _ch(1, 1, 0, 0), _ch(0.9, 0.8, 0.2, 0.1)
     gt2, pred2 = _ch(1, 0), _ch(0.3, 0.7)
 
-    w1 = _compute_binary_metrics_for_sample(point_predictions=pred1, ground_truth=gt1, threshold=0.5)
-    w2 = _compute_binary_metrics_for_sample(point_predictions=pred2, ground_truth=gt2, threshold=0.5)
+    w1 = _compute_binary_metrics_for_sample(
+        point_predictions=pred1, ground_truth=gt1, threshold=0.5
+    )
+    w2 = _compute_binary_metrics_for_sample(
+        point_predictions=pred2, ground_truth=gt2, threshold=0.5
+    )
     mean_of_windows = np.mean([w1["auroc"][0], w2["auroc"][0]])
     assert w1["auroc"][0] == pytest.approx(1.0)
     assert w2["auroc"][0] == pytest.approx(0.0)
@@ -45,6 +50,7 @@ def test_pooled_auroc_differs_from_mean_of_window_auroc():
 
 
 def test_pooled_f1_matches_summed_confusion_counts():
+    """Pooled F1 and valid/positive/negative counts match the summed confusion cells."""
     gt1, pred1 = _ch(1, 1, 0, 0), _ch(0.9, 0.8, 0.2, 0.1)
     gt2, pred2 = _ch(1, 0), _ch(0.3, 0.7)
     pooled = _compute_pooled_binary_metrics_for_user(
@@ -59,12 +65,15 @@ def test_pooled_f1_matches_summed_confusion_counts():
 
 
 def test_pooling_recovers_auroc_when_a_window_lacks_negatives():
+    """Pooling makes a user-level AUROC computable when a single window has no negatives."""
     # Window 1 has only positives -> per-window AUROC is undefined (NaN);
     # pooling with window 2 (a negative) makes the user-level AUROC computable.
     gt1, pred1 = _ch(1, 1), _ch(0.8, 0.9)
     gt2, pred2 = _ch(0), _ch(0.2)
 
-    w1 = _compute_binary_metrics_for_sample(point_predictions=pred1, ground_truth=gt1, threshold=0.5)
+    w1 = _compute_binary_metrics_for_sample(
+        point_predictions=pred1, ground_truth=gt1, threshold=0.5
+    )
     assert math.isnan(w1["auroc"][0])
 
     pooled = _compute_pooled_binary_metrics_for_user(
@@ -76,6 +85,7 @@ def test_pooling_recovers_auroc_when_a_window_lacks_negatives():
 
 
 def test_single_window_pool_equals_per_window():
+    """With one window, the pooled metrics equal the per-window metrics."""
     gt, pred = _ch(1, 0, 1, 0), _ch(0.7, 0.2, 0.6, 0.4)
     per_window = _compute_binary_metrics_for_sample(
         point_predictions=pred, ground_truth=gt, threshold=0.5

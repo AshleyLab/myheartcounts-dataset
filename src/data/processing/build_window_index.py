@@ -238,10 +238,7 @@ def load_window_index(path: str | Path) -> pd.DataFrame:
         elif hasattr(first, "__iter__") and not isinstance(first, (list, str)):
             # Numpy array or similar — convert NaN → None, floats → int
             def _normalise_row_indices(arr):
-                return [
-                    None if (isinstance(v, float) and math.isnan(v)) else int(v)
-                    for v in arr
-                ]
+                return [None if (isinstance(v, float) and math.isnan(v)) else int(v) for v in arr]
 
             df["row_indices"] = df["row_indices"].apply(_normalise_row_indices)
     return df
@@ -277,9 +274,7 @@ def save_window_index(df: pd.DataFrame, path: str | Path) -> None:
 
 def main():
     """CLI entry point for building window indices."""
-    parser = argparse.ArgumentParser(
-        description="Build window index from daily_hourly_hf dataset."
-    )
+    parser = argparse.ArgumentParser(description="Build window index from daily_hourly_hf dataset.")
     parser.add_argument(
         "--daily-hourly-hf-dir",
         required=True,

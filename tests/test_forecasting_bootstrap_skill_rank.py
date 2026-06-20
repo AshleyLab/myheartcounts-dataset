@@ -114,16 +114,26 @@ def test_identity_draw_matches_point(tmp_path):
     replicas = _draw_replica_frame(users, np.arange(len(users)))
     err_b = _resample(error_df, replicas, "unit_id")
     long_b = _compute_long_skill_scores(
-        error_df=err_b, models=models, baseline_model="baseline",
-        clip_lower=0.01, clip_upper=100.0, min_pairs=1,
+        error_df=err_b,
+        models=models,
+        baseline_model="baseline",
+        clip_lower=0.01,
+        clip_upper=100.0,
+        min_pairs=1,
     )
     summ_b = _build_model_summary(long_df=long_b, models=models, baseline_model="baseline")
 
     _, point_summary, _ = compute_skill_score_tables(
-        models=models, baseline_model="baseline",
-        continuous_metrics=["mae"], binary_metrics=["auprc"],
-        continuous_channel_indices=CONT_CH, binary_channel_indices=BIN_CH,
-        clip_lower=0.01, clip_upper=100.0, min_pairs=1, aggregation_unit="user",
+        models=models,
+        baseline_model="baseline",
+        continuous_metrics=["mae"],
+        binary_metrics=["auprc"],
+        continuous_channel_indices=CONT_CH,
+        binary_channel_indices=BIN_CH,
+        clip_lower=0.01,
+        clip_upper=100.0,
+        min_pairs=1,
+        aggregation_unit="user",
     )
 
     b = summ_b.set_index("model")
@@ -189,20 +199,33 @@ def _overall_skill_long_df(workout_channels, ratio=0.5):
     rows = []
     for ch in range(0, 7):  # activity 0-4, physiology 5-6 (continuous)
         rows.append(
-            dict(model="m", group="continuous", metric="mae", channel_idx=ch,
-                 geometric_mean_ratio=ratio)
+            dict(
+                model="m",
+                group="continuous",
+                metric="mae",
+                channel_idx=ch,
+                geometric_mean_ratio=ratio,
+            )
         )
     for ch in [7, 8, *workout_channels]:  # sleep 7-8, workout (binary)
         rows.append(
-            dict(model="m", group="binary", metric="auroc", channel_idx=ch,
-                 geometric_mean_ratio=ratio)
+            dict(
+                model="m",
+                group="binary",
+                metric="auroc",
+                channel_idx=ch,
+                geometric_mean_ratio=ratio,
+            )
         )
     return pd.DataFrame(rows)
 
 
 def test_overall_score_invariant_to_workout_channel_count():
-    """Category-balanced overall_score weights each of the 4 scopes once, so adding
-    workout channels (at the same ratio) leaves it unchanged — the defining property."""
+    """The category-balanced overall_score is invariant to the workout channel count.
+
+    Each of the 4 scopes is weighted once, so adding workout channels at the same
+    ratio leaves the overall score unchanged — its defining property.
+    """
     few, n_few = _aggregate_overall_category_balanced_score(_overall_skill_long_df([9, 10]), "m")
     many, n_many = _aggregate_overall_category_balanced_score(
         _overall_skill_long_df(range(9, 19)), "m"
@@ -216,8 +239,15 @@ def test_overall_score_invariant_to_workout_channel_count():
         [
             _overall_skill_long_df(range(9, 19)),
             pd.DataFrame(
-                [dict(model="m", group="activity", metric="mae", channel_idx=-1,
-                      geometric_mean_ratio=0.01)]
+                [
+                    dict(
+                        model="m",
+                        group="activity",
+                        metric="mae",
+                        channel_idx=-1,
+                        geometric_mean_ratio=0.01,
+                    )
+                ]
             ),
         ],
         ignore_index=True,
@@ -227,13 +257,15 @@ def test_overall_score_invariant_to_workout_channel_count():
 
 
 def test_overall_score_two_scope_formula():
-    """overall = 1 - exp(mean over scopes of the within-scope mean log-ratio)."""
+    """Overall = 1 - exp(mean over scopes of the within-scope mean log-ratio)."""
     df = pd.DataFrame(
         [
-            dict(model="m", group="continuous", metric="mae", channel_idx=0,
-                 geometric_mean_ratio=0.5),
-            dict(model="m", group="binary", metric="auroc", channel_idx=7,
-                 geometric_mean_ratio=0.8),
+            dict(
+                model="m", group="continuous", metric="mae", channel_idx=0, geometric_mean_ratio=0.5
+            ),
+            dict(
+                model="m", group="binary", metric="auroc", channel_idx=7, geometric_mean_ratio=0.8
+            ),
         ]
     )
     got, n = _aggregate_overall_category_balanced_score(df, "m")
@@ -242,24 +274,47 @@ def test_overall_score_two_scope_formula():
 
 
 def test_overall_rank_invariant_and_monotonic():
-    """The category-balanced overall rank weights each scope once (invariant to the
-    workout channel count) and orders models by skill."""
+    """The category-balanced overall rank is workout-count invariant and skill-ordered.
+
+    Each scope is weighted once (so the rank is invariant to the workout channel
+    count) and models are ordered by skill.
+    """
 
     def user_rows(workout):
         rs = []
         for u in ("u1", "u2", "u3"):
             for ch in range(0, 7):  # continuous: lower mae is better
                 for mdl, val in (("good", 0.1), ("baseline", 0.5), ("bad", 0.9)):
-                    rs.append(dict(model=mdl, scope_type="continuous_channel",
-                                   scope=f"channel_{ch}", scope_label="", metric="mae",
-                                   metric_display="", channel_idx=ch, user_id=u,
-                                   metric_value=val, n_values=1))
+                    rs.append(
+                        dict(
+                            model=mdl,
+                            scope_type="continuous_channel",
+                            scope=f"channel_{ch}",
+                            scope_label="",
+                            metric="mae",
+                            metric_display="",
+                            channel_idx=ch,
+                            user_id=u,
+                            metric_value=val,
+                            n_values=1,
+                        )
+                    )
             for ch in (7, 8, *workout):  # binary: higher auroc is better
                 for mdl, val in (("good", 0.9), ("baseline", 0.5), ("bad", 0.1)):
-                    rs.append(dict(model=mdl, scope_type="binary_channel",
-                                   scope=f"channel_{ch}", scope_label="", metric="auroc",
-                                   metric_display="", channel_idx=ch, user_id=u,
-                                   metric_value=val, n_values=1))
+                    rs.append(
+                        dict(
+                            model=mdl,
+                            scope_type="binary_channel",
+                            scope=f"channel_{ch}",
+                            scope_label="",
+                            metric="auroc",
+                            metric_display="",
+                            channel_idx=ch,
+                            user_id=u,
+                            metric_value=val,
+                            n_values=1,
+                        )
+                    )
         return pd.DataFrame(rs)
 
     few = _compute_category_balanced_ranks(user_rows([9, 10]))
@@ -286,9 +341,18 @@ def test_overall_rank_collapses_users_first_under_missingness():
     per_user_channels = {"u1": (0, 1), "u2": (0, 1), "u3": (0,)}
     vals = {0: {"A": 0.1, "B": 0.9}, 1: {"A": 0.9, "B": 0.1}}
     rows = [
-        dict(model=mdl, scope_type="continuous_channel", scope=f"channel_{ch}",
-             scope_label="", metric="mae", metric_display="", channel_idx=ch,
-             user_id=user, metric_value=vals[ch][mdl], n_values=1)
+        dict(
+            model=mdl,
+            scope_type="continuous_channel",
+            scope=f"channel_{ch}",
+            scope_label="",
+            metric="mae",
+            metric_display="",
+            channel_idx=ch,
+            user_id=user,
+            metric_value=vals[ch][mdl],
+            n_values=1,
+        )
         for user, channels in per_user_channels.items()
         for ch in channels
         for mdl in ("A", "B")
@@ -309,9 +373,18 @@ def test_category_rank_is_mean_of_ranks_not_rank_of_mean():
     # activity: channel 0 large scale (A wins), channel 1 small scale (B wins), mae.
     vals = {0: {"A": 100.0, "B": 200.0}, 1: {"A": 2.0, "B": 1.0}}
     rows = [
-        dict(model=mdl, scope_type="continuous_channel", scope=f"channel_{ch}",
-             scope_label="", metric="mae", metric_display="", channel_idx=ch,
-             user_id=user, metric_value=vals[ch][mdl], n_values=1)
+        dict(
+            model=mdl,
+            scope_type="continuous_channel",
+            scope=f"channel_{ch}",
+            scope_label="",
+            metric="mae",
+            metric_display="",
+            channel_idx=ch,
+            user_id=user,
+            metric_value=vals[ch][mdl],
+            n_values=1,
+        )
         for user in ("u1", "u2")
         for ch in (0, 1)
         for mdl in ("A", "B")

@@ -217,6 +217,7 @@ class PublicWriter:
         with json_path.open("w", encoding="utf-8") as handle:
             json.dump(config_data, handle, indent=2, ensure_ascii=False)
 
+
 class PredictResultWriter:
     """Write prediction rows for a single model/user pair."""
 
@@ -274,4 +275,6 @@ class PredictResultWriter:
         self._writer.close()
         self._writer = None
         self._schema = None
-        logger.debug("Finalized prediction file: %s (rows=%d)", self.file_path, self.records_written)
+        logger.debug(
+            "Finalized prediction file: %s (rows=%d)", self.file_path, self.records_written
+        )

@@ -211,8 +211,9 @@ class TestTaskGrainSkillEmission:
         np.testing.assert_allclose(skill_by_ch["task:random_noise:ch_3"], -99.0, rtol=1e-9)
 
     def test_scenario_scope_is_geomean_of_task_ratios(self):
-        """Per-scenario scope skill reconstructs from its constituent task
-        scopes:
+        """Per-scenario scope skill reconstructs from its constituent task scopes.
+
+        ::
 
             S_scenario = 1 − exp(mean(log(1 − S_task)))
                        = 1 − geomean(clipped_R)
@@ -226,12 +227,8 @@ class TestTaskGrainSkillEmission:
             {"method": "A", "scenario": "random_noise", "channel": "ch_2", "R": 1.5},
         ]
         result = compute_skill_scores(_build_paired_R_frame(rows), mode="paired")
-        task_skills = (
-            result[result["scope"].str.startswith("task:")]["skill_score"].values
-        )
-        scenario_skill = float(
-            result[result["scope"] == "random_noise"]["skill_score"].iloc[0]
-        )
+        task_skills = result[result["scope"].str.startswith("task:")]["skill_score"].values
+        scenario_skill = float(result[result["scope"] == "random_noise"]["skill_score"].iloc[0])
         expected = 1.0 - float(np.exp(np.mean(np.log(1.0 - task_skills))))
         np.testing.assert_allclose(scenario_skill, expected, rtol=1e-9)
 
@@ -241,14 +238,31 @@ class TestTaskGrainRankEmission:
 
     def test_task_rank_passed_through_unchanged(self):
         """avg_rank for each ``task:*`` row equals the input ``task_rank``."""
-        per_task = pd.DataFrame([
-            {"method": "A", "scenario": "random_noise", "channel": "ch_0",
-             "task_rank": 1.5, "n_users": 100},
-            {"method": "A", "scenario": "random_noise", "channel": "ch_1",
-             "task_rank": 2.0, "n_users": 95},
-            {"method": "B", "scenario": "temporal_slice", "channel": "ch_5",
-             "task_rank": 1.0, "n_users": 80},
-        ])
+        per_task = pd.DataFrame(
+            [
+                {
+                    "method": "A",
+                    "scenario": "random_noise",
+                    "channel": "ch_0",
+                    "task_rank": 1.5,
+                    "n_users": 100,
+                },
+                {
+                    "method": "A",
+                    "scenario": "random_noise",
+                    "channel": "ch_1",
+                    "task_rank": 2.0,
+                    "n_users": 95,
+                },
+                {
+                    "method": "B",
+                    "scenario": "temporal_slice",
+                    "channel": "ch_5",
+                    "task_rank": 1.0,
+                    "n_users": 80,
+                },
+            ]
+        )
         result = aggregate_task_ranks_to_scopes(per_task)
         task_rows = result[result["scope"].str.startswith("task:")]
         by_scope = task_rows.set_index("scope")
@@ -261,38 +275,55 @@ class TestTaskGrainRankEmission:
         assert (task_rows["n_tasks"] == 1).all()
 
     def test_scenario_rank_is_mean_of_task_ranks(self):
-        """The Stage-2 ``<scenario>`` scope mean equals the mean of its
+        """The ``<scenario>`` scope mean equals the mean of its ``task:*`` rows.
+
+        The Stage-2 ``<scenario>`` scope mean equals the mean of its
         ``task:*`` constituents — the leaf rows can be re-aggregated by the
         consumer without round-tripping the per-task fixture.
         """
-        per_task = pd.DataFrame([
-            {"method": "A", "scenario": "random_noise", "channel": "ch_0",
-             "task_rank": 1.5, "n_users": 100},
-            {"method": "A", "scenario": "random_noise", "channel": "ch_1",
-             "task_rank": 2.5, "n_users": 100},
-            {"method": "A", "scenario": "random_noise", "channel": "ch_2",
-             "task_rank": 3.0, "n_users": 100},
-        ])
+        per_task = pd.DataFrame(
+            [
+                {
+                    "method": "A",
+                    "scenario": "random_noise",
+                    "channel": "ch_0",
+                    "task_rank": 1.5,
+                    "n_users": 100,
+                },
+                {
+                    "method": "A",
+                    "scenario": "random_noise",
+                    "channel": "ch_1",
+                    "task_rank": 2.5,
+                    "n_users": 100,
+                },
+                {
+                    "method": "A",
+                    "scenario": "random_noise",
+                    "channel": "ch_2",
+                    "task_rank": 3.0,
+                    "n_users": 100,
+                },
+            ]
+        )
         result = aggregate_task_ranks_to_scopes(per_task)
-        scenario_rank = float(
-            result[result["scope"] == "random_noise"]["avg_rank"].iloc[0]
-        )
-        task_ranks = (
-            result[result["scope"].str.startswith("task:")]["avg_rank"].values
-        )
+        scenario_rank = float(result[result["scope"] == "random_noise"]["avg_rank"].iloc[0])
+        task_ranks = result[result["scope"].str.startswith("task:")]["avg_rank"].values
         np.testing.assert_allclose(scenario_rank, float(np.mean(task_ranks)), rtol=1e-9)
         np.testing.assert_allclose(scenario_rank, (1.5 + 2.5 + 3.0) / 3, rtol=1e-9)
 
     def test_n_users_optional(self):
-        """Rank input without ``n_users`` still emits task scopes; output
+        """Rank input without ``n_users`` still emits task scopes; column omitted.
+
+        Rank input without ``n_users`` still emits task scopes; the output
         ``n_users`` column is omitted on every row consistently.
         """
-        per_task = pd.DataFrame([
-            {"method": "A", "scenario": "random_noise", "channel": "ch_0",
-             "task_rank": 1.0},
-            {"method": "A", "scenario": "random_noise", "channel": "ch_1",
-             "task_rank": 2.0},
-        ])
+        per_task = pd.DataFrame(
+            [
+                {"method": "A", "scenario": "random_noise", "channel": "ch_0", "task_rank": 1.0},
+                {"method": "A", "scenario": "random_noise", "channel": "ch_1", "task_rank": 2.0},
+            ]
+        )
         result = aggregate_task_ranks_to_scopes(per_task)
         task_rows = result[result["scope"].str.startswith("task:")]
         assert "n_users" not in result.columns
@@ -318,8 +349,7 @@ def test_task_scopes_flow_through_bootstrap_phase2():
 
     # Synthetic fixture uses 2 scenarios × 2 channels → 4 task scopes each.
     expected_task_scopes = {
-        f"task:{sc}:{ch}" for sc in ("random_noise", "block_random")
-        for ch in ("ch_0", "ch_1")
+        f"task:{sc}:{ch}" for sc in ("random_noise", "block_random") for ch in ("ch_0", "ch_1")
     }
     assert expected_task_scopes.issubset(skill_scopes)
     assert expected_task_scopes.issubset(rank_scopes)
@@ -340,9 +370,7 @@ def test_task_scopes_flow_through_bootstrap_phase2():
 
     # Task rank == task_rank, which is constant per method in the fixture:
     # linear=1, locf=2, mean=3.
-    rank_by_method = (
-        task_rank.groupby("method", observed=True)["mean"].mean().to_dict()
-    )
+    rank_by_method = task_rank.groupby("method", observed=True)["mean"].mean().to_dict()
     np.testing.assert_allclose(rank_by_method["linear"], 1.0, atol=1e-6)
     np.testing.assert_allclose(rank_by_method["locf"], 2.0, atol=1e-6)
     np.testing.assert_allclose(rank_by_method["mean"], 3.0, atol=1e-6)
@@ -529,9 +557,11 @@ def test_phase1_skips_check_without_subgroup_mappings(tmp_path):
 
 
 def test_compute_per_draw_errors_returns_tuple_with_emit_per_user(tmp_path):
-    """``emit_per_user_errors=True`` returns a 2-tuple with the documented
-    per-user schema. With no pairs files in the synthetic tree the frames
-    are empty, but the schema contract must still hold."""
+    """``emit_per_user_errors=True`` returns a 2-tuple with the per-user schema.
+
+    With no pairs files in the synthetic tree the frames are empty, but the
+    schema contract must still hold.
+    """
     from imputation_evaluation.evaluation.bootstrap_skill_rank import (
         PER_USER_ERRORS_PARQUET_COLUMNS,
     )
@@ -548,8 +578,10 @@ def test_compute_per_draw_errors_returns_tuple_with_emit_per_user(tmp_path):
 
 
 def test_compute_per_draw_errors_default_returns_dataframe(tmp_path):
-    """The default (``emit_per_user_errors=False``) still returns a single
-    DataFrame — backward-compat anchor."""
+    """The default (``emit_per_user_errors=False``) still returns one DataFrame.
+
+    Backward-compat anchor.
+    """
     _, method_dirs = _build_two_method_dirs(tmp_path, mismatch_kind="none")
     out = compute_per_draw_errors(**_phase1_kwargs(method_dirs, with_subgroups=False))
     # Single DataFrame, not a tuple.

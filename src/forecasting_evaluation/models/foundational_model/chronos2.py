@@ -21,12 +21,7 @@ class Chronos2Model(BasePredictionModel):
     - Probabilistic forecasting with quantiles
     """
 
-    def __init__(
-        self,
-        config: Chronos2ModelConfig | None = None,
-        seed: int = 42,
-        **kwargs
-    ):
+    def __init__(self, config: Chronos2ModelConfig | None = None, seed: int = 42, **kwargs):
         """Initialize Chronos2Model.
 
         Parameters
@@ -106,7 +101,9 @@ class Chronos2Model(BasePredictionModel):
         if not output_dir.exists():
             raise FileNotFoundError(f"Chronos-2 training output directory not found: {output_dir}")
 
-        checkpoint_name = self.config.finetuned_ckpt_name or self._load_finetuned_ckpt_name(output_dir)
+        checkpoint_name = self.config.finetuned_ckpt_name or self._load_finetuned_ckpt_name(
+            output_dir
+        )
         checkpoint_dir = output_dir / checkpoint_name
         if not checkpoint_dir.exists():
             raise FileNotFoundError(
@@ -115,7 +112,10 @@ class Chronos2Model(BasePredictionModel):
         return checkpoint_dir
 
     def _load_finetuned_ckpt_name(self, output_dir: Path) -> str:
-        for config_path in (output_dir / "training_config.json", output_dir / "training_config.yaml"):
+        for config_path in (
+            output_dir / "training_config.json",
+            output_dir / "training_config.yaml",
+        ):
             if not config_path.exists():
                 continue
 

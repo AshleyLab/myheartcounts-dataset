@@ -27,6 +27,7 @@ class TemporalMeanImputer(BaseImputer):
         version: Version,
         data_dir: str | Path | None = None,
     ) -> None:
+        """Fit the per-(channel, minute) means on the official train split."""
         super().__init__(version=version, data_dir=data_dir)
         self._temporal_means = self.compute_temporal_means()  # (C, 1440)
 
@@ -36,6 +37,18 @@ class TemporalMeanImputer(BaseImputer):
         observed_mask: np.ndarray,
         target_mask: np.ndarray,
     ) -> np.ndarray:
+        """Fill ``target_mask == 1`` positions with the per-(channel, minute) mean.
+
+        Args:
+            data: ``(N, C, T)`` float32 batch with NaN at missing cells.
+            observed_mask: ``(N, C, T)``; 1 where a value is observed.
+            target_mask: ``(N, C, T)``; 1 at positions to impute.
+
+        Returns:
+            A copy of ``data`` with masked positions filled; ``(N, C, T)``
+            float32. The minute-of-day means are tiled across multi-day
+            windows.
+        """
         result = data.copy()
         T = data.shape[2]
         n_repeats = max(T // self.seq_len, 1)

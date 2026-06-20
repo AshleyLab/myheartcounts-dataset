@@ -55,9 +55,7 @@ def _neural_arch(training_config: dict) -> dict:
     """Minimal arch echoed into the manifest (training_config.json is authoritative)."""
     model = training_config.get("model", {})
     return {
-        k: model[k]
-        for k in ("n_steps", "n_pred_steps", "n_features")
-        if model.get(k) is not None
+        k: model[k] for k in ("n_steps", "n_pred_steps", "n_features") if model.get(k) is not None
     }
 
 
@@ -237,9 +235,15 @@ _MODEL_INFO = {
             "is a standalone full model — no PEFT runtime dependency)."
         ),
         "links": [
-            ("Chronos (official implementation)", "https://github.com/amazon-science/chronos-forecasting"),
+            (
+                "Chronos (official implementation)",
+                "https://github.com/amazon-science/chronos-forecasting",
+            ),
             ("Base model `amazon/chronos-2`", "https://huggingface.co/amazon/chronos-2"),
-            ("Paper: *Chronos-2: From Univariate to Universal Forecasting* (Ansari et al., 2025)", "https://arxiv.org/abs/2510.15821"),
+            (
+                "Paper: *Chronos-2: From Univariate to Universal Forecasting* (Ansari et al., 2025)",
+                "https://arxiv.org/abs/2510.15821",
+            ),
         ],
     },
     "toto": {
@@ -257,8 +261,14 @@ _MODEL_INFO = {
         ),
         "links": [
             ("Toto (official implementation)", "https://github.com/DataDog/toto"),
-            ("Base model `Datadog/Toto-Open-Base-1.0`", "https://huggingface.co/Datadog/Toto-Open-Base-1.0"),
-            ("Paper: *Toto: Time Series Optimized Transformer for Observability* (Cohen et al., 2024)", "https://arxiv.org/abs/2407.07874"),
+            (
+                "Base model `Datadog/Toto-Open-Base-1.0`",
+                "https://huggingface.co/Datadog/Toto-Open-Base-1.0",
+            ),
+            (
+                "Paper: *Toto: Time Series Optimized Transformer for Observability* (Cohen et al., 2024)",
+                "https://arxiv.org/abs/2407.07874",
+            ),
         ],
     },
     "dlinear": {
@@ -274,7 +284,10 @@ _MODEL_INFO = {
         "links": [
             ("PyPOTS toolkit (implementation)", "https://github.com/WenjieDu/PyPOTS"),
             ("PyPOTS documentation", "https://docs.pypots.com"),
-            ("Paper: *Are Transformers Effective for Time Series Forecasting?* (Zeng et al., AAAI 2023)", "https://github.com/cure-lab/LTSF-Linear"),
+            (
+                "Paper: *Are Transformers Effective for Time Series Forecasting?* (Zeng et al., AAAI 2023)",
+                "https://github.com/cure-lab/LTSF-Linear",
+            ),
         ],
     },
     "segrnn": {
@@ -291,7 +304,10 @@ _MODEL_INFO = {
             ("PyPOTS toolkit (implementation)", "https://github.com/WenjieDu/PyPOTS"),
             ("PyPOTS documentation", "https://docs.pypots.com"),
             ("SegRNN (original implementation)", "https://github.com/lss-1138/SegRNN"),
-            ("Paper: *SegRNN: Segment Recurrent Neural Network for Long-Term Time Series Forecasting* (Lin et al., IEEE IoT-J 2025)", "https://github.com/lss-1138/SegRNN"),
+            (
+                "Paper: *SegRNN: Segment Recurrent Neural Network for Long-Term Time Series Forecasting* (Lin et al., IEEE IoT-J 2025)",
+                "https://github.com/lss-1138/SegRNN",
+            ),
         ],
     },
     "mixlinear": {
@@ -310,7 +326,10 @@ _MODEL_INFO = {
         "links": [
             ("PyPOTS toolkit (implementation)", "https://github.com/WenjieDu/PyPOTS"),
             ("PyPOTS documentation", "https://docs.pypots.com"),
-            ("Paper: *MixLinear: Extreme Low Resource Multivariate Time Series Forecasting with 0.1K Parameters* (Ma et al., 2024)", "https://arxiv.org/abs/2410.02081"),
+            (
+                "Paper: *MixLinear: Extreme Low Resource Multivariate Time Series Forecasting with 0.1K Parameters* (Ma et al., 2024)",
+                "https://arxiv.org/abs/2410.02081",
+            ),
         ],
     },
 }
@@ -409,7 +428,9 @@ def main(argv: list[str] | None = None) -> int:
         "(hf://...@<tag>). Match this to publish_to_hf.py --tag. Default: v1.0.",
     )
     p.add_argument("--chronos-merged", type=Path, default=Path(".merge_cache/chronos2_FT_merged"))
-    p.add_argument("--toto-ckpt", type=Path, default=None, help="Toto .ckpt (required to stage toto)")
+    p.add_argument(
+        "--toto-ckpt", type=Path, default=None, help="Toto .ckpt (required to stage toto)"
+    )
     p.add_argument(
         "--only",
         action="append",
@@ -462,9 +483,7 @@ def main(argv: list[str] | None = None) -> int:
     if want is None or "toto" in want:
         if args.toto_ckpt is None:
             p.error("--toto-ckpt is required when staging the toto bundle")
-        built.append(
-            stage_toto(args.toto_ckpt.expanduser(), staging, release_tag=args.release_tag)
-        )
+        built.append(stage_toto(args.toto_ckpt.expanduser(), staging, release_tag=args.release_tag))
 
     print(f"Staged {len(built)} bundle(s) under {staging}:")
     for b in built:

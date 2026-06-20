@@ -80,31 +80,40 @@ def _expand_env_vars(obj: Any) -> Any:
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Run the imputation paper pipeline end-to-end.")
     p.add_argument(
-        "--sweep-config", type=Path, required=True,
+        "--sweep-config",
+        type=Path,
+        required=True,
         help="Path to sweep_methods.yaml describing methods and phase knobs",
     )
     p.add_argument(
-        "--skip-eval", action="store_true",
+        "--skip-eval",
+        action="store_true",
         help="Skip phase 0 (assume per-method pairs/ already exist under runs_root)",
     )
     p.add_argument(
-        "--skip-phase1", action="store_true",
+        "--skip-phase1",
+        action="store_true",
         help="Skip phase 1 (assume bootstrap_draws.parquet already exists)",
     )
     p.add_argument(
-        "--skip-phase2", action="store_true",
+        "--skip-phase2",
+        action="store_true",
         help="Skip phase 2 (only sweep + draws)",
     )
     p.add_argument(
-        "--methods", nargs="+", default=None,
+        "--methods",
+        nargs="+",
+        default=None,
         help="Restrict to a subset of methods listed in the sweep config",
     )
     p.add_argument(
-        "--dry-run", action="store_true",
+        "--dry-run",
+        action="store_true",
         help="Print commands that would be executed; do not run them",
     )
     p.add_argument(
-        "--strict", action="store_true",
+        "--strict",
+        action="store_true",
         help=(
             "Fail (non-zero exit) on any missing method, scenario, or "
             "manifest instead of warning-and-skipping. Required for runs "
@@ -153,15 +162,19 @@ def _phase0_run_methods(cfg: dict, methods: list[dict], dry_run: bool) -> dict[s
 
 
 def _write_manifest(
-    method_dirs: dict[str, Path], manifest_path: Path, dry_run: bool,
-    *, strict: bool = False,
+    method_dirs: dict[str, Path],
+    manifest_path: Path,
+    dry_run: bool,
+    *,
+    strict: bool = False,
 ) -> None:
     manifest = {m: str(p.resolve()) for m, p in method_dirs.items() if p.exists()}
     missing = sorted(set(method_dirs) - set(manifest))
     if missing:
         if strict:
             logger.error(
-                "[strict] Methods with no pairs/ dir: %s — aborting", missing,
+                "[strict] Methods with no pairs/ dir: %s — aborting",
+                missing,
             )
             sys.exit(2)
         logger.warning("Manifest skipping methods with no pairs/ dir: %s", missing)
@@ -176,15 +189,24 @@ def _write_manifest(
 
 
 def _phase1_bootstrap(cfg: dict, dry_run: bool, *, strict: bool = False) -> None:
-    script = REPO_ROOT / "scripts" / "paper_results" / "imputation" / "bootstrap_imputation_draws.py"
+    script = (
+        REPO_ROOT / "scripts" / "paper_results" / "imputation" / "bootstrap_imputation_draws.py"
+    )
     cmd = [
-        sys.executable, str(script),
-        "--method-dirs", cfg["manifest_path"],
-        "--output", cfg["draws_path"],
-        "--n-boot", str(cfg["n_boot"]),
-        "--seed", str(cfg["seed"]),
-        "--splits", *cfg["splits"],
-        "--age-bins", *[str(b) for b in cfg.get("age_bins", [18, 30, 40, 50, 60])],
+        sys.executable,
+        str(script),
+        "--method-dirs",
+        cfg["manifest_path"],
+        "--output",
+        cfg["draws_path"],
+        "--n-boot",
+        str(cfg["n_boot"]),
+        "--seed",
+        str(cfg["seed"]),
+        "--splits",
+        *cfg["splits"],
+        "--age-bins",
+        *[str(b) for b in cfg.get("age_bins", [18, 30, 40, 50, 60])],
     ]
     if not cfg.get("include_fairness", True):
         cmd.append("--no-fairness")
@@ -231,17 +253,32 @@ def _method_filter_args(cfg: dict) -> list[str]:
 
 
 def _phase2_aggregate(cfg: dict, dry_run: bool, *, strict: bool = False) -> None:
-    script = REPO_ROOT / "scripts" / "paper_results" / "imputation" / "aggregate_imputation_paper_metrics.py"
+    script = (
+        REPO_ROOT
+        / "scripts"
+        / "paper_results"
+        / "imputation"
+        / "aggregate_imputation_paper_metrics.py"
+    )
     cmd = [
-        sys.executable, str(script),
-        "--draws", cfg["draws_path"],
-        "--output-dir", cfg["output_root"],
-        "--baseline-method", cfg["baseline_method"],
-        "--clip-lower", str(cfg["clip_lower"]),
-        "--clip-upper", str(cfg["clip_upper"]),
-        "--lambda-fairness", str(cfg["lambda_fairness"]),
-        "--fairness-combine", cfg["fairness_combine"],
-        "--ci-level", str(cfg["ci_level"]),
+        sys.executable,
+        str(script),
+        "--draws",
+        cfg["draws_path"],
+        "--output-dir",
+        cfg["output_root"],
+        "--baseline-method",
+        cfg["baseline_method"],
+        "--clip-lower",
+        str(cfg["clip_lower"]),
+        "--clip-upper",
+        str(cfg["clip_upper"]),
+        "--lambda-fairness",
+        str(cfg["lambda_fairness"]),
+        "--fairness-combine",
+        cfg["fairness_combine"],
+        "--ci-level",
+        str(cfg["ci_level"]),
     ]
     for d in cfg.get("disparity_fns", []) or []:
         cmd.extend(["--disparity-fn", d])
@@ -269,13 +306,20 @@ def _phase2_fairness_skill_score(cfg: dict, dry_run: bool, *, strict: bool = Fal
     script = REPO_ROOT / "scripts" / "paper_results" / "aggregate_fairness_skill_score.py"
     output_path = Path(cfg["output_root"]) / "fairness_skill_score_bootstrap.csv"
     cmd = [
-        sys.executable, str(script),
-        "--draws", cfg["draws_path"],
-        "--output", str(output_path),
-        "--baseline-method", cfg["baseline_method"],
-        "--clip-lower", str(cfg["clip_lower"]),
-        "--clip-upper", str(cfg["clip_upper"]),
-        "--ci-level", str(cfg["ci_level"]),
+        sys.executable,
+        str(script),
+        "--draws",
+        cfg["draws_path"],
+        "--output",
+        str(output_path),
+        "--baseline-method",
+        cfg["baseline_method"],
+        "--clip-lower",
+        str(cfg["clip_lower"]),
+        "--clip-upper",
+        str(cfg["clip_upper"]),
+        "--ci-level",
+        str(cfg["ci_level"]),
     ]
     cmd.extend(_method_filter_args(cfg))
     # BCa augmentation (default ON — see METRICS.md §S7).
@@ -312,7 +356,10 @@ def main() -> int:
 
     # Build manifest
     _write_manifest(
-        method_dirs, Path(cfg["manifest_path"]), args.dry_run, strict=args.strict,
+        method_dirs,
+        Path(cfg["manifest_path"]),
+        args.dry_run,
+        strict=args.strict,
     )
 
     # Phase 1

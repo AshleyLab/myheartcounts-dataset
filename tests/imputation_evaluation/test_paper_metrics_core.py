@@ -40,7 +40,7 @@ def _synthetic_subgroup_errors(
     rng = np.random.default_rng(seed)
     rows: list[dict] = []
     attrs = {
-        "sex": [("male", 0.0), ("female", 0.2)],   # +0.2 disparity bump
+        "sex": [("male", 0.0), ("female", 0.2)],  # +0.2 disparity bump
         "age_group": [("<40", 0.0), (">=40", 0.15)],
     }
     for method in methods:
@@ -50,15 +50,17 @@ def _synthetic_subgroup_errors(
                 for attr, levels in attrs.items():
                     for value, bump in levels:
                         E = mu + bump + float(rng.normal(0, 1e-3))
-                        rows.append({
-                            "method": method,
-                            "scenario": scenario,
-                            "channel": ch,
-                            "channel_type": "continuous",
-                            "subgroup_attr": attr,
-                            "subgroup_value": value,
-                            "E": float(E),
-                        })
+                        rows.append(
+                            {
+                                "method": method,
+                                "scenario": scenario,
+                                "channel": ch,
+                                "channel_type": "continuous",
+                                "subgroup_attr": attr,
+                                "subgroup_value": value,
+                                "E": float(E),
+                            }
+                        )
     return pd.DataFrame(rows)
 
 
@@ -84,7 +86,9 @@ def test_output_schema():
 
 
 def test_deterministic_matches_single_draw_bootstrap():
-    """Pin the shared-kernel contract: bootstrap with n_boot=1 on identical
+    """Bootstrap n_boot=1 reproduces the deterministic fair_skill_score exactly.
+
+    Pin the shared-kernel contract: bootstrap with n_boot=1 on identical
     data must reproduce the deterministic fair_skill_score exactly.
 
     Drift between these two paths is the failure mode this refactor was
@@ -116,11 +120,12 @@ def test_deterministic_matches_single_draw_bootstrap():
         boot_rows = boot_frame.set_index("method")
         for method in boot_rows.index:
             assert method in det_rows.index, f"missing method {method!r} in deterministic"
-            assert float(det_rows.loc[method, "fair_skill_score"]) == \
-                float(boot_rows.loc[method, "S_attr"]), (
-                    f"deterministic vs single-draw mismatch for method={method!r} attr={attr!r}: "
-                    f"{det_rows.loc[method, 'fair_skill_score']} vs {boot_rows.loc[method, 'S_attr']}"
-                )
+            assert float(det_rows.loc[method, "fair_skill_score"]) == float(
+                boot_rows.loc[method, "S_attr"]
+            ), (
+                f"deterministic vs single-draw mismatch for method={method!r} attr={attr!r}: "
+                f"{det_rows.loc[method, 'fair_skill_score']} vs {boot_rows.loc[method, 'S_attr']}"
+            )
 
     # Macro-average parity: per-(method, draw) S_attr from the bootstrap
     # path, averaged across attributes, must equal the deterministic
@@ -129,12 +134,11 @@ def test_deterministic_matches_single_draw_bootstrap():
         [df.assign(attr=name) for name, df in per_attr_boot.items()],
         ignore_index=True,
     )
-    boot_overall = (
-        stacked.groupby("method", observed=True)["S_attr"].mean().to_dict()
-    )
+    boot_overall = stacked.groupby("method", observed=True)["S_attr"].mean().to_dict()
     det_overall = (
         deterministic[deterministic["scope"] == "overall"]
-        .set_index("method")["fair_skill_score"].to_dict()
+        .set_index("method")["fair_skill_score"]
+        .to_dict()
     )
     assert boot_overall.keys() == det_overall.keys()
     for method in boot_overall:
@@ -152,16 +156,16 @@ def test_method_missing_attribute_drops_from_overall():
     errors_partial = errors[~drop].copy()
 
     out = compute_fair_skill_scores(errors_partial, baseline_method="locf")
-    overall_methods = set(
-        out.loc[out["scope"] == "overall", "method"].tolist()
-    )
+    overall_methods = set(out.loc[out["scope"] == "overall", "method"].tolist())
     # model_a missing sex → excluded from overall.
     assert "model_a" not in overall_methods
     assert "locf" in overall_methods
 
 
 def test_single_subgroup_row_for_method_does_not_score_perfect_fair_skill():
-    """Regression: a method with only one subgroup row for a task must NOT
+    """A method with one subgroup row for a task must not earn near-perfect skill.
+
+    Regression: a method with only one subgroup row for a task must NOT
     earn near-perfect fair skill.
 
     Old behaviour: D_j = max - min = 0 over a single row → ratio = 0 / D_b,
@@ -204,7 +208,9 @@ def test_single_subgroup_row_for_method_does_not_score_perfect_fair_skill():
 
 
 def test_method_baseline_subgroup_sets_aligned():
-    """When method and baseline differ on which subgroups they cover for a
+    """D_j and D_b are computed over the common method/baseline subgroup set.
+
+    When method and baseline differ on which subgroups they cover for a
     task, D_j and D_b must be computed over the **common** subgroup set.
 
     Construct a task where the baseline has subgroups {A, B, C} but the
@@ -217,21 +223,23 @@ def test_method_baseline_subgroup_sets_aligned():
     # model_a covers only two. Make E_C an outlier so D_b over {A,B,C} is
     # very different from D_b over {A,B}.
     for method, e_a, e_b, e_c in [
-        ("locf", 1.0, 1.2, 5.0),     # full baseline disparity = 4.0
+        ("locf", 1.0, 1.2, 5.0),  # full baseline disparity = 4.0
         ("model_a", 0.6, 0.8, None),  # method only has A, B
     ]:
         for value, e in [("<40", e_a), (">=40", e_b), (">=80", e_c)]:
             if e is None:
                 continue
-            rows.append({
-                "method": method,
-                "scenario": "random",
-                "channel": "ch_0",
-                "channel_type": "continuous",
-                "subgroup_attr": "age_group",
-                "subgroup_value": value,
-                "E": float(e),
-            })
+            rows.append(
+                {
+                    "method": method,
+                    "scenario": "random",
+                    "channel": "ch_0",
+                    "channel_type": "continuous",
+                    "subgroup_attr": "age_group",
+                    "subgroup_value": value,
+                    "E": float(e),
+                }
+            )
     errors = pd.DataFrame(rows)
 
     out = compute_fair_skill_scores(errors, baseline_method="locf")
@@ -256,8 +264,9 @@ def test_degenerate_single_subgroup_attribute_is_skipped():
     ].copy()
 
     out = compute_fair_skill_scores(errors, baseline_method="locf")
-    assert "sex" not in set(out["scope"].unique()), \
+    assert "sex" not in set(out["scope"].unique()), (
         "sex should be skipped — only one subgroup value remains"
+    )
     # age_group still computes, and overall == age_group (single attribute macro).
     assert "age_group" in set(out["scope"].unique())
     age = out[out["scope"] == "age_group"].set_index("method")["fair_skill_score"]

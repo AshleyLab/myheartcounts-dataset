@@ -460,9 +460,9 @@ def _compute_category_balanced_ranks(user_metric_df: pd.DataFrame) -> pd.DataFra
     ranks_all = pd.concat(rank_rows, ignore_index=True)
 
     # Collapse users -> one task_rank per (model, cat_scope, metric, channel).
-    task = ranks_all.groupby(
-        ["model", "cat_scope", "metric", "channel_idx"], as_index=False
-    ).agg(rank=("rank", "mean"), task_n_users=("user_id", "nunique"))
+    task = ranks_all.groupby(["model", "cat_scope", "metric", "channel_idx"], as_index=False).agg(
+        rank=("rank", "mean"), task_n_users=("user_id", "nunique")
+    )
 
     # Category rows: mean of per-channel task ranks within (cat_scope, metric).
     category = (

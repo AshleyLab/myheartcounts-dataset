@@ -21,8 +21,7 @@ class DLinearModel(BasePyPOTSForecastingModel):
         """Initialize the evaluator adapter around a saved DLinear checkpoint."""
         if not config.checkpoint_path:
             raise ValueError(
-                "DLinear forecasting requires model.release_dir or "
-                "model.dlinear.checkpoint_path."
+                "DLinear forecasting requires model.release_dir or model.dlinear.checkpoint_path."
             )
         self.config = config
         self.forecasting_config = forecasting_config

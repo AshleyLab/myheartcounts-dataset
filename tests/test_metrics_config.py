@@ -4,6 +4,7 @@ from forecasting_evaluation.config import ForecastingEvalConfig, MetricsConfig
 
 
 def test_defaults_are_full_sets():
+    """A default MetricsConfig persists the full point/binary metric sets."""
     m = MetricsConfig()
     assert m.point_metrics == ["mae", "mse", "mase", "mase_all", "ql", "sql"]
     assert m.binary_metrics == ["auprc", "auroc", "f1"]
@@ -12,6 +13,7 @@ def test_defaults_are_full_sets():
 
 
 def test_attached_to_root_config():
+    """The root ForecastingEvalConfig embeds a MetricsConfig with skill/rank metrics."""
     cfg = ForecastingEvalConfig()
     assert isinstance(cfg.metrics, MetricsConfig)
     # skill + ranking only need these two; both are present by default.
@@ -20,12 +22,14 @@ def test_attached_to_root_config():
 
 
 def test_binary_can_be_disabled():
+    """An empty binary_metrics list skips the binary-metric pass."""
     # Empty binary list is the documented way to skip the binary-metric pass.
     m = MetricsConfig(binary_metrics=[])
     assert m.binary_metrics == []
 
 
 def test_minimal_skill_inputs():
+    """A minimal mae/auprc set is preserved as the smallest skill+ranking input."""
     # The minimal persisted set sufficient for skill score + ranking.
     m = MetricsConfig(point_metrics=["mae"], binary_metrics=["auprc"])
     assert m.point_metrics == ["mae"]

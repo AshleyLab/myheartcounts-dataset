@@ -351,9 +351,11 @@ class UserGroupedBatchSampler(Sampler[list[int]]):
         self._batches = batches
 
     def __iter__(self):
+        """Yield each precomputed batch as a list of dataset positions."""
         return iter(self._batches)
 
     def __len__(self) -> int:
+        """Return the number of batches."""
         return len(self._batches)
 
 
@@ -374,9 +376,7 @@ def _build_position_to_user(
         # For multi-day windows, group by the user of the window's first
         # real day. Multi-day support is a TODO under user-grouped batches;
         # keep the same semantics until weekly imputers need this.
-        split_locals = [
-            next((d for d in win if d != -1), 0) for win in dataset._windows
-        ]
+        split_locals = [next((d for d in win if d != -1), 0) for win in dataset._windows]
     else:
         split_locals = list(range(len(dataset)))
     return [hf_user_ids[split_local_to_hf[sl]] for sl in split_locals]
@@ -456,7 +456,9 @@ class ImputationDataLoader:
         splits = load_split_file(Path(self.config.split_file))
 
         train_indices = np.where(np.isin(user_ids_arr, np.array(list(splits["train"]))))[0].tolist()
-        val_indices = np.where(np.isin(user_ids_arr, np.array(list(splits["validation"]))))[0].tolist()
+        val_indices = np.where(np.isin(user_ids_arr, np.array(list(splits["validation"]))))[
+            0
+        ].tolist()
         test_indices = np.where(np.isin(user_ids_arr, np.array(list(splits["test"]))))[0].tolist()
 
         if self.config.max_samples_per_split:
@@ -603,15 +605,27 @@ class ImputationDataLoader:
             )
 
             train_dataset = MultiDayImputationDataset(
-                ds, train_indices, train_windows, self._zero_to_nan_transform, n_days,
+                ds,
+                train_indices,
+                train_windows,
+                self._zero_to_nan_transform,
+                n_days,
                 day_offsets=train_offsets,
             )
             val_dataset = MultiDayImputationDataset(
-                ds, val_indices, val_windows, self._zero_to_nan_transform, n_days,
+                ds,
+                val_indices,
+                val_windows,
+                self._zero_to_nan_transform,
+                n_days,
                 day_offsets=val_offsets,
             )
             test_dataset = MultiDayImputationDataset(
-                ds, test_indices, test_windows, self._zero_to_nan_transform, n_days,
+                ds,
+                test_indices,
+                test_windows,
+                self._zero_to_nan_transform,
+                n_days,
                 day_offsets=test_offsets,
             )
         else:
@@ -751,7 +765,9 @@ class ImputationDataLoader:
                 if n_days > 1 and window_descriptors is not None:
                     # Convert daily indices to window indices: include a window if
                     # any of its constituent days has a mask.
-                    daily_set = daily_indices if isinstance(daily_indices, set) else set(daily_indices)
+                    daily_set = (
+                        daily_indices if isinstance(daily_indices, set) else set(daily_indices)
+                    )
                     window_indices = []
                     for w_idx, window_desc in enumerate(window_descriptors[split_name]):
                         if any(d in daily_set for d in window_desc if d != -1):
@@ -798,7 +814,10 @@ class ImputationDataLoader:
             logger.info(
                 "Created user-grouped eval DataLoaders: "
                 "val=%d batches, test=%d batches (batch_size_cap=%d, num_workers=%d)",
-                len(val_sampler), len(test_sampler), batch_size, num_workers,
+                len(val_sampler),
+                len(test_sampler),
+                batch_size,
+                num_workers,
             )
         else:
             val_loader = DataLoader(

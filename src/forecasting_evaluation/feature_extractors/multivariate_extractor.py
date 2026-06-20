@@ -80,7 +80,7 @@ class MultivariateFeatureExtractor:
         history = selected_values.T  # (n_features, T)
         # history_mask = selected_mask.T  # (n_features, T)
         # trajectory_length = history.shape[1]
-        
+
         # Placeholder-only covariate interfaces:
         # - dynamic covariates (past/future) are kept as empty dicts by default.
         # - static covariates are set to None.
@@ -96,7 +96,7 @@ class MultivariateFeatureExtractor:
         past_covariates: dict[str, np.ndarray] = {}
         future_covariates: dict[str, np.ndarray] = {}
         static_covariates: dict[str, object] | None = None
-        
+
         return {
             "history": history,
             "variable_names": selected_channel_names,

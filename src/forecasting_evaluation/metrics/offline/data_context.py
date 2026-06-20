@@ -3,17 +3,18 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Iterator
+from typing import Any
 
 import h5py
 import numpy as np
 
-from forecasting_evaluation.data.data_loader import ForecastingDataLoader
 from forecasting_evaluation.data.cache_bundle import (
     prepare_history_cf_raw_cache_for_split,
 )
+from forecasting_evaluation.data.data_loader import ForecastingDataLoader
 from forecasting_evaluation.data.online_dataset import resolve_cache_base_dir
 
 logger = logging.getLogger(__name__)
@@ -72,11 +73,14 @@ def iter_offline_user_contexts_from_eval_flow(
                 dtype=float,
             )
             yielded_count += 1
-            yield user_id, {
-                "history": history,
-                "variable_names": list(row["channel_names"]),
-                "dataset_row_idx": int(row_group.dataset_row_idx),
-            }
+            yield (
+                user_id,
+                {
+                    "history": history,
+                    "variable_names": list(row["channel_names"]),
+                    "dataset_row_idx": int(row_group.dataset_row_idx),
+                },
+            )
 
     logger.info(
         "Yielded %d offline user contexts via evaluator-aligned cache flow",

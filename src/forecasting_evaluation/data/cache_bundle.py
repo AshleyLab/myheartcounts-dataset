@@ -136,9 +136,7 @@ def prepare_history_cf_cache_bundle(
         logger.info("Saved scaler stats to %s", scaler_stats_path)
         logger.info("Saved cache data config to %s", data_config_path)
 
-    logger.info(
-        "Prepared history_cf cache bundle under %s", cache_dir
-    )
+    logger.info("Prepared history_cf cache bundle under %s", cache_dir)
     logger.info(
         "Cache files ready: train=%s, train_standard=%s, val=%s, val_standard=%s, test=%s, test_standard=%s, train_manifest=%s, val_manifest=%s, test_manifest=%s, data_config=%s, scaler_stats=%s",
         cache_paths["train"],

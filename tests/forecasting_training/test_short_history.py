@@ -46,16 +46,19 @@ def _make_dataset(include_short_history: bool) -> PyPOTSForecastingDataset:
 
 
 def test_short_history_included_by_default() -> None:
+    """With include_short_history=True both the short and full windows are kept."""
     ds = _make_dataset(include_short_history=True)
     assert len(ds) == 2  # short + full
 
 
 def test_short_history_dropped_when_disabled() -> None:
+    """With include_short_history=False the short window is dropped, full survives."""
     ds = _make_dataset(include_short_history=False)
     assert len(ds) == 1  # only the full (day-8) window survives
 
 
 def test_short_window_is_nan_left_padded() -> None:
+    """The short window is left-padded to n_steps with a leading missing/zero region."""
     ds = _make_dataset(include_short_history=True)
     # Sample 0 = first window of the first row group = the short (day-1) window.
     _idx, x, missing_mask, x_pred, _x_pred_mask = ds._fetch_data_from_manifest(0)
@@ -73,6 +76,7 @@ def test_short_window_is_nan_left_padded() -> None:
 
 
 def test_full_window_has_no_padding() -> None:
+    """The full-history window fills n_steps entirely with no missing/padded rows."""
     ds = _make_dataset(include_short_history=True)
     # Sample 1 = the full (day-8) window: no missing rows from padding.
     _idx, x, missing_mask, _x_pred, _m = ds._fetch_data_from_manifest(1)

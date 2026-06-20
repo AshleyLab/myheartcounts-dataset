@@ -21,8 +21,7 @@ class SegRNNModel(BasePyPOTSForecastingModel):
         """Initialize the evaluator adapter around a saved SegRNN checkpoint."""
         if not config.checkpoint_path:
             raise ValueError(
-                "SegRNN forecasting requires model.release_dir or "
-                "model.segrnn.checkpoint_path."
+                "SegRNN forecasting requires model.release_dir or model.segrnn.checkpoint_path."
             )
         self.config = config
         self.forecasting_config = forecasting_config

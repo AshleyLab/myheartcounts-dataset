@@ -59,9 +59,14 @@ logger = logging.getLogger(__name__)
 
 def _git_commit() -> str | None:
     try:
-        return subprocess.check_output(
-            ["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL,
-        ).decode().strip()
+        return (
+            subprocess.check_output(
+                ["git", "rev-parse", "HEAD"],
+                stderr=subprocess.DEVNULL,
+            )
+            .decode()
+            .strip()
+        )
     except Exception:
         return None
 
@@ -71,15 +76,21 @@ def _parse_args() -> argparse.Namespace:
         description="Phase 1: build bootstrap_draws.parquet for the paper metrics pipeline",
     )
     p.add_argument(
-        "--method-dirs", type=Path, required=True,
+        "--method-dirs",
+        type=Path,
+        required=True,
         help="JSON manifest mapping {method: pairs_dir}",
     )
     p.add_argument(
-        "--output", type=Path, required=True,
+        "--output",
+        type=Path,
+        required=True,
         help="Output Parquet (.parquet). Sidecar .meta.json written alongside.",
     )
     p.add_argument(
-        "--per-user-errors", type=Path, default=None,
+        "--per-user-errors",
+        type=Path,
+        default=None,
         help=(
             "Output Parquet for per-user E values, the substrate for the Phase 2 "
             "BCa LOO jackknife (METRICS.md §S7). Default: sibling of --output "
@@ -87,54 +98,74 @@ def _parse_args() -> argparse.Namespace:
         ),
     )
     p.add_argument(
-        "--no-per-user-errors", action="store_true",
+        "--no-per-user-errors",
+        action="store_true",
         help=(
             "Skip per-user errors emission. Phase 2 BCa will fall back to the "
             "percentile CI for any caller that requested --bca."
         ),
     )
     p.add_argument(
-        "--n-boot", type=int, default=1000,
+        "--n-boot",
+        type=int,
+        default=1000,
         help="Number of bootstrap draws (default 1000)",
     )
     p.add_argument(
-        "--seed", type=int, default=42,
+        "--seed",
+        type=int,
+        default=42,
         help="Master RNG seed; per-cell seeds derived deterministically",
     )
     p.add_argument(
-        "--splits", nargs="+", default=["test"],
+        "--splits",
+        nargs="+",
+        default=["test"],
         help="Splits to process (default: test). Example: --splits test val",
     )
     p.add_argument(
-        "--scenarios", nargs="+", default=None,
+        "--scenarios",
+        nargs="+",
+        default=None,
         help="Scenarios to process (default: auto-discover from first method's dir)",
     )
     p.add_argument(
-        "--methods", nargs="+", default=None,
+        "--methods",
+        nargs="+",
+        default=None,
         help="Restrict to a subset of methods from --method-dirs (default: all)",
     )
     p.add_argument(
-        "--no-auc", action="store_true",
+        "--no-auc",
+        action="store_true",
         help="Skip AUC bootstrap for binary channels (faster, but no fairness for binary)",
     )
     p.add_argument(
-        "--no-fairness", action="store_true",
+        "--no-fairness",
+        action="store_true",
         help="Skip subgroup demographic mapping (fairness CIs cannot be computed in phase 2)",
     )
     p.add_argument(
-        "--age-bins", type=int, nargs="+", default=[18, 30, 40, 50, 60],
+        "--age-bins",
+        type=int,
+        nargs="+",
+        default=[18, 30, 40, 50, 60],
         help="Age-bin edges for the age_group attribute (default: 18 30 40 50 60)",
     )
     p.add_argument(
-        "--exclude-unknown", action="store_true",
+        "--exclude-unknown",
+        action="store_true",
         help="Skip subgroup_value=='unknown' cells",
     )
     p.add_argument(
-        "--channel-stds-path", type=Path, default=None,
+        "--channel-stds-path",
+        type=Path,
+        default=None,
         help="Override channel_stds.npy path (default: <first method dir>/channel_stds.npy)",
     )
     p.add_argument(
-        "--strict", action="store_true",
+        "--strict",
+        action="store_true",
         help=(
             "Fail (non-zero exit) on any missing method dir or missing "
             "per-split subgroup manifest instead of warning-and-skipping. "
@@ -158,7 +189,9 @@ def _discover_scenarios(method_dirs: dict[str, Path], split: str) -> list[str]:
 
 
 def _build_subgroup_mapping(
-    pairs_dir: Path, split: str, age_bins: list[int],
+    pairs_dir: Path,
+    split: str,
+    age_bins: list[int],
 ) -> dict[int, dict[str, str]] | None:
     """Build {sample_idx: {age_group, sex}} mapping from a method's manifest.
 
@@ -179,7 +212,9 @@ def _build_subgroup_mapping(
     dates = manifest.column("date").to_pylist()
     unique_users = sorted(set(user_ids))
     logger.info(
-        "[split=%s] looking up demographics for %d users …", split, len(unique_users),
+        "[split=%s] looking up demographics for %d users …",
+        split,
+        len(unique_users),
     )
     user_demographics = get_user_demographics(STORE, unique_users)
 
@@ -221,7 +256,9 @@ def main() -> int:
         if not p.exists():
             if args.strict:
                 logger.error(
-                    "[strict] method=%s: %s does not exist — aborting", m, p,
+                    "[strict] method=%s: %s does not exist — aborting",
+                    m,
+                    p,
                 )
                 return 2
             logger.warning("method=%s: %s does not exist — skipping", m, p)
@@ -255,17 +292,18 @@ def main() -> int:
                 if args.strict:
                     logger.error(
                         "[strict] No manifest_%s.parquet at %s — aborting",
-                        split, ref_dir,
+                        split,
+                        ref_dir,
                     )
                     return 2
                 logger.warning(
                     "No manifest_%s.parquet at %s; skipping fairness for this split",
-                    split, ref_dir,
+                    split,
+                    ref_dir,
                 )
             else:
                 subgroup_mappings[split] = sg
-                logger.info("[split=%s] subgroup mapping built: %d samples",
-                            split, len(sg))
+                logger.info("[split=%s] subgroup mapping built: %d samples", split, len(sg))
 
     # Channel stds
     channel_stds = None

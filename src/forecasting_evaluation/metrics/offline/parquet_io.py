@@ -39,7 +39,9 @@ def append_metrics_to_parquet(
         df = df_new
 
     df.to_parquet(output_file, engine="pyarrow", compression="snappy")
-    logger.info("Saved metrics for %s/%s: %s (rows=%d)", model_key, user_id, output_file, len(records))
+    logger.info(
+        "Saved metrics for %s/%s: %s (rows=%d)", model_key, user_id, output_file, len(records)
+    )
 
 
 def save_metrics_result_dict(

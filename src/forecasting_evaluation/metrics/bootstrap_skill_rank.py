@@ -187,8 +187,7 @@ def _pad_jackknife_maps(per_user_maps: list[dict[tuple, float]]) -> dict[tuple, 
     for m in per_user_maps:
         keys |= m.keys()
     return {
-        key: np.array([m.get(key, np.nan) for m in per_user_maps], dtype=np.float64)
-        for key in keys
+        key: np.array([m.get(key, np.nan) for m in per_user_maps], dtype=np.float64) for key in keys
     }
 
 

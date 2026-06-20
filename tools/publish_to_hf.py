@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Publish staged release bundles to the MyHeartCounts org on Hugging Face Hub.
+r"""Publish staged release bundles to the MyHeartCounts org on Hugging Face Hub.
 
 Each release directory under ``--staging-dir`` is uploaded to a same-named
 repo under ``MyHeartCounts/``. ``tools/build_manifest.py`` stages the payload
@@ -53,9 +53,7 @@ def _validate_bundle(bundle_dir: Path) -> None:
     """Check that a bundle has the manifest and model card before we touch HF."""
     for required in REQUIRED_FILES:
         if not (bundle_dir / required).exists():
-            raise FileNotFoundError(
-                f"Bundle {bundle_dir} is missing required file {required!r}"
-            )
+            raise FileNotFoundError(f"Bundle {bundle_dir} is missing required file {required!r}")
 
 
 def publish_one(
@@ -99,7 +97,9 @@ def publish_one(
                 logger.warning(
                     "Could not create tag %r on %s (likely exists): %s. "
                     "Re-run with --overwrite-tag to replace.",
-                    tag, repo_id, exc,
+                    tag,
+                    repo_id,
+                    exc,
                 )
             else:
                 api.delete_tag(repo_id=repo_id, tag=tag, repo_type="model")
@@ -145,6 +145,14 @@ def _cli() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Upload staged release bundles to Hugging Face Hub.
+
+    Args:
+        argv: Optional argument vector (defaults to ``sys.argv``).
+
+    Returns:
+        Process exit code (``0`` on success, non-zero on a usage error).
+    """
     args = _cli().parse_args(argv)
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,

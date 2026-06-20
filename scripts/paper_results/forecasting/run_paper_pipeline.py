@@ -48,7 +48,9 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 def _parse_args() -> argparse.Namespace:
     """Parse CLI arguments."""
     p = argparse.ArgumentParser(description="Run the forecasting paper pipeline end-to-end.")
-    p.add_argument("--sweep-config", type=Path, required=True, help="Path to sweep_forecasting.yaml")
+    p.add_argument(
+        "--sweep-config", type=Path, required=True, help="Path to sweep_forecasting.yaml"
+    )
     p.add_argument(
         "--skip-eval",
         action="store_true",
@@ -138,7 +140,9 @@ def _discover_and_validate(cfg: dict, models: list[dict]) -> dict[str, str]:
             f"{{mae{',auprc' if need_binary else ''}}}\n"
             f"  (runs_root={runs_root}) — run Phase 0 (drop --skip-eval) or fix the sweep config."
         )
-    logger.info("Discovered + validated %d expected models: %s", len(selected), ", ".join(sorted(selected)))
+    logger.info(
+        "Discovered + validated %d expected models: %s", len(selected), ", ".join(sorted(selected))
+    )
     return selected
 
 
@@ -159,27 +163,43 @@ def _phase_skill_rank(cfg: dict, selected: dict[str, str], dry_run: bool) -> Non
 
     _run(
         [
-            sys.executable, str(metrics / "skill_score_summary.py"),
-            "--config", str(models_json),
-            "--baseline", cfg["baseline"],
-            "--continuous-metrics", *cont,
-            "--binary-metrics", *binm,
-            "--aggregation-unit", agg,
-            "--within-user-aggregation", within,
-            "--output-dir", str(out),
-            "--output-prefix", "forecasting_skill_score",
+            sys.executable,
+            str(metrics / "skill_score_summary.py"),
+            "--config",
+            str(models_json),
+            "--baseline",
+            cfg["baseline"],
+            "--continuous-metrics",
+            *cont,
+            "--binary-metrics",
+            *binm,
+            "--aggregation-unit",
+            agg,
+            "--within-user-aggregation",
+            within,
+            "--output-dir",
+            str(out),
+            "--output-prefix",
+            "forecasting_skill_score",
         ],
         dry_run,
     )
     _run(
         [
-            sys.executable, str(metrics / "grouped_metric_rank_summary.py"),
-            "--config", str(models_json),
-            "--continuous-metrics", *cont,
-            "--binary-metrics", *binm,
-            "--within-user-aggregation", within,
-            "--output-dir", str(out),
-            "--output-prefix", "forecasting_grouped_metric_rank",
+            sys.executable,
+            str(metrics / "grouped_metric_rank_summary.py"),
+            "--config",
+            str(models_json),
+            "--continuous-metrics",
+            *cont,
+            "--binary-metrics",
+            *binm,
+            "--within-user-aggregation",
+            within,
+            "--output-dir",
+            str(out),
+            "--output-prefix",
+            "forecasting_grouped_metric_rank",
         ],
         dry_run,
     )
@@ -210,7 +230,13 @@ def _phase_bootstrap(cfg: dict, selected: dict[str, str], dry_run: bool) -> None
     logger.info(
         "Phase 3 bootstrap: B=%d seed=%d ci=%.2f over %d models (baseline=%s) "
         "[fairness BCa=%s, skill/rank BCa=%s]",
-        n_boot, seed, ci_level, len(models), cfg["baseline"], bca_fairness, bca_skill_rank,
+        n_boot,
+        seed,
+        ci_level,
+        len(models),
+        cfg["baseline"],
+        bca_fairness,
+        bca_skill_rank,
     )
     if dry_run:
         return

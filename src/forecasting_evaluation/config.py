@@ -9,6 +9,7 @@ from typing import Literal
 @dataclass
 class DataConfig:
     """Data source and splitting configuration."""
+
     trajectory_hf_dir: str = "data/hourly_trajectory"
     task_name: str = "hourly_trajectory_forecasting"
     split_file: str | None = "data/splits/sharable_users_seed42_2026.json"
@@ -22,6 +23,7 @@ class DataConfig:
     num_workers: int = 4
     max_samples: int | None = None
 
+
 ModelType = Literal[
     "seasonal_naive",
     "autoARIMA",
@@ -32,6 +34,7 @@ ModelType = Literal[
     "dlinear",
     "segrnn",
 ]
+
 
 @dataclass
 class SeasonalNaiveModelConfig:
@@ -173,6 +176,7 @@ class ForecastingModelConfig:
     dlinear: DLinearModelConfig = field(default_factory=DLinearModelConfig)
     segrnn: SegRNNModelConfig = field(default_factory=SegRNNModelConfig)
 
+
 @dataclass
 class OutputConfig:
     """Output configuration for results."""
@@ -212,12 +216,14 @@ class EvaluatorConfig:
 
     mode: Literal["sequential"] = "sequential"
 
+
 @dataclass
 class ForecastingConfig:
     """Configuration for forecasting-specific parameters."""
 
     forecasting_length: int = 24  # Number of hours to forecast
     daily_start_hour_offset: int = 0
+
 
 @dataclass
 class FeaturesConfig:
@@ -236,7 +242,7 @@ class ForecastingEvalConfig:
     seed: int = 42
     experiment_name: str | None = "Default_Test"
     debug_mode: bool = True
-    time_granularity: Literal["minutely","hourly","daily"] = "hourly"
+    time_granularity: Literal["minutely", "hourly", "daily"] = "hourly"
     data: DataConfig = field(default_factory=DataConfig)
     forecasting: ForecastingConfig = field(default_factory=ForecastingConfig)
     model: ForecastingModelConfig = field(default_factory=ForecastingModelConfig)

@@ -65,6 +65,7 @@ class _PyPOTSImputerBase(ReleaseLoadableMixin, BaseImputer):
         n_features: int = 19,
         data_dir: str | Path | None = None,
     ) -> None:
+        """Build the PyPOTS model with matching arch args and load weights."""
         super().__init__(version=version, data_dir=data_dir)
         self._device = resolve_device(device)
         self._inference_batch_size = int(inference_batch_size)
@@ -109,9 +110,7 @@ class _PyPOTSImputerBase(ReleaseLoadableMixin, BaseImputer):
             return model_path
         matches = sorted(model_path.glob("*.pypots"))
         if not matches:
-            raise FileNotFoundError(
-                f"No .pypots checkpoint found under directory {model_path}"
-            )
+            raise FileNotFoundError(f"No .pypots checkpoint found under directory {model_path}")
         return matches[0]
 
     @staticmethod
@@ -208,6 +207,7 @@ class BRITSImputer(_PyPOTSImputerBase):
         n_features: int = 19,
         data_dir: str | Path | None = None,
     ) -> None:
+        """Construct a BRITS imputer; see the class docstring for args."""
         self._rnn_hidden_size = int(rnn_hidden_size)
         super().__init__(
             model_path,
@@ -269,6 +269,7 @@ class TimesNetImputer(_PyPOTSImputerBase):
         n_features: int = 19,
         data_dir: str | Path | None = None,
     ) -> None:
+        """Construct a TimesNet imputer; see the class docstring for args."""
         self._n_layers = int(n_layers)
         self._top_k = int(top_k)
         self._d_model = int(d_model)
@@ -335,6 +336,7 @@ class DLinearImputer(_PyPOTSImputerBase):
         n_features: int = 19,
         data_dir: str | Path | None = None,
     ) -> None:
+        """Construct a DLinear imputer; see the class docstring for args."""
         self._moving_avg_window_size = int(moving_avg_window_size)
         self._d_model = d_model if d_model is None else int(d_model)
         self._individual = bool(individual)
@@ -436,6 +438,7 @@ class FEDformerImputer(_PyPOTSImputerBase):
         n_features: int = 19,
         data_dir: str | Path | None = None,
     ) -> None:
+        """Construct a FEDformer imputer; see the class docstring for args."""
         self._n_layers = int(n_layers)
         self._d_model = int(d_model)
         self._n_heads = int(n_heads)

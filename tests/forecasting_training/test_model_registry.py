@@ -15,6 +15,7 @@ from forecasting_training.model_registry import create_model
 
 @pytest.mark.parametrize("name", ["dlinear", "mixlinear", "segrnn"])
 def test_create_model_constructs(name: str, tmp_path) -> None:
+    """create_model builds each supported forecaster with a fit method and inner module."""
     model_config = ModelConfig(
         model_name=name,
         n_steps=48,
@@ -37,6 +38,7 @@ def test_create_model_constructs(name: str, tmp_path) -> None:
 
 
 def test_unknown_model_raises(tmp_path) -> None:
+    """create_model raises ValueError for an unsupported model name."""
     with pytest.raises(ValueError, match="Unsupported model"):
         create_model(
             ModelConfig(model_name="nope"),

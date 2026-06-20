@@ -27,9 +27,7 @@ def _seed_neural(dst: Path) -> None:
     dst.mkdir(parents=True, exist_ok=True)
     (dst / "OnlineDLinear.pypots").write_bytes(b"\x00fake")
     (dst / "training_config.json").write_text(json.dumps({"model": {"n_steps": 336}}))
-    (dst / "standard_scaler_stats.json").write_text(
-        json.dumps({"means": [0.0], "stds": [1.0]})
-    )
+    (dst / "standard_scaler_stats.json").write_text(json.dumps({"means": [0.0], "stds": [1.0]}))
 
 
 def _seed_chronos(dst: Path) -> None:

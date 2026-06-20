@@ -82,7 +82,6 @@ class ForecastingDataLoader:
             logger.info(f"Subsampling to max_samples={self.config.max_samples}")
             full_ds = full_ds.select(range(self.config.max_samples))
 
-
         user_ids_by_row = [str(user_id) for user_id in full_ds["user_id"]]
         all_users = sorted(set(user_ids_by_row))
 
@@ -94,7 +93,6 @@ class ForecastingDataLoader:
         allowed_user_ids = set(map(str, sample_index_data.keys()))
         all_users = [user_id for user_id in all_users if user_id in allowed_user_ids]
 
-
         # 4. Get user splits
         user_splits = self._get_user_splits(all_users)
 
@@ -105,8 +103,12 @@ class ForecastingDataLoader:
             for split_name, split_users in user_splits.items()
         }
 
-        train_sample_count = sum(len(sample_index_data.get(uid, [])) for uid in user_splits["train"])
-        val_sample_count = sum(len(sample_index_data.get(uid, [])) for uid in user_splits["validation"])
+        train_sample_count = sum(
+            len(sample_index_data.get(uid, [])) for uid in user_splits["train"]
+        )
+        val_sample_count = sum(
+            len(sample_index_data.get(uid, [])) for uid in user_splits["validation"]
+        )
         test_sample_count = sum(len(sample_index_data.get(uid, [])) for uid in user_splits["test"])
 
         logger.info(
@@ -126,11 +128,7 @@ class ForecastingDataLoader:
         # on ``user_id``, so build row indices from that column and preserve the
         # original dataset order with ``select``.
         train_ds = full_ds.select(
-            [
-                idx
-                for idx, user_id in enumerate(user_ids_by_row)
-                if user_id in user_splits["train"]
-            ]
+            [idx for idx, user_id in enumerate(user_ids_by_row) if user_id in user_splits["train"]]
         )
         val_ds = full_ds.select(
             [
@@ -140,11 +138,7 @@ class ForecastingDataLoader:
             ]
         )
         test_ds = full_ds.select(
-            [
-                idx
-                for idx, user_id in enumerate(user_ids_by_row)
-                if user_id in user_splits["test"]
-            ]
+            [idx for idx, user_id in enumerate(user_ids_by_row) if user_id in user_splits["test"]]
         )
 
         logger.info(f"Split: train={len(train_ds)}, val={len(val_ds)}, test={len(test_ds)} samples")

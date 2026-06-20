@@ -56,46 +56,64 @@ def _parse_args() -> argparse.Namespace:
         description="Phase 2: summarise bootstrap_draws.parquet into paper sidecar CSVs",
     )
     p.add_argument(
-        "--draws", type=Path, required=True,
+        "--draws",
+        type=Path,
+        required=True,
         help="Path to bootstrap_draws.parquet from phase 1",
     )
     p.add_argument(
-        "--output-dir", type=Path, required=True,
+        "--output-dir",
+        type=Path,
+        required=True,
         help="Directory for the four sidecar CSVs",
     )
     p.add_argument(
-        "--baseline-method", default="locf",
+        "--baseline-method",
+        default="locf",
         help="Method to treat as the skill-score baseline (default: locf)",
     )
     p.add_argument(
-        "--clip-lower", type=float, default=1e-2,
+        "--clip-lower",
+        type=float,
+        default=1e-2,
         help="Lower clip bound for error ratios (default: 1e-2)",
     )
     p.add_argument(
-        "--clip-upper", type=float, default=100.0,
+        "--clip-upper",
+        type=float,
+        default=100.0,
         help="Upper clip bound for error ratios (default: 100.0)",
     )
     p.add_argument(
-        "--lambda-fairness", type=float, default=0.5,
+        "--lambda-fairness",
+        type=float,
+        default=0.5,
         help="Lambda for fairness-combine (default: 0.5)",
     )
     p.add_argument(
-        "--disparity-fn", action="append", default=None,
+        "--disparity-fn",
+        action="append",
+        default=None,
         choices=sorted(DISPARITY_FUNCTIONS.keys()),
         help="Named disparity function (repeat to compute several in one pass). "
-             "Default: all registered disparities.",
+        "Default: all registered disparities.",
     )
     p.add_argument(
-        "--fairness-combine", default="linear_penalty",
+        "--fairness-combine",
+        default="linear_penalty",
         choices=sorted(FAIRNESS_COMBINE.keys()),
         help="Named fairness-combine function (default: linear_penalty)",
     )
     p.add_argument(
-        "--ci-level", type=float, default=0.95,
+        "--ci-level",
+        type=float,
+        default=0.95,
         help="Percentile CI level (default: 0.95)",
     )
     p.add_argument(
-        "--method-filter", nargs="+", default=None,
+        "--method-filter",
+        nargs="+",
+        default=None,
         help=(
             "Restrict the rank comparison pool to these methods only. "
             "Skill / fairness values stay the same (pairwise vs. baseline); "
@@ -106,14 +124,17 @@ def _parse_args() -> argparse.Namespace:
         ),
     )
     p.add_argument(
-        "--write-deprecated-fairness", action="store_true",
+        "--write-deprecated-fairness",
+        action="store_true",
         help="Also write the deprecated S − λ·D fairness CSVs "
-             "(fairness_subgroup_scores_bootstrap.csv, "
-             "fairness_summary_bootstrap.csv). Off by default.",
+        "(fairness_subgroup_scores_bootstrap.csv, "
+        "fairness_summary_bootstrap.csv). Off by default.",
     )
     bca_grp = p.add_mutually_exclusive_group()
     bca_grp.add_argument(
-        "--bca-skill-rank", dest="bca_skill_rank", action="store_true",
+        "--bca-skill-rank",
+        dest="bca_skill_rank",
+        action="store_true",
         default=False,
         help=(
             "Opt-in BCa CI augmentation for skill / rank tables, as a parity "
@@ -127,11 +148,15 @@ def _parse_args() -> argparse.Namespace:
         ),
     )
     bca_grp.add_argument(
-        "--no-bca-skill-rank", dest="bca_skill_rank", action="store_false",
+        "--no-bca-skill-rank",
+        dest="bca_skill_rank",
+        action="store_false",
         help="Explicitly disable BCa for skill / rank (the default).",
     )
     p.add_argument(
-        "--per-user-errors", type=Path, default=None,
+        "--per-user-errors",
+        type=Path,
+        default=None,
         help=(
             "Path to per_user_errors.parquet from Phase 1, required when "
             "--bca-skill-rank is on. Defaults to "
@@ -151,8 +176,10 @@ def main() -> int:
     if meta is not None:
         logger.info(
             "Phase-1 meta: n_boot=%s, seed=%s, methods=%s, scenarios=%s",
-            meta.get("n_boot"), meta.get("seed"),
-            meta.get("methods"), meta.get("scenarios"),
+            meta.get("n_boot"),
+            meta.get("seed"),
+            meta.get("methods"),
+            meta.get("scenarios"),
         )
     if args.method_filter:
         df = df[df["method"].isin(args.method_filter)].copy()
@@ -163,8 +190,7 @@ def main() -> int:
     else:
         disparity_fns = {n: spec.fn for n, spec in DISPARITY_FUNCTIONS.items()}
     logger.info("Disparities: %s", sorted(disparity_fns.keys()))
-    logger.info("Fairness-combine: %s, lambda=%s",
-                args.fairness_combine, args.lambda_fairness)
+    logger.info("Fairness-combine: %s, lambda=%s", args.fairness_combine, args.lambda_fairness)
 
     if "rank" not in df.columns:
         logger.error(
@@ -195,7 +221,9 @@ def main() -> int:
         # Smoke-load to surface schema errors early (cheap; pyarrow lazy reads).
         _per_user_df, _ = read_per_user_errors_parquet(per_user_path)
         logger.info(
-            "Loaded %d per-user rows from %s", len(_per_user_df), per_user_path,
+            "Loaded %d per-user rows from %s",
+            len(_per_user_df),
+            per_user_path,
         )
         raise NotImplementedError(
             "Skill / rank BCa is a planned parity sanity-check, but the LOO "
@@ -219,12 +247,12 @@ def main() -> int:
 
     out = args.output_dir
     paths = {
-        "skill_scores":       out / "skill_scores_bootstrap.csv",
-        "avg_rankings":       out / "avg_rankings_bootstrap.csv",
+        "skill_scores": out / "skill_scores_bootstrap.csv",
+        "avg_rankings": out / "avg_rankings_bootstrap.csv",
     }
     if args.write_deprecated_fairness:
         paths["fairness_subgroups"] = out / "fairness_subgroup_scores_bootstrap.csv"
-        paths["fairness_summary"]   = out / "fairness_summary_bootstrap.csv"
+        paths["fairness_summary"] = out / "fairness_summary_bootstrap.csv"
     else:
         logger.info(
             "Skipping deprecated S − λ·D fairness CSVs "

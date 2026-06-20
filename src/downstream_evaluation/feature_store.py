@@ -236,9 +236,7 @@ class WeekFeatureStore:
             f"{features.shape[0]} {segment_type} samples, {features.shape[1]}D"
         )
 
-        return cls(
-            features, user_ids, segment_starts, segment_starts_ns, metadata, n_valid_hours
-        )
+        return cls(features, user_ids, segment_starts, segment_starts_ns, metadata, n_valid_hours)
 
     @staticmethod
     def _build_statistical(
@@ -279,9 +277,7 @@ class WeekFeatureStore:
 
                 stats_path = Path(config.normalization_stats_path)
                 if not stats_path.exists():
-                    raise FileNotFoundError(
-                        f"normalization_stats_path={stats_path} does not exist"
-                    )
+                    raise FileNotFoundError(f"normalization_stats_path={stats_path} does not exist")
                 with open(stats_path) as f:
                     stats = json.load(f)
                 means = np.array(stats["means"], dtype=np.float32)
@@ -474,9 +470,7 @@ class WeekFeatureStore:
             checkpoint_path=stored_checkpoint,
         )
 
-        return cls(
-            features, user_ids, segment_starts, segment_starts_ns, metadata, n_valid_hours
-        )
+        return cls(features, user_ids, segment_starts, segment_starts_ns, metadata, n_valid_hours)
 
     # ------------------------------------------------------------------
     # Phase 2: Time-windowed aggregation
@@ -584,9 +578,7 @@ class WeekFeatureStore:
                 if use_cov_weights:
                     # Coverage-weighted mean: w_i = n_valid_hours_i / hours_per_segment
                     hours_per_seg = _HOURS_PER_SEGMENT.get(self.metadata.segment_type, 168)
-                    weights = (
-                        self.n_valid_hours[week_indices].astype(np.float32) / hours_per_seg
-                    )
+                    weights = self.n_valid_hours[week_indices].astype(np.float32) / hours_per_seg
                     weight_sum = weights.sum()
                     if weight_sum > 0:
                         user_features = (weights[:, np.newaxis] * self.features[week_indices]).sum(

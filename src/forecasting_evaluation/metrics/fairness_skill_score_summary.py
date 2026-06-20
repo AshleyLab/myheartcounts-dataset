@@ -330,10 +330,14 @@ def _compute_average_ranks(task_errors: pd.DataFrame) -> pd.DataFrame:
         method="average",
         ascending=True,
     )
-    return ranked.groupby("model", sort=True).agg(
-        avg_rank=("rank", "mean"),
-        n_ranked_tasks=("rank", "count"),
-    ).reset_index()
+    return (
+        ranked.groupby("model", sort=True)
+        .agg(
+            avg_rank=("rank", "mean"),
+            n_ranked_tasks=("rank", "count"),
+        )
+        .reset_index()
+    )
 
 
 def _compute_subgroup_scores(
@@ -370,10 +374,14 @@ def _compute_subgroup_scores(
     rows: list[dict[str, Any]] = []
     for attr in demographic_attrs:
         for (model_name, subgroup), group_df in with_demo.groupby(["model", attr], sort=True):
-            task_means = group_df.groupby(_task_cols(), sort=True).agg(
-                error=("error", "mean"),
-                n_units=("user_id", "nunique"),
-            ).reset_index()
+            task_means = (
+                group_df.groupby(_task_cols(), sort=True)
+                .agg(
+                    error=("error", "mean"),
+                    n_units=("user_id", "nunique"),
+                )
+                .reset_index()
+            )
             ratios: list[float] = []
             n_units = set(group_df["user_id"].astype(str).tolist())
             for _, row in task_means.iterrows():
@@ -445,13 +453,19 @@ def _build_fairness_summary(
             worst_idx = valid["skill_score"].idxmin()
             best_group = str(valid.loc[best_idx, "subgroup"])
             worst_group = str(valid.loc[worst_idx, "subgroup"])
-            disparity = float(valid.loc[best_idx, "skill_score"] - valid.loc[worst_idx, "skill_score"])
+            disparity = float(
+                valid.loc[best_idx, "skill_score"] - valid.loc[worst_idx, "skill_score"]
+            )
         else:
             best_group = ""
             worst_group = ""
             disparity = float("nan")
 
-        overall = float(global_lookup.loc[model_name]) if model_name in global_lookup.index else float("nan")
+        overall = (
+            float(global_lookup.loc[model_name])
+            if model_name in global_lookup.index
+            else float("nan")
+        )
         rows.append(
             {
                 "model": str(model_name),
@@ -504,9 +518,7 @@ def _build_model_summary(
             for _, row in model_fairness.iterrows()
             if np.isfinite(float(row["disparity"]))
         }
-        mean_disparity = (
-            float(np.mean(list(disparities.values()))) if disparities else float("nan")
-        )
+        mean_disparity = float(np.mean(list(disparities.values()))) if disparities else float("nan")
         rows.append(
             {
                 "model": model_name,
@@ -517,8 +529,7 @@ def _build_model_summary(
                 "sex_disparity": disparities.get("sex", float("nan")),
                 "mean_disparity": mean_disparity,
                 "lambda": float(lambda_fairness),
-                "fairness_adjusted_skill_score": overall
-                - float(lambda_fairness) * mean_disparity,
+                "fairness_adjusted_skill_score": overall - float(lambda_fairness) * mean_disparity,
             }
         )
     return pd.DataFrame(rows)
@@ -564,12 +575,10 @@ def _build_channel_summary(
         channel_idx = int(channel["channel_idx"])
         channel_name = channel["channel_name"]
         task_slice = task_errors.loc[
-            (task_errors["group"] == group_name)
-            & (task_errors["channel_idx"] == channel_idx)
+            (task_errors["group"] == group_name) & (task_errors["channel_idx"] == channel_idx)
         ]
         error_slice = error_df.loc[
-            (error_df["group"] == group_name)
-            & (error_df["channel_idx"] == channel_idx)
+            (error_df["group"] == group_name) & (error_df["channel_idx"] == channel_idx)
         ]
         channel_global_df = _compute_global_scores(
             task_errors=task_slice,

@@ -38,7 +38,7 @@ class DisparitySpec:
     """A registered disparity function plus metadata for downstream consumers."""
 
     fn: DisparityFn
-    higher_is_better: bool   # does a higher value mean *fairer*?
+    higher_is_better: bool  # does a higher value mean *fairer*?
     description: str
 
 
@@ -55,7 +55,9 @@ def register_disparity(
 ) -> None:
     """Register (or overwrite) a named disparity function."""
     DISPARITY_FUNCTIONS[name] = DisparitySpec(
-        fn=fn, higher_is_better=higher_is_better, description=description,
+        fn=fn,
+        higher_is_better=higher_is_better,
+        description=description,
     )
 
 
@@ -108,22 +110,26 @@ def _relative_drop(g: dict[str, float]) -> float:
 
 
 register_disparity(
-    "max_minus_min", _max_minus_min,
+    "max_minus_min",
+    _max_minus_min,
     higher_is_better=False,
     description="max(S_g) − min(S_g) across subgroups (lower is fairer).",
 )
 register_disparity(
-    "worst_group", _worst_group,
+    "worst_group",
+    _worst_group,
     higher_is_better=True,
     description="min(S_g) — worst-subgroup skill score (higher is fairer).",
 )
 register_disparity(
-    "std", _std_across,
+    "std",
+    _std_across,
     higher_is_better=False,
     description="Population std-dev of S_g across subgroups (lower is fairer).",
 )
 register_disparity(
-    "relative_drop", _relative_drop,
+    "relative_drop",
+    _relative_drop,
     higher_is_better=False,
     description="(max − min) / max — disparity normalised by the best subgroup.",
 )

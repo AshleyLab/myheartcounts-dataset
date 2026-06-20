@@ -30,9 +30,13 @@ from openmhc.imputers._release import write_manifest
 # Allow overrides via env vars so anyone with a Sherlock-style layout can run
 # this without editing the file. Defaults match the layout produced by
 # ``jobs/sherlock/_env.sh`` + ``00_setup.sh``.
-_SCRATCH = Path(os.environ.get("SCRATCH_RUN_ROOT", f"/scratch/users/{os.environ.get('USER', 'unknown')}"))
+_SCRATCH = Path(
+    os.environ.get("SCRATCH_RUN_ROOT", f"/scratch/users/{os.environ.get('USER', 'unknown')}")
+)
 RELEASES = Path(os.environ.get("RELEASES", str(_SCRATCH / "releases")))
-_MHC_CACHE = Path(os.environ.get("MHC_CACHE", str(_SCRATCH / ".myheartcounts-dataset-cache/data-full")))
+_MHC_CACHE = Path(
+    os.environ.get("MHC_CACHE", str(_SCRATCH / ".myheartcounts-dataset-cache/data-full"))
+)
 STATS_SRC = Path(
     os.environ.get(
         "MHC_NORMALIZATION_STATS",
@@ -56,8 +60,10 @@ SPECS = {
         "checkpoint": "DLinear.pypots",
         # MHC-benchmark trained with d_model=256, moving_avg_window_size=51
         "arch": {
-            "n_steps": 1440, "n_features": 19,
-            "d_model": 256, "moving_avg_window_size": 51,
+            "n_steps": 1440,
+            "n_features": 19,
+            "d_model": 256,
+            "moving_avg_window_size": 51,
         },
         "provenance": {"wandb_artifact": "MHC_Dataset/mhc-pypots-dlinear/dlinear:v49"},
     },
@@ -65,10 +71,17 @@ SPECS = {
         "kind": "fedformer",
         "checkpoint": "FEDformer.pypots",
         "arch": {
-            "n_steps": 1440, "n_features": 19,
-            "n_layers": 2, "d_model": 512, "n_heads": 8, "d_ffn": 128,
-            "moving_avg_window_size": 25, "dropout": 0.1,
-            "variant": "Fourier", "modes": 32, "mode_select": "random",
+            "n_steps": 1440,
+            "n_features": 19,
+            "n_layers": 2,
+            "d_model": 512,
+            "n_heads": 8,
+            "d_ffn": 128,
+            "moving_avg_window_size": 25,
+            "dropout": 0.1,
+            "variant": "Fourier",
+            "modes": 32,
+            "mode_select": "random",
         },
         "provenance": {"wandb_artifact": "MHC_Dataset/mhc-pypots-fedformer/fedformer:v31"},
     },
@@ -76,10 +89,15 @@ SPECS = {
         "kind": "timesnet",
         "checkpoint": "TimesNet.pypots",
         "arch": {
-            "n_steps": 1440, "n_features": 19,
-            "n_layers": 2, "top_k": 5,
-            "d_model": 128, "d_ffn": 512, "n_kernels": 6,
-            "dropout": 0.4, "apply_nonstationary_norm": False,
+            "n_steps": 1440,
+            "n_features": 19,
+            "n_layers": 2,
+            "top_k": 5,
+            "d_model": 128,
+            "d_ffn": 512,
+            "n_kernels": 6,
+            "dropout": 0.4,
+            "apply_nonstationary_norm": False,
         },
         "provenance": {"wandb_artifact": "MHC_Dataset/mhc-pypots-timesnet/timesnet:v31"},
     },
@@ -104,22 +122,23 @@ SPECS = {
 
 
 def _pick_ckpt(release_dir: Path, declared: str | None) -> str:
-    """Pick the checkpoint filename inside release_dir. Prefer ``declared``
-    if present; else for LSM2-style bundles, pick the lone *.ckpt."""
+    """Pick the checkpoint filename inside release_dir.
+
+    Prefer ``declared`` if present; else for LSM2-style bundles, pick the
+    lone *.ckpt.
+    """
     if declared and (release_dir / declared).exists():
         return declared
     ckpts = sorted(p.name for p in release_dir.glob("*.ckpt"))
     if len(ckpts) == 1:
         return ckpts[0]
     pypots = sorted(
-        p.name for p in release_dir.glob("*.pypots")
-        if "_epoch" not in p.name and p.is_file()
+        p.name for p in release_dir.glob("*.pypots") if "_epoch" not in p.name and p.is_file()
     )
     if pypots:
         return pypots[0]
     raise FileNotFoundError(
-        f"No suitable checkpoint in {release_dir} "
-        f"(declared={declared!r}; .ckpt={ckpts})"
+        f"No suitable checkpoint in {release_dir} (declared={declared!r}; .ckpt={ckpts})"
     )
 
 

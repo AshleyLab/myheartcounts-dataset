@@ -319,9 +319,7 @@ class ForecastingResults:
 
     def to_json(self, path: str | Path) -> None:
         """Export full results dict to JSON."""
-        Path(path).write_text(
-            json.dumps(self.per_channel, indent=2, default=_json_default)
-        )
+        Path(path).write_text(json.dumps(self.per_channel, indent=2, default=_json_default))
         logger.info("Forecasting results saved to %s", path)
 
     def summary(self) -> pd.DataFrame:

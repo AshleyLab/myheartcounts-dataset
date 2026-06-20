@@ -47,7 +47,9 @@ def load_run_config(run_path: Path) -> ForecastingEvalConfig:
         daily_start_hour_offset=forecasting_raw.get("daily_start_hour_offset", 0),
     )
 
-    model_cfg = ForecastingModelConfig(**_known_fields(ForecastingModelConfig, raw_cfg.get("model", {})))
+    model_cfg = ForecastingModelConfig(
+        **_known_fields(ForecastingModelConfig, raw_cfg.get("model", {}))
+    )
     features_cfg = FeaturesConfig(**_known_fields(FeaturesConfig, raw_cfg.get("features", {})))
     output_cfg = OutputConfig(**_known_fields(OutputConfig, raw_cfg.get("output", {})))
 

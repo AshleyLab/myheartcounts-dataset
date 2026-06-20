@@ -69,7 +69,9 @@ def _parse_named_paths(items: list[str]) -> dict[str, str]:
     return parsed
 
 
-def _append_records_to_parquet(output_dir: Path, user_id: str, records: list[dict[str, Any]]) -> None:
+def _append_records_to_parquet(
+    output_dir: Path, user_id: str, records: list[dict[str, Any]]
+) -> None:
     if not records:
         return
 

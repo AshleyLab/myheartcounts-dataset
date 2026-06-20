@@ -9,8 +9,10 @@ from forecasting_evaluation.metrics.offline.config_io import load_run_config
 
 
 def test_load_run_config_drops_unknown_keys(tmp_path: Path):
-    """A config written by an older schema (removed `seasonal_naive_average_history`
-    field, plus an unknown output key) must still load instead of raising TypeError.
+    r"""An older-schema config still loads instead of raising TypeError.
+
+    The config carries a removed ``seasonal_naive_average_history`` field plus an
+    unknown output key; both must be dropped rather than passed to the dataclass.
     """
     cfg = tmp_path / "config.yaml"
     cfg.write_text(

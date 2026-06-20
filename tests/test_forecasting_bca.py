@@ -17,6 +17,7 @@ import pytest
 # Reuse the existing tiny on-disk fixtures (separate modules -> no name clash).
 import test_forecasting_bootstrap_skill_rank as sr_fix
 import test_forecasting_fair_skill_score_bootstrap as fair_fix
+
 from forecasting_evaluation.metrics.bootstrap_fair_skill_score import (
     _fairness_headline_scopes,
     _jackknife_fair_points,
@@ -59,8 +60,11 @@ def test_bca_symmetric_matches_percentile_large_sample():
 
 
 def test_bca_skewed_jackknife_shifts_endpoints():
-    """(c) Right-skewed jackknife (a < 0) with the point at the median shifts both
-    endpoints below the percentile endpoints (the expected direction)."""
+    """A right-skewed jackknife (a < 0) shifts both endpoints below the percentile ones.
+
+    Case (c): with the point at the median, the BCa endpoints move below the plain
+    percentile endpoints — the expected direction for negative acceleration.
+    """
     draws = np.concatenate([np.linspace(-10.0, -0.1, 100), np.linspace(0.1, 10.0, 100)])
     jack = np.array([0.0, 0.0, 0.0, 0.0, 5.0])  # long right tail -> a < 0
     a = _jackknife_acceleration(jack)
@@ -100,8 +104,10 @@ def test_jackknife_acceleration_guards():
 
 
 def test_augment_with_bca_fills_point_and_gates_scopes():
-    """``point`` for every row; ``bca_lo``/``bca_hi`` only for in-scope rows; the
-    percentile columns are left untouched."""
+    """``point`` is set on every row; ``bca_lo``/``bca_hi`` only on in-scope rows.
+
+    The pre-existing percentile columns are left untouched.
+    """
     summary = pd.DataFrame(
         {
             "model": ["m", "m"],
@@ -166,8 +172,12 @@ def test_augment_with_bca_empty_frame_gets_columns():
 
 
 def test_fairness_bca_columns_and_gating(tmp_path):
-    """Output carries point/bca_lo/bca_hi; headline scopes get BCa, per-channel NaN;
-    bca_lo <= point <= bca_hi where defined; baseline scope -> [0, 0]."""
+    """Fairness output carries point/bca_lo/bca_hi with BCa gated to headline scopes.
+
+    Headline scopes get finite BCa intervals, per-channel scopes get NaN,
+    ``bca_lo <= point <= bca_hi`` holds where defined, and the baseline-vs-itself
+    scope collapses to ``[0, 0]``.
+    """
     models = fair_fix._make_models(tmp_path)
     out = fair_fix._bootstrap(models, fair_fix._demographics(), n_boot=300, seed=11)[
         "fairness_skill_scores"
@@ -190,8 +200,11 @@ def test_fairness_bca_columns_and_gating(tmp_path):
 
 
 def test_fairness_bca_preserves_percentile_columns(tmp_path):
-    """``bca=False`` keeps the legacy table; ``bca=True`` only *adds* columns (the
-    percentile mean/se/CI are byte-identical for the same seed)."""
+    """``bca=True`` only *adds* columns, leaving the percentile table unchanged.
+
+    With ``bca=False`` the legacy table is produced; for the same seed the
+    percentile mean/se/CI are byte-identical whether or not BCa is enabled.
+    """
     models = fair_fix._make_models(tmp_path)
     demo = fair_fix._demographics()
     without = fair_fix._bootstrap(models, demo, n_boot=120, seed=9, bca=False)[

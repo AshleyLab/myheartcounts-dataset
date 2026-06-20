@@ -53,7 +53,7 @@ def _create_model(
     features_config: FeaturesConfig | None,
 ) -> BasePredictionModel:
     """Create a single model from single-model config.
-    
+
     Args:
         config: Single-model configuration.
         seed: Random seed.
@@ -63,12 +63,12 @@ def _create_model(
             models that need training-time history and horizon settings.
         features_config: Feature extraction configuration passed through to
             models that need channel-dependent feature counts.
-    
+
     Returns:
         Instantiated model with custom name attribute.
     """
     model_name = config.name if config.name else config.type
-    
+
     # Type-safe model creation based on instance type
     if config.type == "naive":
         raise NotImplementedError("Naive model not yet implemented")
@@ -76,6 +76,7 @@ def _create_model(
     elif config.type == "seasonal_naive":
         seasonal_cfg = config.seasonal_naive
         from forecasting_evaluation.models.naive.seasonal_naive import SeasonalNaiveModel
+
         model = SeasonalNaiveModel(
             seed=seed,
             seasonal=seasonal_cfg.season_length,
@@ -86,6 +87,7 @@ def _create_model(
     elif config.type == "autoARIMA":
         arima_cfg = config.autoARIMA
         from forecasting_evaluation.models.statistic.autoARIMA import AutoARIMAModel
+
         n_jobs = 1 if force_single_core_stats else arima_cfg.n_jobs
         model = AutoARIMAModel(
             seed=seed,
@@ -113,6 +115,7 @@ def _create_model(
     elif config.type == "autoETS":
         ets_cfg = config.autoETS
         from forecasting_evaluation.models.statistic.autoETS import AutoETSModel
+
         n_jobs = 1 if force_single_core_stats else ets_cfg.n_jobs
         model = AutoETSModel(
             seed=seed,
@@ -126,6 +129,7 @@ def _create_model(
 
     elif config.type == "chronos2":
         from forecasting_evaluation.models.foundational_model.chronos2 import Chronos2Model
+
         model = Chronos2Model(
             config=config.chronos2,
             seed=seed,
@@ -134,6 +138,7 @@ def _create_model(
 
     elif config.type == "toto":
         from forecasting_evaluation.models.foundational_model.toto import TotoModel
+
         model = TotoModel(
             config=config.toto,
             seed=seed,
@@ -143,10 +148,10 @@ def _create_model(
     elif config.type == "mixlinear":
         if forecasting_config is None or features_config is None:
             raise ValueError(
-                "forecasting_config and features_config are required for "
-                "mixlinear model creation"
+                "forecasting_config and features_config are required for mixlinear model creation"
             )
         from forecasting_evaluation.models.deep_learning_model.mixlinear import MixLinearModel
+
         model = MixLinearModel(
             config=config.mixlinear,
             forecasting_config=forecasting_config,
@@ -157,10 +162,10 @@ def _create_model(
     elif config.type == "dlinear":
         if forecasting_config is None or features_config is None:
             raise ValueError(
-                "forecasting_config and features_config are required for "
-                "dlinear model creation"
+                "forecasting_config and features_config are required for dlinear model creation"
             )
         from forecasting_evaluation.models.deep_learning_model.dlinear import DLinearModel
+
         model = DLinearModel(
             config=config.dlinear,
             forecasting_config=forecasting_config,
@@ -171,10 +176,10 @@ def _create_model(
     elif config.type == "segrnn":
         if forecasting_config is None or features_config is None:
             raise ValueError(
-                "forecasting_config and features_config are required for "
-                "segrnn model creation"
+                "forecasting_config and features_config are required for segrnn model creation"
             )
         from forecasting_evaluation.models.deep_learning_model.segrnn import SegRNNModel
+
         model = SegRNNModel(
             config=config.segrnn,
             forecasting_config=forecasting_config,

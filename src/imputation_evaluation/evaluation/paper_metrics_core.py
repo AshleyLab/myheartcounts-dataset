@@ -35,8 +35,8 @@ DEFAULT_LAMBDA = 0.5
 DEFAULT_FAIRNESS_ATTRS: tuple[str, ...] = ("age_group", "sex")
 FAIRNESS_OVERALL_SCOPE = "overall"
 
-N_CONTINUOUS = 7   # ch_0..ch_6
-N_BINARY = 12      # ch_7..ch_18
+N_CONTINUOUS = 7  # ch_0..ch_6
+N_BINARY = 12  # ch_7..ch_18
 
 # Semantic masking scenarios where binary channels are excluded
 EXCLUDE_BINARY_SCENARIOS: set[str] = {"sleep_gap", "workout_gap", "intensity_failure"}
@@ -63,7 +63,7 @@ CHANNEL_CATEGORIES: dict[str, set[str]] = {
 # whose seven channels already weight roughly fairly under the per-task
 # geomean.
 BINARY_CATEGORIES_ORDERED: tuple[tuple[str, tuple[int, ...]], ...] = (
-    ("sleep",    (7, 8)),
+    ("sleep", (7, 8)),
     ("workouts", tuple(range(9, 19))),
 )
 
@@ -88,7 +88,7 @@ def is_collapsed_channel(channel: str) -> bool:
 # ``None`` for rows that should not contribute (e.g. per-channel binary
 # rows when ``cat_collapsed:*`` is used instead, to avoid double-counting).
 _B2_COLLAPSED_BUCKETS: dict[str, str] = {
-    "cat_collapsed:sleep":    "sleep",
+    "cat_collapsed:sleep": "sleep",
     "cat_collapsed:workouts": "workouts",
 }
 
@@ -120,11 +120,15 @@ def b2_bucket_for_channel(channel: str, channel_type: str) -> str | None:
 # 3-level B.2 helpers (skill + rank kernels)
 # --------------------------------------------------------------------------
 
+
 def _bucket_log_R_per_scenario(
-    legacy_df: pd.DataFrame, collapsed_df: pd.DataFrame,
+    legacy_df: pd.DataFrame,
+    collapsed_df: pd.DataFrame,
 ) -> pd.DataFrame:
-    """L3 of the 3-level B.2 form: per-(method, scenario, bucket) mean of
-    log(clip(R)) over the bucket's constituent tasks in that scenario.
+    """L3 of the 3-level B.2 form: per-(method, scenario, bucket) mean of log(clip(R)).
+
+    Averages log(clip(R)) over the bucket's constituent tasks in that
+    scenario.
 
     Continuous legacy rows (category in {activity, physiology})
     contribute to their named bucket; collapsed rows contribute to
@@ -147,9 +151,7 @@ def _bucket_log_R_per_scenario(
             )
         )
     if not pieces:
-        return pd.DataFrame(
-            columns=["method", "scenario", "bucket", "bucket_log_R"]
-        )
+        return pd.DataFrame(columns=["method", "scenario", "bucket", "bucket_log_R"])
     buckets_df = pd.concat(pieces, ignore_index=True)
     return (
         buckets_df.groupby(["method", "scenario", "bucket"], observed=True)["clipped_ratio"]
@@ -159,16 +161,15 @@ def _bucket_log_R_per_scenario(
 
 
 def _scenario_log_R_per_method(bucket_log_R: pd.DataFrame) -> pd.DataFrame:
-    """L2 of the 3-level B.2 form: per-(method, scenario) arithmetic mean
-    over buckets-present of ``bucket_log_R``.
+    """L2 of the 3-level B.2 form: per-(method, scenario) mean over buckets.
+
+    Arithmetic mean over buckets-present of ``bucket_log_R``.
 
     Returns ``[method, scenario, log_R_scenario, n_buckets]`` with one
     row per present (method, scenario).
     """
     if bucket_log_R.empty:
-        return pd.DataFrame(
-            columns=["method", "scenario", "log_R_scenario", "n_buckets"]
-        )
+        return pd.DataFrame(columns=["method", "scenario", "log_R_scenario", "n_buckets"])
     return (
         bucket_log_R.groupby(["method", "scenario"], observed=True)
         .agg(
@@ -185,8 +186,9 @@ def _multi_scenario_skill(
     *,
     scope_label: str,
 ) -> list[dict]:
-    """L1 of the 3-level B.2 form: per-method log-space mean over a chosen
-    set of scenarios of ``log_R_scenario``.
+    """L1 of the 3-level B.2 form: per-method log-space mean over scenarios.
+
+    Reduces ``log_R_scenario`` over a chosen set of scenarios.
 
     Emits one row per method with skill = ``1 − exp(mean of log_R_scenario
     over scenarios-present)``. ``n_tasks`` is the number of scenarios
@@ -203,12 +205,14 @@ def _multi_scenario_skill(
         vals = grp["log_R_scenario"].to_numpy(dtype=np.float64)
         if vals.size == 0:
             continue
-        out.append({
-            "method":      method,
-            "scope":       scope_label,
-            "skill_score": 1.0 - float(np.exp(float(np.mean(vals)))),
-            "n_tasks":     int(vals.size),
-        })
+        out.append(
+            {
+                "method": method,
+                "scope": scope_label,
+                "skill_score": 1.0 - float(np.exp(float(np.mean(vals)))),
+                "n_tasks": int(vals.size),
+            }
+        )
     return out
 
 
@@ -216,8 +220,9 @@ def _scenario_rank_per_method(
     per_task: pd.DataFrame,
     has_n_users: bool,
 ) -> pd.DataFrame:
-    """L2 of the 3-level rank form: per-(method, scenario) arithmetic
-    mean over buckets-present of ``bucket_rank``.
+    """L2 of the 3-level rank form: per-(method, scenario) mean over buckets.
+
+    Arithmetic mean over buckets-present of ``bucket_rank``.
 
     Stage L3 (per-bucket task mean) and L2 (mean over buckets) fold
     into a single groupby pair below because mean-of-means with equal
@@ -257,9 +262,7 @@ def _scenario_rank_per_method(
             return c
         return None  # per-channel binary → dropped
 
-    df["bucket"] = [
-        _bucket(ch, c) for ch, c in zip(chan_str, cat)
-    ]
+    df["bucket"] = [_bucket(ch, c) for ch, c in zip(chan_str, cat)]
     df = df[df["bucket"].notna()]
     if df.empty:
         cols = ["method", "scenario", "scenario_rank", "n_buckets"]
@@ -272,23 +275,17 @@ def _scenario_rank_per_method(
     if has_n_users:
         l3_agg["bucket_users"] = ("n_users", "max")
     bucket_lvl = (
-        df.groupby(["method", "scenario", "bucket"], observed=True)
-        .agg(**l3_agg)
-        .reset_index()
+        df.groupby(["method", "scenario", "bucket"], observed=True).agg(**l3_agg).reset_index()
     )
 
     # L2: per (method, scenario) mean over buckets present.
     l2_agg: dict = {
         "scenario_rank": ("bucket_rank", "mean"),
-        "n_buckets":     ("bucket_rank", "size"),
+        "n_buckets": ("bucket_rank", "size"),
     }
     if has_n_users:
         l2_agg["scenario_users"] = ("bucket_users", "max")
-    return (
-        bucket_lvl.groupby(["method", "scenario"], observed=True)
-        .agg(**l2_agg)
-        .reset_index()
-    )
+    return bucket_lvl.groupby(["method", "scenario"], observed=True).agg(**l2_agg).reset_index()
 
 
 def _multi_scenario_rank(
@@ -298,8 +295,9 @@ def _multi_scenario_rank(
     scope_label: str,
     has_n_users: bool,
 ) -> list[dict]:
-    """L1 of the 3-level rank form: per-method arithmetic mean over a
-    chosen set of scenarios of ``scenario_rank``.
+    """L1 of the 3-level rank form: per-method mean over scenarios.
+
+    Arithmetic mean of ``scenario_rank`` over a chosen set of scenarios.
     """
     scenarios = set(scenarios)
     if scen_rank.empty or not scenarios:
@@ -313,10 +311,10 @@ def _multi_scenario_rank(
         if vals.size == 0:
             continue
         row: dict = {
-            "method":   method,
-            "scope":    scope_label,
+            "method": method,
+            "scope": scope_label,
             "avg_rank": float(np.mean(vals)),
-            "n_tasks":  int(vals.size),
+            "n_tasks": int(vals.size),
         }
         if has_n_users:
             row["n_users"] = int(grp["scenario_users"].max())
@@ -327,6 +325,7 @@ def _multi_scenario_rank(
 # --------------------------------------------------------------------------
 # Error extraction (registry-DataFrame variant)
 # --------------------------------------------------------------------------
+
 
 def extract_errors(
     df: pd.DataFrame,
@@ -369,19 +368,22 @@ def extract_errors(
         else:
             continue
         if pd.notna(e):
-            rows.append({
-                "method": row["method"],
-                "scenario": row["scenario"],
-                "channel": row["channel"],
-                "channel_type": ch_type,
-                "E": float(e),
-            })
+            rows.append(
+                {
+                    "method": row["method"],
+                    "scenario": row["scenario"],
+                    "channel": row["channel"],
+                    "channel_type": ch_type,
+                    "E": float(e),
+                }
+            )
     return pd.DataFrame(rows)
 
 
 # --------------------------------------------------------------------------
 # Skill score & average rank
 # --------------------------------------------------------------------------
+
 
 def compute_skill_scores(
     errors: pd.DataFrame,
@@ -451,14 +453,16 @@ def compute_skill_scores(
             if pd.isna(r) or r <= 0:
                 continue
             clipped = float(np.clip(r, clip_lower, clip_upper))
-            ratios.append({
-                "method": row["method"],
-                "scenario": row["scenario"],
-                "channel": row["channel"],
-                "category": channel_category(row["channel"]),
-                "clipped_ratio": clipped,
-                "is_collapsed": is_collapsed_channel(row["channel"]),
-            })
+            ratios.append(
+                {
+                    "method": row["method"],
+                    "scenario": row["scenario"],
+                    "channel": row["channel"],
+                    "category": channel_category(row["channel"]),
+                    "clipped_ratio": clipped,
+                    "is_collapsed": is_collapsed_channel(row["channel"]),
+                }
+            )
     elif mode == "pooled":
         if baseline_errors is None:
             raise ValueError(
@@ -477,18 +481,19 @@ def compute_skill_scores(
                 continue
             ratio = row["E"] / e_baseline
             clipped = np.clip(ratio, clip_lower, clip_upper)
-            ratios.append({
-                "method": row["method"],
-                "scenario": row["scenario"],
-                "channel": row["channel"],
-                "category": channel_category(row["channel"]),
-                "clipped_ratio": clipped,
-                "is_collapsed": is_collapsed_channel(row["channel"]),
-            })
+            ratios.append(
+                {
+                    "method": row["method"],
+                    "scenario": row["scenario"],
+                    "channel": row["channel"],
+                    "category": channel_category(row["channel"]),
+                    "clipped_ratio": clipped,
+                    "is_collapsed": is_collapsed_channel(row["channel"]),
+                }
+            )
     else:
         raise ValueError(
-            f"compute_skill_scores: unknown mode={mode!r}; "
-            "expected 'paired' or 'pooled'."
+            f"compute_skill_scores: unknown mode={mode!r}; expected 'paired' or 'pooled'."
         )
 
     ratio_df = pd.DataFrame(ratios)
@@ -528,12 +533,14 @@ def compute_skill_scores(
 
     # Per-scenario scopes: one row per (method, scenario) present.
     for _, row in scen_log_R.iterrows():
-        results.append({
-            "method":      row["method"],
-            "scope":       row["scenario"],
-            "skill_score": 1.0 - float(np.exp(float(row["log_R_scenario"]))),
-            "n_tasks":     int(row["n_buckets"]),   # buckets in this scenario
-        })
+        results.append(
+            {
+                "method": row["method"],
+                "scope": row["scenario"],
+                "skill_score": 1.0 - float(np.exp(float(row["log_R_scenario"]))),
+                "n_tasks": int(row["n_buckets"]),  # buckets in this scenario
+            }
+        )
 
     # cat:<cat> (structural scenarios only, per-channel) — continuous
     # categories only. The per-channel binary cat:sleep / cat:workouts
@@ -546,11 +553,14 @@ def compute_skill_scores(
     for (method, cat), group in structural_cont.groupby(["method", "category"], observed=True):
         if cat is None:
             continue
-        results.append({
-            "method": method, "scope": f"cat:{cat}",
-            "skill_score": _skill(np.log(group["clipped_ratio"].values)),
-            "n_tasks": len(group),
-        })
+        results.append(
+            {
+                "method": method,
+                "scope": f"cat:{cat}",
+                "skill_score": _skill(np.log(group["clipped_ratio"].values)),
+                "n_tasks": len(group),
+            }
+        )
 
     # cat:<cat> for binary categories — log-space geomean of per-scenario
     # R values (3 structural scenarios × 1 collapsed task each). The
@@ -560,25 +570,29 @@ def compute_skill_scores(
     if not collapsed_df.empty:
         for (method, channel), group in collapsed_df.groupby(["method", "channel"], observed=True):
             cat_name = str(channel).split(":", 1)[1]
-            results.append({
-                "method": method, "scope": f"cat:{cat_name}",
-                "skill_score": _skill(np.log(group["clipped_ratio"].values)),
-                "n_tasks": len(group),
-            })
+            results.append(
+                {
+                    "method": method,
+                    "scope": f"cat:{cat_name}",
+                    "skill_score": _skill(np.log(group["clipped_ratio"].values)),
+                    "n_tasks": len(group),
+                }
+            )
 
     # --- semantic: L1 log-space mean over the 3 semantic scenarios ----
     sem_rows = _multi_scenario_skill(
-        scen_log_R, SEMANTIC_SCENARIOS, scope_label="semantic",
+        scen_log_R,
+        SEMANTIC_SCENARIOS,
+        scope_label="semantic",
     )
     results.extend(sem_rows)
 
     # --- overall: L1 log-space mean over all 6 scenarios --------------
-    all_scenarios = (
-        set(scen_log_R["scenario"].unique())
-        if not scen_log_R.empty else set()
-    )
+    all_scenarios = set(scen_log_R["scenario"].unique()) if not scen_log_R.empty else set()
     overall_rows = _multi_scenario_skill(
-        scen_log_R, all_scenarios, scope_label="overall",
+        scen_log_R,
+        all_scenarios,
+        scope_label="overall",
     )
     results.extend(overall_rows)
 
@@ -593,12 +607,14 @@ def compute_skill_scores(
     # ch_5 and ch_6 tasks because no rows are written for unmasked
     # channels).
     for r in ratio_df.itertuples(index=False):
-        results.append({
-            "method": r.method,
-            "scope": f"task:{r.scenario}:{r.channel}",
-            "skill_score": 1.0 - float(r.clipped_ratio),
-            "n_tasks": 1,
-        })
+        results.append(
+            {
+                "method": r.method,
+                "scope": f"task:{r.scenario}:{r.channel}",
+                "skill_score": 1.0 - float(r.clipped_ratio),
+                "n_tasks": 1,
+            }
+        )
 
     return pd.DataFrame(results)
 
@@ -658,10 +674,10 @@ def aggregate_task_ranks_to_scopes(per_task: pd.DataFrame) -> pd.DataFrame:
     # Per-scenario scopes: one row per (method, scenario) present.
     for _, row in scen_rank.iterrows():
         rdict = {
-            "method":   row["method"],
-            "scope":    row["scenario"],
+            "method": row["method"],
+            "scope": row["scenario"],
             "avg_rank": float(row["scenario_rank"]),
-            "n_tasks":  int(row["n_buckets"]),
+            "n_tasks": int(row["n_buckets"]),
         }
         if has_n_users:
             rdict["n_users"] = int(row["scenario_users"])
@@ -686,17 +702,25 @@ def aggregate_task_ranks_to_scopes(per_task: pd.DataFrame) -> pd.DataFrame:
             results.append(_row(method, f"cat:{cat_name}", group))
 
     # semantic: L1 mean over the 3 semantic scenarios.
-    results.extend(_multi_scenario_rank(
-        scen_rank, SEMANTIC_SCENARIOS,
-        scope_label="semantic", has_n_users=has_n_users,
-    ))
+    results.extend(
+        _multi_scenario_rank(
+            scen_rank,
+            SEMANTIC_SCENARIOS,
+            scope_label="semantic",
+            has_n_users=has_n_users,
+        )
+    )
 
     # overall: L1 mean over all 6 scenarios.
     all_scenarios_rank = set(scen_rank["scenario"].unique()) if not scen_rank.empty else set()
-    results.extend(_multi_scenario_rank(
-        scen_rank, all_scenarios_rank,
-        scope_label="overall", has_n_users=has_n_users,
-    ))
+    results.extend(
+        _multi_scenario_rank(
+            scen_rank,
+            all_scenarios_rank,
+            scope_label="overall",
+            has_n_users=has_n_users,
+        )
+    )
 
     # --- task:<scenario>:<channel> (degenerate single-task rank scope) -
     # Pass each per-task row through unchanged: ``avg_rank`` is the
@@ -746,9 +770,7 @@ def _average_rankings_per_user(errors: pd.DataFrame) -> pd.DataFrame:
         )
     df = errors[np.isfinite(errors["E"])].copy()
     if df.empty:
-        return pd.DataFrame(
-            columns=["method", "scope", "avg_rank", "n_tasks", "n_users"]
-        )
+        return pd.DataFrame(columns=["method", "scope", "avg_rank", "n_tasks", "n_users"])
 
     task_rank_frames: list[pd.DataFrame] = []
     for (scenario, channel), grp in df.groupby(["scenario", "channel"], observed=True):
@@ -762,9 +784,7 @@ def _average_rankings_per_user(errors: pd.DataFrame) -> pd.DataFrame:
         long_rank["channel"] = channel
         task_rank_frames.append(long_rank)
     if not task_rank_frames:
-        return pd.DataFrame(
-            columns=["method", "scope", "avg_rank", "n_tasks", "n_users"]
-        )
+        return pd.DataFrame(columns=["method", "scope", "avg_rank", "n_tasks", "n_users"])
 
     long_rank_all = pd.concat(task_rank_frames, ignore_index=True)
     per_task = (
@@ -800,6 +820,7 @@ def compute_average_rankings(errors: pd.DataFrame) -> pd.DataFrame:
 # --------------------------------------------------------------------------
 # Disparity-ratio fair skill score
 # --------------------------------------------------------------------------
+
 
 def _per_attribute_skill_keyed(
     df_attr: pd.DataFrame,
@@ -849,25 +870,26 @@ def _per_attribute_skill_keyed(
     # computed over the SAME subgroup set per task. This both aligns the
     # comparison and excludes orphan rows that would collapse D_j to 0 when
     # a method has only one subgroup row for a task/draw.
-    bl_rows = (
-        df_attr.loc[
-            df_attr["method"] == baseline_method,
-            [*task_keys, "subgroup_value", "E"],
-        ]
-        .rename(columns={"E": "E_b"})
-    )
+    bl_rows = df_attr.loc[
+        df_attr["method"] == baseline_method,
+        [*task_keys, "subgroup_value", "E"],
+    ].rename(columns={"E": "E_b"})
     aligned = df_attr.merge(
-        bl_rows, on=[*task_keys, "subgroup_value"], how="inner",
+        bl_rows,
+        on=[*task_keys, "subgroup_value"],
+        how="inner",
     )
     if aligned.empty:
         return pd.DataFrame(columns=["method", *extra_keys, "S_attr", "n_tasks"])
 
     grouped = aligned.groupby(method_task_keys, observed=True)
-    D = pd.DataFrame({
-        "D_j": grouped["E"].max() - grouped["E"].min(),
-        "D_b": grouped["E_b"].max() - grouped["E_b"].min(),
-        "n_sub": grouped["subgroup_value"].nunique(),
-    }).reset_index()
+    D = pd.DataFrame(
+        {
+            "D_j": grouped["E"].max() - grouped["E"].min(),
+            "D_b": grouped["E_b"].max() - grouped["E_b"].min(),
+            "n_sub": grouped["subgroup_value"].nunique(),
+        }
+    ).reset_index()
 
     # Drop tasks where:
     #   - fewer than 2 common (method ∩ baseline) subgroups exist; max-min
@@ -976,12 +998,14 @@ def compute_fair_skill_scores(
         per_attr_results[attr] = per_attr
 
         for _, row in per_attr.iterrows():
-            results.append({
-                "method": row["method"],
-                "scope": attr,
-                "fair_skill_score": float(row["S_attr"]),
-                "n_tasks": int(row["n_tasks"]),
-            })
+            results.append(
+                {
+                    "method": row["method"],
+                    "scope": attr,
+                    "fair_skill_score": float(row["S_attr"]),
+                    "n_tasks": int(row["n_tasks"]),
+                }
+            )
 
     # Macro-average across attributes per method — drop methods missing
     # any attribute so the mean is honest.
@@ -999,17 +1023,17 @@ def compute_fair_skill_scores(
             .reset_index()
         )
         for _, row in overall.iterrows():
-            results.append({
-                "method": row["method"],
-                "scope": FAIRNESS_OVERALL_SCOPE,
-                "fair_skill_score": float(row["S_fair"]),
-                "n_tasks": int(row["n_tasks"]),
-            })
+            results.append(
+                {
+                    "method": row["method"],
+                    "scope": FAIRNESS_OVERALL_SCOPE,
+                    "fair_skill_score": float(row["S_fair"]),
+                    "n_tasks": int(row["n_tasks"]),
+                }
+            )
 
     if not results:
-        return pd.DataFrame(
-            columns=["method", "scope", "fair_skill_score", "n_tasks"]
-        )
+        return pd.DataFrame(columns=["method", "scope", "fair_skill_score", "n_tasks"])
     return pd.DataFrame(results)
 
 
@@ -1024,11 +1048,7 @@ def build_baseline_errors(
     Returns one row per ``(scenario, channel)`` with the baseline E.
     """
     cont = errors[
-        (errors["method"] == baseline_continuous)
-        & (errors["channel_type"] == "continuous")
+        (errors["method"] == baseline_continuous) & (errors["channel_type"] == "continuous")
     ]
-    binary = errors[
-        (errors["method"] == baseline_binary)
-        & (errors["channel_type"] == "binary")
-    ]
+    binary = errors[(errors["method"] == baseline_binary) & (errors["channel_type"] == "binary")]
     return pd.concat([cont, binary], ignore_index=True)

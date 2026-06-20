@@ -18,7 +18,6 @@ overriding ``run()`` on a thin subclass.
 from __future__ import annotations
 
 import logging
-import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -35,7 +34,7 @@ logger = logging.getLogger(__name__)
 class _CustomModelEvaluator(ForecastingEvaluator):
     """Subclass that injects a pre-constructed model rather than using the registry."""
 
-    def __init__(self, config: "ForecastingEvalConfig", model: "BasePredictionModel"):
+    def __init__(self, config: ForecastingEvalConfig, model: BasePredictionModel):
         super().__init__(config)
         self._injected_model = model
 
@@ -62,8 +61,8 @@ class _CustomModelEvaluator(ForecastingEvaluator):
 
 
 def run_eval(
-    config: "ForecastingEvalConfig",
-    model: "BasePredictionModel",
+    config: ForecastingEvalConfig,
+    model: BasePredictionModel,
     metrics_output_dir: str | Path | None = None,
 ) -> dict:
     """Run forecasting eval + offline metrics in one call.

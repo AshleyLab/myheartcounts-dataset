@@ -17,17 +17,17 @@ import os
 import numpy as np
 import pytest
 
-from forecasting_evaluation.evaluation.evaluator import (
-    ForecastingEvaluator,
-    _forward_kwargs,
-    _invoke_forecaster,
-    _normalize_forecast_output,
-)
 from forecasting_evaluation.data.online_dataset import (
     ForecastingSampleIndexBuilder,
 )
 from forecasting_evaluation.data.standard_scaler import (
     ChannelStandardScalerStats,
+)
+from forecasting_evaluation.evaluation.evaluator import (
+    ForecastingEvaluator,
+    _forward_kwargs,
+    _invoke_forecaster,
+    _normalize_forecast_output,
 )
 from forecasting_evaluation.models.deep_learning_model.pypots_forecasting_base import (
     BasePyPOTSForecastingModel,
@@ -79,6 +79,7 @@ def _meta():
 
 
 def test_forward_kwargs_only_declared():
+    """_forward_kwargs passes only metadata kwargs the predict signature declares (all for **kwargs)."""
     assert _forward_kwargs(_MinimalForecaster(), _meta()) == {}
     assert _forward_kwargs(_RichForecaster(), _meta()) == {
         "variable_names": ["a", "b"],
@@ -88,6 +89,7 @@ def test_forward_kwargs_only_declared():
 
 
 def test_normalize_forecast_output_variants():
+    """_normalize_forecast_output accepts a bare array or (point, quantiles) tuple, splitting them out."""
     arr = np.zeros((2, 4), dtype=np.float32)
     point, quant = _normalize_forecast_output(arr)
     assert quant is None and point.shape == (2, 4)
@@ -101,6 +103,7 @@ def test_normalize_forecast_output_variants():
 
 
 def test_invoke_forecaster_minimal():
+    """_invoke_forecaster runs a point-only model and returns the point, no quantiles, and perf metrics."""
     history = np.ones((2, 50), dtype=np.float32)
     point, quant, perf = _invoke_forecaster(_MinimalForecaster(), history, 24, _meta())
     assert point.shape == (2, 24)
@@ -109,6 +112,7 @@ def test_invoke_forecaster_minimal():
 
 
 def test_invoke_forecaster_forwards_declared_kwargs():
+    """_invoke_forecaster forwards declared metadata kwargs and surfaces returned quantiles."""
     model = _RichForecaster()
     history = np.ones((2, 50), dtype=np.float32)
     point, quant, _perf = _invoke_forecaster(model, history, 24, _meta())
@@ -121,6 +125,7 @@ def test_invoke_forecaster_forwards_declared_kwargs():
 # Seasonal-Naive fallback substitution
 # --------------------------------------------------------------------------- #
 def test_seasonal_naive_fallback_fills_nan_only():
+    """Seasonal-naive fallback replaces only NaN cells (marking them in the mask) and leaves the rest exact."""
     rng = np.random.default_rng(0)
     history = rng.normal(size=(3, 72)).astype(np.float32)
     horizon = 24
@@ -148,6 +153,7 @@ def test_seasonal_naive_fallback_fills_nan_only():
 
 
 def test_seasonal_naive_fallback_all_none_prediction():
+    """A None point result is fully replaced by the seasonal-naive baseline, with every cell masked."""
     history = np.ones((4, 48), dtype=np.float32)
     fallback = SeasonalNaiveModel(seed=42, seasonal=24)
     repaired, mask = ForecastingEvaluator._apply_seasonal_naive_fallback(
@@ -300,6 +306,7 @@ def test_pypots_predict_left_pads_short_history():
     reason="requires MHC_DATA_DIR with the full dataset",
 )
 def test_fallback_visible_end_to_end():
+    """End-to-end, a model that NaNs out channels 0-2 yields per-channel fallback rates of 1.0 while still being scored."""
     import openmhc
 
     class _GappyForecaster:
@@ -307,11 +314,7 @@ def test_fallback_visible_end_to_end():
 
         def predict(self, history, horizon):
             filled = np.where(np.isfinite(history), history, 0.0).astype(np.float32)
-            last = (
-                filled[:, -1:]
-                if filled.shape[1]
-                else np.zeros((filled.shape[0], 1), np.float32)
-            )
+            last = filled[:, -1:] if filled.shape[1] else np.zeros((filled.shape[0], 1), np.float32)
             out = np.tile(last, (1, horizon)).astype(np.float32)
             out[:3, :] = np.nan  # declare channels 0,1,2 unpredictable
             return out

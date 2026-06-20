@@ -47,10 +47,16 @@ SPEC_VERSION = 2
 _SUPPORTED_SPEC_VERSIONS = frozenset({1, 2})
 HF_URI_PREFIX = "hf://"
 
-_KNOWN_KINDS = frozenset({
-    "brits", "timesnet", "dlinear", "fedformer",
-    "lsm2", "lsm2_weekly_sparse",
-})
+_KNOWN_KINDS = frozenset(
+    {
+        "brits",
+        "timesnet",
+        "dlinear",
+        "fedformer",
+        "lsm2",
+        "lsm2_weekly_sparse",
+    }
+)
 
 # Kinds that may carry a Fourier-modes sidecar. The sidecar exists to work
 # around an upstream PyPOTS bug: ``FourierBlock.__init__`` calls
@@ -128,7 +134,7 @@ def _resolve_hf_manifest(uri: str) -> Path:
             "Loading hf:// release bundles requires huggingface_hub. "
             "Install it with: pip install 'openmhc[hf]'"
         ) from exc
-    rest = uri[len(HF_URI_PREFIX):]
+    rest = uri[len(HF_URI_PREFIX) :]
     if "@" in rest:
         repo_id, revision = rest.split("@", 1)
     else:
@@ -141,9 +147,7 @@ def _resolve_hf_manifest(uri: str) -> Path:
     manifest = Path(local_dir) / MANIFEST_FILENAME
     if not manifest.exists():
         suffix = f" (revision={revision!r})" if revision else ""
-        raise FileNotFoundError(
-            f"HF repo {repo_id!r}{suffix} contains no {MANIFEST_FILENAME}"
-        )
+        raise FileNotFoundError(f"HF repo {repo_id!r}{suffix} contains no {MANIFEST_FILENAME}")
     return manifest
 
 
@@ -155,9 +159,7 @@ def _resolve_manifest_path(path: str | Path) -> Path:
     if p.is_dir():
         candidate = p / MANIFEST_FILENAME
         if not candidate.exists():
-            raise FileNotFoundError(
-                f"No {MANIFEST_FILENAME} in directory {p}"
-            )
+            raise FileNotFoundError(f"No {MANIFEST_FILENAME} in directory {p}")
         return candidate
     if not p.exists():
         raise FileNotFoundError(f"Manifest path does not exist: {p}")
@@ -195,18 +197,14 @@ def load_manifest(path: str | Path) -> Manifest:
 
     kind = raw.get("kind")
     if kind not in _KNOWN_KINDS:
-        raise ValueError(
-            f"Unknown manifest kind {kind!r}; expected one of {sorted(_KNOWN_KINDS)}"
-        )
+        raise ValueError(f"Unknown manifest kind {kind!r}; expected one of {sorted(_KNOWN_KINDS)}")
 
     checkpoint_rel = raw.get("checkpoint")
     if not checkpoint_rel:
         raise ValueError("Manifest missing required field 'checkpoint'")
     checkpoint_path = (base / checkpoint_rel).resolve()
     if not checkpoint_path.exists():
-        raise FileNotFoundError(
-            f"Manifest references missing checkpoint: {checkpoint_path}"
-        )
+        raise FileNotFoundError(f"Manifest references missing checkpoint: {checkpoint_path}")
 
     stats_rel = raw.get("normalization_stats")
     if stats_rel is None:
@@ -214,9 +212,7 @@ def load_manifest(path: str | Path) -> Manifest:
     else:
         stats_path = (base / stats_rel).resolve()
         if not stats_path.exists():
-            raise FileNotFoundError(
-                f"Manifest references missing stats file: {stats_path}"
-            )
+            raise FileNotFoundError(f"Manifest references missing stats file: {stats_path}")
 
     # Spec v2 added an optional ``fourier_modes`` sidecar (FEDformer only).
     # In v1 manifests the field is simply absent.
@@ -293,9 +289,7 @@ def write_manifest(
         Path to the written manifest file.
     """
     if kind not in _KNOWN_KINDS:
-        raise ValueError(
-            f"Unknown manifest kind {kind!r}; expected one of {sorted(_KNOWN_KINDS)}"
-        )
+        raise ValueError(f"Unknown manifest kind {kind!r}; expected one of {sorted(_KNOWN_KINDS)}")
     if fourier_modes is not None and kind not in _FOURIER_MODES_KINDS:
         raise ValueError(
             f"Manifest kind {kind!r} cannot carry a 'fourier_modes' sidecar; "

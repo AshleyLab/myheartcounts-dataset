@@ -1,5 +1,6 @@
-"""PyPOTS model factory: maps a :class:`ModelConfig` to a configured PyPOTS
-model instance.
+"""PyPOTS model factory.
+
+Maps a :class:`ModelConfig` to a configured PyPOTS model instance.
 
 Supports the four neural imputers benchmarked in OpenMHC: BRITS, DLinear,
 TimesNet, FEDformer. To add a new model, follow the pattern of the
@@ -70,8 +71,7 @@ def create_model(
         model = _create_fedformer(model_config, training_config, output_config)
     else:
         raise ValueError(
-            f"Unsupported model {name!r}. "
-            "Supported: brits, dlinear, timesnet, fedformer"
+            f"Unsupported model {name!r}. Supported: brits, dlinear, timesnet, fedformer"
         )
 
     if training_config.clip_grad_norm is not None and hasattr(model, "optimizer"):

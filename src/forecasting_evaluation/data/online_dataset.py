@@ -633,7 +633,9 @@ class PyPOTSForecastingDataset(BaseDataset):
         self.n_pred_features = int(model_config.n_features)
 
     @staticmethod
-    def _load_history_cf_rows(history_cf_source: str | Path | list[torch.Tensor]) -> list[torch.Tensor] | None:
+    def _load_history_cf_rows(
+        history_cf_source: str | Path | list[torch.Tensor],
+    ) -> list[torch.Tensor] | None:
         if isinstance(history_cf_source, list):
             return history_cf_source
 
@@ -653,8 +655,7 @@ class PyPOTSForecastingDataset(BaseDataset):
         with h5py.File(history_cf_path, "r") as handle:
             rows_group = handle["history_cf_rows"]
             return {
-                int(row_idx): int(rows_group[row_idx].shape[1])
-                for row_idx in rows_group.keys()
+                int(row_idx): int(rows_group[row_idx].shape[1]) for row_idx in rows_group.keys()
             }
 
     @staticmethod
@@ -779,7 +780,9 @@ class ForecastingRowGroupedBatchSampler(Sampler[list[int]]):
                 )
             )
             if self._shuffle and len(sample_indices) > 1:
-                sample_indices = [sample_indices[i] for i in torch.randperm(len(sample_indices)).tolist()]
+                sample_indices = [
+                    sample_indices[i] for i in torch.randperm(len(sample_indices)).tolist()
+                ]
 
             for sample_idx in sample_indices:
                 batch.append(sample_idx)

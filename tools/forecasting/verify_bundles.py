@@ -44,7 +44,7 @@ def verify_one(kind: str, bundle: Path, device: str, history_len: int, horizon: 
 
     rng = np.random.default_rng(0)
     # Raw-scale synthetic history: nonnegative, channel-varying magnitudes.
-    history = (rng.random((19, history_len)).astype("float32") * 200.0)
+    history = rng.random((19, history_len)).astype("float32") * 200.0
     out = fc.predict(history, horizon)
 
     res = {

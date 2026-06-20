@@ -25,7 +25,6 @@ The bundle path is returned so callers can plug it into the eval CLI's
 from __future__ import annotations
 
 import logging
-import shutil
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -87,11 +86,7 @@ def _find_trained_checkpoint(saving_path: str | Path) -> Path:
     base = Path(saving_path)
     if not base.exists():
         raise FileNotFoundError(f"PyPOTS saving_path missing: {base}")
-    candidates = [
-        p
-        for p in base.rglob("*.pypots")
-        if not p.name.startswith("events.out.tfevents")
-    ]
+    candidates = [p for p in base.rglob("*.pypots") if not p.name.startswith("events.out.tfevents")]
     if not candidates:
         raise FileNotFoundError(f"No .pypots files under {base}")
     # Sort by mtime; most-recent first.

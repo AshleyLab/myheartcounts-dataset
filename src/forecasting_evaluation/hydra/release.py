@@ -66,9 +66,7 @@ def load_forecasting_manifest(path: str | Path) -> ForecastingManifest:
 
     provenance = raw.get("provenance") or {}
     if not isinstance(provenance, dict):
-        raise ValueError(
-            "Forecasting manifest field 'provenance' must be a dict if present"
-        )
+        raise ValueError("Forecasting manifest field 'provenance' must be a dict if present")
 
     return ForecastingManifest(
         spec_version=spec_version,

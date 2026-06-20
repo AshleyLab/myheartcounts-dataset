@@ -9,6 +9,7 @@ from forecasting_evaluation.metrics import metric_spec as spec
 
 
 def test_channel_groups():
+    """Channel-index groupings match the fixed 19-channel layout (0-6 continuous, 7-18 binary)."""
     assert spec.CONTINUOUS_CHANNELS == tuple(range(0, 7))
     assert spec.SLEEP_CHANNELS == (7, 8)
     assert spec.WORKOUT_CHANNELS == tuple(range(9, 19))
@@ -38,6 +39,7 @@ def test_category_scopes():
 
 
 def test_metric_direction():
+    """metric_lower_is_better classifies known metrics and rejects unknown names."""
     assert spec.metric_lower_is_better("mae") is True
     assert spec.metric_lower_is_better("auprc") is False
     with pytest.raises(ValueError):
@@ -45,6 +47,7 @@ def test_metric_direction():
 
 
 def test_metric_to_error():
+    """metric_to_error passes lower-is-better through and flips higher-is-better to 1 - x."""
     # lower-is-better passes through; negative is invalid -> nan
     assert spec.metric_to_error("mae", 2.0) == 2.0
     assert math.isnan(spec.metric_to_error("mae", -1.0))
@@ -58,6 +61,7 @@ def test_metric_to_error():
 
 
 def test_metric_to_error_binary_floor():
+    """Binary metric errors at/below the floor clamp to BINARY_ERROR_FLOOR, but NaN passes through."""
     # A perfect AUROC floors to ε instead of 0, so the paired skill ratio stays finite.
     assert spec.metric_to_error("auroc", 1.0) == pytest.approx(spec.BINARY_ERROR_FLOOR)
     assert spec.metric_to_error("auprc", 1.0) == pytest.approx(spec.BINARY_ERROR_FLOOR)
@@ -70,6 +74,7 @@ def test_metric_to_error_binary_floor():
 
 
 def test_metric_channel_value():
+    """metric_channel_value averages a channel over the horizon; all-NaN or out-of-range gives NaN."""
     arr = np.array([[1.0, 3.0], [np.nan, np.nan]])
     assert spec.metric_channel_value(arr, 0) == 2.0  # mean over horizon
     assert math.isnan(spec.metric_channel_value(arr, 1))  # all-nan channel
@@ -77,6 +82,7 @@ def test_metric_channel_value():
 
 
 def test_metric_channel_sum_count():
+    """metric_channel_sum_count returns (finite sum, finite count) for 1D/2D, None when no finite cells."""
     # 2D (channel x horizon): sum + finite-cell count over the horizon
     arr = np.array([[1.0, 3.0, np.nan], [np.nan, np.nan, np.nan]])
     assert spec.metric_channel_sum_count(arr, 0) == (4.0, 2)  # 1+3 over 2 finite cells
@@ -91,7 +97,7 @@ def test_metric_channel_sum_count():
 
 
 def test_single_source_across_scripts():
-    """skill + rank must share the spec's constants (no divergent definitions)."""
+    """Skill + rank must share the spec's constants (no divergent definitions)."""
     from forecasting_evaluation.metrics import grouped_metric_rank_summary as rank
     from forecasting_evaluation.metrics import skill_score_summary as skill
 

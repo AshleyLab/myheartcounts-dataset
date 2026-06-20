@@ -57,6 +57,7 @@ def _models(tmp_path, names):
 
 
 def test_skill_reader_macro_vs_micro(tmp_path):
+    """The skill reader returns macro (window-mean) vs micro (cell-pooled) errors and counts."""
     _write_metric(tmp_path / "m", "mae", {"u0": [_ch0(1.0, 1.0, 1.0, 1.0), _ch0(3.0)]})
     common = dict(
         model_name="m",
@@ -77,6 +78,7 @@ def test_skill_reader_macro_vs_micro(tmp_path):
 
 
 def test_rank_reader_macro_vs_micro(tmp_path):
+    """The rank reader's metric_value differs by mode while n_values stays the cell count."""
     _write_metric(tmp_path / "m", "mae", {"u0": [_ch0(1.0, 1.0, 1.0, 1.0), _ch0(3.0)]})
     common = dict(
         model_name="m",
@@ -95,6 +97,7 @@ def test_rank_reader_macro_vs_micro(tmp_path):
 
 
 def test_fairness_reader_macro_vs_micro(tmp_path):
+    """The fairness error table yields macro vs micro per-user errors from uneven windows."""
     _write_metric(tmp_path / "m", "mae", {"u0": [_ch0(1.0, 1.0, 1.0, 1.0), _ch0(3.0)]})
     common = dict(
         models=_models(tmp_path, ["m"]),
@@ -127,13 +130,18 @@ def _skill_summary(models, within):
 
 
 def test_skill_tables_macro_vs_micro(tmp_path):
+    """End-to-end skill score differs by mode (0.0 macro vs 0.3 micro) for uneven counts."""
     # baseline is uniform (E_b = 2.0 under both modes); only the model has uneven counts.
     _write_metric(tmp_path / "baseline", "mae", {"u0": [_ch0(2.0, 2.0), _ch0(2.0, 2.0)]})
     _write_metric(tmp_path / "good", "mae", {"u0": [_ch0(1.0, 1.0, 1.0, 1.0), _ch0(3.0)]})
     models = _models(tmp_path, ["baseline", "good"])
     # macro: E_m = 2.0 -> ratio 1.0 -> skill 0.0; micro: E_m = 1.4 -> ratio 0.7 -> skill 0.3.
-    assert _skill_summary(models, "macro").loc["good", "channel_0_score"] == pytest.approx(0.0, abs=1e-9)
-    assert _skill_summary(models, "micro").loc["good", "channel_0_score"] == pytest.approx(0.3, abs=1e-9)
+    assert _skill_summary(models, "macro").loc["good", "channel_0_score"] == pytest.approx(
+        0.0, abs=1e-9
+    )
+    assert _skill_summary(models, "micro").loc["good", "channel_0_score"] == pytest.approx(
+        0.3, abs=1e-9
+    )
 
 
 def test_skill_default_is_micro(tmp_path):
@@ -166,7 +174,10 @@ def test_bootstrap_identity_matches_point_both_modes(tmp_path):
     _write_metric(
         tmp_path / "good",
         "mae",
-        {"u0": [_ch0(1.0, 1.0, 1.0, 1.0), _ch0(3.0)], "u1": [_ch0(1.0, 1.0), _ch0(5.0, 5.0, 5.0, 5.0)]},
+        {
+            "u0": [_ch0(1.0, 1.0, 1.0, 1.0), _ch0(3.0)],
+            "u1": [_ch0(1.0, 1.0), _ch0(5.0, 5.0, 5.0, 5.0)],
+        },
     )
     models = _models(tmp_path, ["baseline", "good"])
     metric_groups = {

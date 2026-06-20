@@ -51,7 +51,7 @@ CHANNEL_NAME_MAP = {
         "workout:HKWorkoutActivityTypeHighIntensityIntervalTraining",
         "workout:HKWorkoutActivityTypeFunctionalStrengthTraining",
         "workout:HKWorkoutActivityTypeYoga",
-    ]
+    ],
 }
 
 
@@ -227,9 +227,7 @@ def aggregate_mae_by_channel_hour_streaming(  # noqa: D206
 
         users = _collect_users_for_dir(model_dir)
         selected_users = _select_users(users, max_user=max_user, rng=rng)
-        print(
-            f"input={input_name} users_total={len(users)} users_selected={len(selected_users)}"
-        )
+        print(f"input={input_name} users_total={len(users)} users_selected={len(selected_users)}")
 
         inferred_n_features = None
         for parquet_file in files:
@@ -372,11 +370,11 @@ def aggregate_model_statistics_streaming(  # noqa: D206
                 finite_mask = np.isfinite(times.to_numpy(dtype=float, na_value=np.nan))
                 if finite_mask.any():
                     finite_times = times[finite_mask]
-                    entry["prediction_time_sum"] = (
-                        float(entry["prediction_time_sum"]) + float(finite_times.sum())
+                    entry["prediction_time_sum"] = float(entry["prediction_time_sum"]) + float(
+                        finite_times.sum()
                     )
-                    entry["prediction_time_count"] = (
-                        int(entry["prediction_time_count"]) + int(finite_times.shape[0])
+                    entry["prediction_time_count"] = int(entry["prediction_time_count"]) + int(
+                        finite_times.shape[0]
                     )
 
     if not acc:
@@ -424,9 +422,7 @@ def _parse_model_arg(model_arg: str) -> tuple[str, str]:
 def parse_args() -> argparse.Namespace:
     """Parse CLI arguments for metrics summary generation."""
     parser = argparse.ArgumentParser(
-        description=(
-            "Summarize forecasting metrics and export MAE plus model-level statistics."
-        )
+        description=("Summarize forecasting metrics and export MAE plus model-level statistics.")
     )
     parser.add_argument(
         "--model",

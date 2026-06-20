@@ -29,6 +29,14 @@ class ModeImputer(BaseImputer):
         decimal_precision: int = 1,
         data_dir: str | Path | None = None,
     ) -> None:
+        """Fit the per-channel modes on the official train split.
+
+        Args:
+            version: ``"xs"`` or ``"full"`` dataset version.
+            decimal_precision: Decimal places to round observed values to
+                before counting frequencies.
+            data_dir: Override for the dataset root.
+        """
         super().__init__(version=version, data_dir=data_dir)
         self.decimal_precision = decimal_precision
         self._channel_modes = self._compute_channel_modes()
@@ -56,6 +64,17 @@ class ModeImputer(BaseImputer):
         observed_mask: np.ndarray,
         target_mask: np.ndarray,
     ) -> np.ndarray:
+        """Fill ``target_mask == 1`` positions with the per-channel mode.
+
+        Args:
+            data: ``(N, C, T)`` float32 batch with NaN at missing cells.
+            observed_mask: ``(N, C, T)``; 1 where a value is observed.
+            target_mask: ``(N, C, T)``; 1 at positions to impute.
+
+        Returns:
+            A copy of ``data`` with masked positions filled; ``(N, C, T)``
+            float32.
+        """
         result = data.copy()
         for ch in range(self.n_channels):
             target = target_mask[:, ch, :] == 1

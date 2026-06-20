@@ -68,8 +68,10 @@ def main(argv: list[str] | None = None) -> int:
     features_cfg = SimpleNamespace(**features_raw)
     n_features = int(model_raw["n_features"])
 
-    print(f"n_steps={model_raw['n_steps']} n_pred_steps={model_raw['n_pred_steps']} "
-          f"n_features={n_features} sample_index={data_raw['sample_index_file']}")
+    print(
+        f"n_steps={model_raw['n_steps']} n_pred_steps={model_raw['n_pred_steps']} "
+        f"n_features={n_features} sample_index={data_raw['sample_index_file']}"
+    )
     print("Loading splits ...")
     loader = ForecastingDataLoader(data_cfg)
     train_split, _val, _test = loader.load_splits()
@@ -93,8 +95,10 @@ def main(argv: list[str] | None = None) -> int:
     counts = saved.get("valid_counts", [])
     print(f"wrote {out}")
     print(f"  fit_scope={saved.get('fit_scope')} n_channels={saved.get('n_channels')}")
-    print(f"  channel-0 mean={means[0]:.4f} std={saved['stds'][0]:.4f} "
-          f"valid_count={counts[0] if counts else '?'}")
+    print(
+        f"  channel-0 mean={means[0]:.4f} std={saved['stds'][0]:.4f} "
+        f"valid_count={counts[0] if counts else '?'}"
+    )
     print(f"  channel-6 mean={means[6]:.4f} std={saved['stds'][6]:.4f}")
     if counts and counts[0] == 0:
         print("WARNING: channel-0 valid_count is 0 — scaler looks degenerate!")

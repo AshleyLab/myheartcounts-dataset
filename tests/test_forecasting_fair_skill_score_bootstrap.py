@@ -200,8 +200,11 @@ def test_schema_and_ci_ordering(tmp_path):
 
 
 def test_bca_columns_present_by_default(tmp_path):
-    """Default output carries point + BCa for headline scopes, percentile-only for
-    per-channel scopes (see test_forecasting_bca.py for the full BCa coverage)."""
+    """Default output carries point + BCa for headline scopes only.
+
+    Per-channel scopes stay percentile-only (see test_forecasting_bca.py for the
+    full BCa coverage).
+    """
     models = _make_models(tmp_path)
     out = _bootstrap(models, _demographics(), n_boot=150, seed=8)["fairness_skill_scores"]
     assert {"point", "bca_lo", "bca_hi"}.issubset(out.columns)
@@ -310,8 +313,11 @@ def test_model_baseline_subgroup_sets_aligned():
 
 
 def _fairness_rows(workout, *, attrs=("age_group", "sex")):
-    """Long per-subgroup error frame: baseline gap 1.0; 'good' narrows it, 'bad'
-    widens it, on every channel of every scope."""
+    """Build a long per-subgroup error frame with a fixed baseline subgroup gap.
+
+    The baseline gap is 1.0 on every channel of every scope; 'good' narrows it
+    and 'bad' widens it.
+    """
     rows = []
     channels = list(range(0, 7)) + [7, 8] + list(workout)
     for attr in attrs:
@@ -325,15 +331,25 @@ def _fairness_rows(workout, *, attrs=("age_group", "sex")):
             ):
                 for value, e in (("g1", e1), ("g2", e2)):
                     rows.append(
-                        _long_row(model, attr, value, e, group=group, metric=metric,
-                                  ch_idx=ch, ch_name=f"c{ch}")
+                        _long_row(
+                            model,
+                            attr,
+                            value,
+                            e,
+                            group=group,
+                            metric=metric,
+                            ch_idx=ch,
+                            ch_name=f"c{ch}",
+                        )
                     )
     return pd.DataFrame(rows)
 
 
 def test_fairness_category_balanced_invariant_to_workout_count():
-    """Per-attribute and overall fair skill are invariant to the workout channel
-    count: each sensor scope is weighted once, so 10 workout channels == 2."""
+    """Per-attribute and overall fair skill are invariant to the workout channel count.
+
+    Each sensor scope is weighted once, so 10 workout channels score the same as 2.
+    """
     few = compute_fair_skill_scores(_fairness_rows([9, 10]), baseline_method="baseline")
     many = compute_fair_skill_scores(_fairness_rows(range(9, 19)), baseline_method="baseline")
     f = few.set_index(["model", "scope"])["fair_skill_score"]
@@ -347,8 +363,11 @@ def test_fairness_category_balanced_invariant_to_workout_count():
 
 
 def test_fairness_per_channel_and_per_scope_rows():
-    """Per-channel + per-scope fairness rows appear; a single-channel scope equals
-    its channel's score (built from the same tasks)."""
+    """Per-channel and per-scope fairness rows appear in the output.
+
+    A single-channel scope equals its channel's score, since both are built from
+    the same tasks.
+    """
     rows = []
     # activity scope here spans only channel 0; sleep spans channels 7, 8.
     tasks = [(0, "continuous", "mae"), (7, "binary", "auroc"), (8, "binary", "auroc")]
@@ -357,8 +376,16 @@ def test_fairness_per_channel_and_per_scope_rows():
             for model, (e1, e2) in (("baseline", (1.0, 2.0)), ("good", (1.0, 1.3))):
                 for value, e in (("g1", e1), ("g2", e2)):
                     rows.append(
-                        _long_row(model, attr, value, e, group=group, metric=metric,
-                                  ch_idx=ch, ch_name=f"c{ch}")
+                        _long_row(
+                            model,
+                            attr,
+                            value,
+                            e,
+                            group=group,
+                            metric=metric,
+                            ch_idx=ch,
+                            ch_name=f"c{ch}",
+                        )
                     )
     out = compute_fair_skill_scores(pd.DataFrame(rows), baseline_method="baseline")
     scopes = set(out["scope"])

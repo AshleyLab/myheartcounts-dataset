@@ -60,6 +60,7 @@ def _build_tiny_fedformer(saving_path: Path):
 
 
 def test_extract_fourier_indices_populated(tmp_path: Path) -> None:
+    """extract_fourier_indices returns dotted-path keys mapping to integer index lists."""
     seed_everything(42)
     model, _ = _build_tiny_fedformer(tmp_path / "pypots")
     idx = extract_fourier_indices(model)
@@ -70,6 +71,7 @@ def test_extract_fourier_indices_populated(tmp_path: Path) -> None:
 
 
 def test_build_arch_does_version_to_variant_rename() -> None:
+    """build_arch renames the config ``version`` field to ``variant`` for inference."""
     from imputation_training.config import ModelConfig
 
     arch = build_arch(ModelConfig(model_name="fedformer", version="Fourier", modes=8))
@@ -78,6 +80,7 @@ def test_build_arch_does_version_to_variant_rename() -> None:
 
 
 def test_extract_indices_empty_for_non_fedformer(tmp_path: Path) -> None:
+    """extract_fourier_indices returns an empty dict for a model without FourierBlocks."""
     from imputation_training.config import (
         ModelConfig,
         OutputConfig,
@@ -87,7 +90,11 @@ def test_extract_indices_empty_for_non_fedformer(tmp_path: Path) -> None:
 
     seed_everything(0)
     model_cfg = ModelConfig(
-        model_name="dlinear", n_steps=64, n_features=4, moving_avg_window_size=5, d_model=16,
+        model_name="dlinear",
+        n_steps=64,
+        n_features=4,
+        moving_avg_window_size=5,
+        d_model=16,
     )
     train_cfg = TrainingConfig(epochs=1, batch_size=2, patience=1, device="cpu")
     out_cfg = OutputConfig(saving_path=str(tmp_path / "pypots"))

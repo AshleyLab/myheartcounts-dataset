@@ -41,10 +41,14 @@ def _write_synthetic_pairs(tmp_path, rng_seed: int = 0):
             gt_cont = rng.normal(0, 1, size=T).astype(np.float32)
             pred_cont = gt_cont + rng.normal(0, sigmas[u], size=T).astype(np.float32)
             for t in range(T):
-                cont_rows.append({
-                    "sample_idx": sidx, "timestep": t,
-                    "gt": float(gt_cont[t]), "pred": float(pred_cont[t]),
-                })
+                cont_rows.append(
+                    {
+                        "sample_idx": sidx,
+                        "timestep": t,
+                        "gt": float(gt_cont[t]),
+                        "pred": float(pred_cont[t]),
+                    }
+                )
             gt_bin = rng.integers(0, 2, size=T).astype(bool)
             pred_bin = np.where(
                 gt_bin,
@@ -52,41 +56,53 @@ def _write_synthetic_pairs(tmp_path, rng_seed: int = 0):
                 rng.uniform(0.10, 0.70, size=T),
             ).astype(np.float32)
             for t in range(T):
-                bin_rows.append({
-                    "sample_idx": sidx, "timestep": t,
-                    "gt": bool(gt_bin[t]), "pred": float(pred_bin[t]),
-                })
-            sample_records.append({
-                "sample_idx": sidx,
-                "user_id": uid,
-                "date": f"2024-01-{sidx + 1:02d}",
-            })
+                bin_rows.append(
+                    {
+                        "sample_idx": sidx,
+                        "timestep": t,
+                        "gt": bool(gt_bin[t]),
+                        "pred": float(pred_bin[t]),
+                    }
+                )
+            sample_records.append(
+                {
+                    "sample_idx": sidx,
+                    "user_id": uid,
+                    "date": f"2024-01-{sidx + 1:02d}",
+                }
+            )
             sidx += 1
 
-    manifest_tbl = pa.table({
-        "sample_idx": pa.array([r["sample_idx"] for r in sample_records], type=pa.int32()),
-        "user_id":    pa.array([r["user_id"] for r in sample_records], type=pa.utf8()),
-        "date":       pa.array([r["date"] for r in sample_records], type=pa.utf8()),
-    })
+    manifest_tbl = pa.table(
+        {
+            "sample_idx": pa.array([r["sample_idx"] for r in sample_records], type=pa.int32()),
+            "user_id": pa.array([r["user_id"] for r in sample_records], type=pa.utf8()),
+            "date": pa.array([r["date"] for r in sample_records], type=pa.utf8()),
+        }
+    )
     pq.write_table(manifest_tbl, tmp_path / "manifest_test.parquet")
 
     split_dir = tmp_path / "scenarioA" / "test"
     split_dir.mkdir(parents=True)
 
-    cont_tbl = pa.table({
-        "sample_idx": pa.array([r["sample_idx"] for r in cont_rows], type=pa.int32()),
-        "timestep":   pa.array([r["timestep"] for r in cont_rows], type=pa.int16()),
-        "gt":         pa.array([r["gt"] for r in cont_rows], type=pa.float16()),
-        "pred":       pa.array([r["pred"] for r in cont_rows], type=pa.float16()),
-    })
+    cont_tbl = pa.table(
+        {
+            "sample_idx": pa.array([r["sample_idx"] for r in cont_rows], type=pa.int32()),
+            "timestep": pa.array([r["timestep"] for r in cont_rows], type=pa.int16()),
+            "gt": pa.array([r["gt"] for r in cont_rows], type=pa.float16()),
+            "pred": pa.array([r["pred"] for r in cont_rows], type=pa.float16()),
+        }
+    )
     pq.write_table(cont_tbl, split_dir / "pairs_ch00.parquet")
 
-    bin_tbl = pa.table({
-        "sample_idx": pa.array([r["sample_idx"] for r in bin_rows], type=pa.int32()),
-        "timestep":   pa.array([r["timestep"] for r in bin_rows], type=pa.int16()),
-        "gt":         pa.array([r["gt"] for r in bin_rows], type=pa.bool_()),
-        "pred":       pa.array([r["pred"] for r in bin_rows], type=pa.float16()),
-    })
+    bin_tbl = pa.table(
+        {
+            "sample_idx": pa.array([r["sample_idx"] for r in bin_rows], type=pa.int32()),
+            "timestep": pa.array([r["timestep"] for r in bin_rows], type=pa.int16()),
+            "gt": pa.array([r["gt"] for r in bin_rows], type=pa.bool_()),
+            "pred": pa.array([r["pred"] for r in bin_rows], type=pa.float16()),
+        }
+    )
     pq.write_table(bin_tbl, split_dir / "pairs_ch07.parquet")
 
     stds = np.ones(N_CHANNELS, dtype=np.float64)
@@ -224,21 +240,25 @@ def _write_two_user_skewed_pairs(tmp_path):
             rows.append({"sample_idx": sidx, "timestep": 0, "gt": gt, "pred": pred})
             manifest_records.append({"sample_idx": sidx, "user_id": uid, "date": "2024-01-01"})
 
-    manifest_tbl = pa.table({
-        "sample_idx": pa.array([r["sample_idx"] for r in manifest_records], type=pa.int32()),
-        "user_id":    pa.array([r["user_id"] for r in manifest_records], type=pa.utf8()),
-        "date":       pa.array([r["date"] for r in manifest_records], type=pa.utf8()),
-    })
+    manifest_tbl = pa.table(
+        {
+            "sample_idx": pa.array([r["sample_idx"] for r in manifest_records], type=pa.int32()),
+            "user_id": pa.array([r["user_id"] for r in manifest_records], type=pa.utf8()),
+            "date": pa.array([r["date"] for r in manifest_records], type=pa.utf8()),
+        }
+    )
     pq.write_table(manifest_tbl, tmp_path / "manifest_test.parquet")
 
     split_dir = tmp_path / "scenarioA" / "test"
     split_dir.mkdir(parents=True)
-    cont_tbl = pa.table({
-        "sample_idx": pa.array([r["sample_idx"] for r in rows], type=pa.int32()),
-        "timestep":   pa.array([r["timestep"] for r in rows], type=pa.int16()),
-        "gt":         pa.array([r["gt"] for r in rows], type=pa.float16()),
-        "pred":       pa.array([r["pred"] for r in rows], type=pa.float16()),
-    })
+    cont_tbl = pa.table(
+        {
+            "sample_idx": pa.array([r["sample_idx"] for r in rows], type=pa.int32()),
+            "timestep": pa.array([r["timestep"] for r in rows], type=pa.int16()),
+            "gt": pa.array([r["gt"] for r in rows], type=pa.float16()),
+            "pred": pa.array([r["pred"] for r in rows], type=pa.float16()),
+        }
+    )
     pq.write_table(cont_tbl, split_dir / "pairs_ch00.parquet")
 
     stds = np.ones(N_CHANNELS, dtype=np.float64)
@@ -253,9 +273,7 @@ def test_cluster_se_exceeds_row_se_for_skewed_clusters(tmp_path):
     SE should be much larger than a naive row-level bootstrap SE.
     """
     manifest, split_dir, stds = _write_two_user_skewed_pairs(tmp_path)
-    cluster_res = bootstrap_split(
-        split_dir, manifest, stds, n_boot=500, seed=0, include_auc=False
-    )
+    cluster_res = bootstrap_split(split_dir, manifest, stds, n_boot=500, seed=0, include_auc=False)
     cluster_se = cluster_res["per_channel"]["ch_0"]["rmse"]["bootstrap_se"]
     row_se = _row_bootstrap_rmse_se(split_dir, n_boot=500, seed=0)
     assert cluster_se > 2.0 * row_se, (

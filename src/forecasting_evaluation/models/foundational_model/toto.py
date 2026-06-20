@@ -64,8 +64,7 @@ class TotoModel(BasePredictionModel):
             from toto.model.toto import Toto
         except ImportError as e:
             raise ImportError(
-                "toto-ts is required for the Toto model. "
-                "Install with: pip install toto-ts"
+                "toto-ts is required for the Toto model. Install with: pip install toto-ts"
             ) from e
 
         self._MaskedTimeseries = MaskedTimeseries
@@ -94,9 +93,7 @@ class TotoModel(BasePredictionModel):
     def _resolve_device(self) -> str:
         device = self.config.device
         if device == "cuda" and not torch.cuda.is_available():
-            logger.warning(
-                "model.toto.device is cuda but CUDA is unavailable; falling back to cpu"
-            )
+            logger.warning("model.toto.device is cuda but CUDA is unavailable; falling back to cpu")
             return "cpu"
         return device
 
@@ -129,11 +126,7 @@ class TotoModel(BasePredictionModel):
 
         merged_state = self._convert_lightning_state_dict(state_dict)
         incompatible = toto_wrapper.load_state_dict(merged_state, strict=False)
-        missing = [
-            key
-            for key in incompatible.missing_keys
-            if not key.endswith("rotary_emb.freqs")
-        ]
+        missing = [key for key in incompatible.missing_keys if not key.endswith("rotary_emb.freqs")]
         unexpected = list(incompatible.unexpected_keys)
         if missing:
             logger.warning(
@@ -149,7 +142,9 @@ class TotoModel(BasePredictionModel):
             )
         logger.info("Loaded Toto Lightning checkpoint from %s", checkpoint)
 
-    def _convert_lightning_state_dict(self, state_dict: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
+    def _convert_lightning_state_dict(
+        self, state_dict: dict[str, torch.Tensor]
+    ) -> dict[str, torch.Tensor]:
         """Convert Lightning/LoRA key layout to Toto wrapper state_dict layout."""
         converted: dict[str, torch.Tensor] = {}
         lora_a: dict[str, torch.Tensor] = {}
@@ -176,9 +171,13 @@ class TotoModel(BasePredictionModel):
                 logger.warning("Skipping incomplete Toto LoRA weights for %s", base_key)
                 continue
             rank = int(a_weight.shape[0])
-            alpha = float(self.config.lora_alpha) if self.config.lora_alpha is not None else float(rank)
+            alpha = (
+                float(self.config.lora_alpha) if self.config.lora_alpha is not None else float(rank)
+            )
             scaling = alpha / max(rank, 1)
-            converted[base_key] = base_weight + (b_weight @ a_weight).to(base_weight.dtype) * scaling
+            converted[base_key] = (
+                base_weight + (b_weight @ a_weight).to(base_weight.dtype) * scaling
+            )
 
         return converted
 
@@ -225,7 +224,10 @@ class TotoModel(BasePredictionModel):
 
         id_mask = torch.zeros_like(series, dtype=torch.float32)
         timestamp_seconds = torch.zeros(
-            n_features, ctx, dtype=torch.float32, device=self.device,
+            n_features,
+            ctx,
+            dtype=torch.float32,
+            device=self.device,
         )
         time_interval_seconds = torch.full(
             (n_features,),
@@ -272,7 +274,10 @@ class TotoModel(BasePredictionModel):
 
         # quantile forecasts -> (n_features, prediction_length, n_quantiles)
         quantiles_result = np.stack(
-            [samples.quantile(float(q), dim=-1).float().cpu().numpy() for q in self.quantile_levels],
+            [
+                samples.quantile(float(q), dim=-1).float().cpu().numpy()
+                for q in self.quantile_levels
+            ],
             axis=-1,
         )
         if quantiles_result.ndim == 4 and quantiles_result.shape[0] == 1:

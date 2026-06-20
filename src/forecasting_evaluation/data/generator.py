@@ -133,7 +133,7 @@ class SubTrajectoryGenerator:
                 - static_covariates: user-level non-temporal covariates, optional
             user_id: User identifier used to resolve candidate day indices from
                 precomputed sample-index data.
-        
+
         Yields:
             SubTrajectoryInput objects containing:
                 - history and ground_truth in channel-first layout
@@ -196,5 +196,5 @@ class SubTrajectoryGenerator:
                 static_covariates=static_covariates,
                 ground_truth=ground_truth,
                 index_days=current_day,
-                prediction_hours=prediction_hours
+                prediction_hours=prediction_hours,
             )

@@ -67,13 +67,13 @@ def resolve_checkpoint_path(path: str, cache_dir: str | Path | None = None) -> P
     if filename_selector:
         resolved = artifact_dir / filename_selector
         if not resolved.exists():
-            raise FileNotFoundError(f"Requested file '{filename_selector}' not found in {artifact_dir}")
+            raise FileNotFoundError(
+                f"Requested file '{filename_selector}' not found in {artifact_dir}"
+            )
         return resolved
 
     model_files = sorted(
-        p
-        for p in artifact_dir.rglob("*.pypots")
-        if not p.name.startswith("events.out.tfevents")
+        p for p in artifact_dir.rglob("*.pypots") if not p.name.startswith("events.out.tfevents")
     )
     if not model_files:
         raise FileNotFoundError(f"No .pypots file found in artifact directory {artifact_dir}")
@@ -233,7 +233,9 @@ class BasePyPOTSForecastingModel(BasePredictionModel, ABC):
         ``.pypots`` checkpoint (in the checkpoint directory, or beside the file
         when the checkpoint path points directly at the ``.pypots``).
         """
-        base = self._checkpoint_dir if self._checkpoint_dir.is_dir() else self._checkpoint_dir.parent
+        base = (
+            self._checkpoint_dir if self._checkpoint_dir.is_dir() else self._checkpoint_dir.parent
+        )
         return base / "standard_scaler_stats.json"
 
     def _inverse_transform_point_forecast(self, point_result: np.ndarray) -> np.ndarray:
