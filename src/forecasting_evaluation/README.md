@@ -250,7 +250,7 @@ model class itself does not need to know about Hydra.
 
 ### SLURM Cluster submissions: 
 
-SLURM submission scripts live under `jobs/sherlock/forecasting_eval/` (e.g.
+SLURM submission scripts live under `jobs/sc-cluster/forecasting_eval/` (e.g.
 `submit_all.sh`, `run_baselines.sbatch`). They read the dataset root from
 `MHC_DATA_DIR` and each learned model's checkpoint from
 `MHC_FORECAST_<MODEL>_RELEASE_DIR`. NOTE: the current files are configures for internal clusters but adaptation should be relatively straighforward for other SLURM-based HPC clusters.

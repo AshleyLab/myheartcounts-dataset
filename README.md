@@ -121,7 +121,7 @@ mhc-forecast-eval model=seasonal_naive
 mhc-forecast-eval --multirun model=seasonal_naive,autoARIMA,autoETS
 ```
 
-Sherlock SLURM wrappers live in `jobs/sherlock/forecasting_eval/`. The
+SC-cluster SLURM wrappers live in `jobs/sc-cluster/forecasting_eval/`. The
 forecasting implementation supports both device-channel scoring modes: per-task
 (default) — phone/watch channels scored separately and combined into
 steps/distance scopes by geometric mean, consistent with the imputation track —

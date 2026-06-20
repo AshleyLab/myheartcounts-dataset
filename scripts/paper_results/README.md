@@ -25,7 +25,7 @@ scripts/paper_results/
   (continuous=`mae`, binary=`auprc`, vs `seasonal_naive`).
 - **Phase 3 (bootstrap CIs + fairness)** — config hook present; not yet implemented.
 
-SLURM one-command: `jobs/simurgh/forecasting_eval/submit_pipeline.sh` (fan out eval
+SLURM one-command: `jobs/sc-cluster/forecasting_eval/submit_pipeline.sh` (fan out eval
 jobs → chain `run_paper_pipeline.sbatch --skip-eval` via `afterok`).
 
 ## Imputation (Track 2)
