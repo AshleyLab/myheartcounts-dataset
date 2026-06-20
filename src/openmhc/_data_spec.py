@@ -25,9 +25,9 @@ The menu is pinned deliberately: ``minute x series`` is omitted (a continuous
 window of minute data is enormous and unrequested), and weekly windows stay
 internal to the bundled SSL baseline rather than shipping as a public shape.
 
-The legacy ``input_granularity`` / ``segment_resolution`` attributes are a thin
-compatibility surface — :func:`from_legacy` maps them onto a ``DataSpec`` so this
-type remains the one source of truth.
+A model that doesn't set ``data_spec`` falls back to the legacy loose attributes
+(``input_granularity`` / ``segment_resolution``), which the engine reads directly;
+``DataSpec`` is the structured input-shape declaration for models that opt in.
 """
 
 from __future__ import annotations
@@ -117,22 +117,3 @@ class DataSpec:
     def is_streaming_required(self) -> bool:
         """True when the full cohort is too large to materialize eagerly (minute store)."""
         return self.resolution == "minute"
-
-
-def from_legacy(
-    input_granularity: str = "daily", segment_resolution: str = "hourly"
-) -> DataSpec:
-    """Map a pre-DataSpec model's loose attributes onto a :class:`DataSpec`.
-
-    Pre-DataSpec models declared ``input_granularity="daily"`` (always day windows)
-    plus an optional ``segment_resolution``. The public legacy contract only ever
-    expressed day windows, so this bridge covers ``"daily"`` granularity; weekly /
-    series shapes were internal to bundled baselines and never part of the public
-    surface.
-    """
-    if input_granularity != "daily":
-        raise ValueError(
-            "from_legacy bridges the public legacy contract (input_granularity='daily'); "
-            f"got {input_granularity!r} (weekly/series were internal-only)"
-        )
-    return DataSpec(resolution=segment_resolution, window="day")

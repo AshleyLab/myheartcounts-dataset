@@ -1,13 +1,13 @@
 """Unit tests for openmhc.DataSpec — the public input-shape declaration.
 
 Pure-stdlib (no dataset needed): exercises the closed menu, cross-field invariants,
-the spec -> internal mapping, immutability, and the legacy adapter.
+the spec -> internal mapping, and immutability.
 """
 
 import pytest
 
 from openmhc import DataSpec
-from openmhc._data_spec import SUPPORTED_SPECS, from_legacy
+from openmhc._data_spec import SUPPORTED_SPECS
 
 
 def test_public_import_path():
@@ -68,15 +68,3 @@ def test_frozen_is_immutable():
     spec = DataSpec("hourly", "day")
     with pytest.raises(Exception):
         spec.resolution = "minute"  # frozen dataclass
-
-
-def test_from_legacy_maps_day_window():
-    assert from_legacy("daily", "hourly") == DataSpec("hourly", "day")
-    assert from_legacy("daily", "minute") == DataSpec("minute", "day")
-    # defaults mirror the historical engine defaults.
-    assert from_legacy() == DataSpec("hourly", "day")
-
-
-def test_from_legacy_rejects_non_public_granularity():
-    with pytest.raises(ValueError, match="input_granularity"):
-        from_legacy("weekly", "hourly")

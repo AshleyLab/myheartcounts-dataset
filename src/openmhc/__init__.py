@@ -29,7 +29,7 @@ from openmhc._results import (
     ImputationResults,
     PredictionResults,
 )
-from openmhc.probe import LinearProbe
+from openmhc._probe import LinearProbe
 
 __all__ = [
     # Protocols
