@@ -1,5 +1,15 @@
 """Compute forecasting fairness-adjusted skill scores.
 
+.. deprecated::
+    The ``S_overall − λ·D`` "fairness-adjusted skill score" computed here is the
+    legacy "Family B" metric. The default fairness metric is now the
+    disparity-ratio **Fairness Skill Score** in
+    :mod:`forecasting_evaluation.metrics.fair_skill_score` (point) and
+    :mod:`forecasting_evaluation.metrics.bootstrap_fair_skill_score` (bootstrap
+    CIs). This module is kept callable for back-compat; its demographics helpers
+    (``load_user_demographics``, ``bin_age``, ``normalize_sex``) and
+    ``_build_error_table`` are reused by the new metric.
+
 This paper-result helper follows the unified scoring definition used for the
 benchmark: task errors are converted to ratios against a fixed baseline,
 clipped, then aggregated with a geometric mean. For subgroup scores, model
@@ -10,7 +20,6 @@ errors.
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import json
 import sys
 from pathlib import Path
@@ -25,11 +34,11 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from forecasting_evaluation.metrics.skill_score_summary import (  # noqa: E402
+    _aggregate_unit_error,
     _channel_label,
     _list_parquet_files,
     _load_models_dict,
-    _metric_channel_value,
-    _metric_to_error,
+    _metric_channel_sum_count,
     _parse_channel_indices,
     _safe_read_parquet,
     _safe_to_metric_array,
@@ -38,16 +47,10 @@ from forecasting_evaluation.metrics.skill_score_summary import (  # noqa: E402
 DEFAULT_AGE_BINS = (18, 30, 40, 50, 60)
 DEFAULT_DEMOGRAPHIC_ATTRS = ("age_group", "sex")
 
-
-def _load_compute_static_age():
-    """Load ``compute_static_age`` from the repository script."""
-    script_path = REPO_ROOT / "scripts" / "build_static_age.py"
-    spec = importlib.util.spec_from_file_location("_forecasting_static_age", script_path)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"Unable to load {script_path}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module.compute_static_age
+# Enrollment exposes only a birth *year*, so age is anchored to a single
+# reference date shared with Track 1 (downstream_evaluation.config.LABEL_REFERENCE_DATE),
+# i.e. age = AGE_REFERENCE_DATE.year − birth_year for every user.
+AGE_REFERENCE_DATE = "2020-06-01"
 
 
 def _last_value(entries: dict[str, Any], user_id: str) -> Any | None:
@@ -96,8 +99,15 @@ def load_user_demographics(
     user_ids: set[str],
     labels_path: str | Path,
     enrollment_path: str | Path,
+    age_bins: tuple[int, ...] = DEFAULT_AGE_BINS,
+    reference_date: str = AGE_REFERENCE_DATE,
 ) -> dict[str, dict[str, str]]:
-    """Load age-group and sex labels for the requested users."""
+    """Load age-group and sex labels for the requested users.
+
+    Age is ``reference_date.year − birth_year`` (enrollment exposes only a birth
+    *year*), anchoring every user to the same reference as Track 1. Sex is the
+    latest ``BiologicalSex`` label value.
+    """
     labels_file = Path(labels_path)
     enrollment_file = Path(enrollment_path)
     with labels_file.open("r", encoding="utf-8") as file:
@@ -105,16 +115,17 @@ def load_user_demographics(
     with enrollment_file.open("r", encoding="utf-8") as file:
         enrollment = json.load(file)
 
-    compute_static_age = _load_compute_static_age()
-    age_entries = compute_static_age(labels_data, enrollment)
+    reference_year = pd.Timestamp(reference_date).year
     sex_entries = labels_data.get("BiologicalSex", {})
 
     demographics: dict[str, dict[str, str]] = {}
     for user_id in sorted(user_ids):
-        age_value = _last_value(age_entries, user_id)
+        record = enrollment.get(user_id)
+        birth_year = record.get("birth_year") if isinstance(record, dict) else None
+        age = reference_year - int(birth_year) if birth_year else None
         sex_value = _last_value(sex_entries, user_id)
         demographics[user_id] = {
-            "age_group": bin_age(float(age_value) if age_value is not None else None),
+            "age_group": bin_age(age, age_bins=age_bins),
             "sex": normalize_sex(sex_value),
         }
     return demographics
@@ -127,9 +138,11 @@ def _load_metric_values(
     metric_name: str,
     channel_indices: tuple[int, ...],
     group_name: str,
+    within_user_aggregation: str = "micro",
 ) -> pd.DataFrame:
     metric_dir = Path(model_root) / metric_name
-    per_user_values: dict[tuple[str, int, str], list[float]] = {}
+    # Per (user, channel, metric): one (cell_sum, cell_count) pair per window.
+    per_user_pairs: dict[tuple[str, int, str], list[tuple[float, int]]] = {}
 
     for parquet_file in _list_parquet_files(metric_dir):
         df = _safe_read_parquet(
@@ -145,20 +158,16 @@ def _load_metric_values(
             if metric is None:
                 continue
             for channel_idx in channel_indices:
-                value = _metric_channel_value(metric=metric, channel_idx=channel_idx)
-                if not np.isfinite(value):
-                    continue
-                error = _metric_to_error(metric_name=metric_name, metric_value=value)
-                if not np.isfinite(error):
+                sum_count = _metric_channel_sum_count(metric=metric, channel_idx=channel_idx)
+                if sum_count is None:
                     continue
                 key = (user_id, int(channel_idx), metric_name)
-                per_user_values.setdefault(key, []).append(error)
+                per_user_pairs.setdefault(key, []).append(sum_count)
 
     rows: list[dict[str, Any]] = []
-    for (user_id, channel_idx, metric), values in per_user_values.items():
-        finite = np.asarray(values, dtype=float)
-        finite = finite[np.isfinite(finite)]
-        if finite.size == 0:
+    for (user_id, channel_idx, metric), pairs in per_user_pairs.items():
+        error, n_values = _aggregate_unit_error(metric, pairs, within_user_aggregation)
+        if not np.isfinite(error):
             continue
         rows.append(
             {
@@ -168,8 +177,8 @@ def _load_metric_values(
                 "channel_idx": int(channel_idx),
                 "channel_name": _channel_label(channel_idx),
                 "user_id": user_id,
-                "error": float(np.mean(finite)),
-                "n_values": int(finite.size),
+                "error": error,
+                "n_values": int(n_values),
             }
         )
     return pd.DataFrame(rows)
@@ -182,6 +191,7 @@ def _build_error_table(
     binary_metrics: list[str],
     continuous_channel_indices: tuple[int, ...],
     binary_channel_indices: tuple[int, ...],
+    within_user_aggregation: str = "micro",
 ) -> pd.DataFrame:
     frames: list[pd.DataFrame] = []
     metric_groups = {
@@ -203,6 +213,7 @@ def _build_error_table(
                     metric_name=metric_name,
                     channel_indices=channel_indices,
                     group_name=group_name,
+                    within_user_aggregation=within_user_aggregation,
                 )
                 if not frame.empty:
                     frames.append(frame)
@@ -319,10 +330,14 @@ def _compute_average_ranks(task_errors: pd.DataFrame) -> pd.DataFrame:
         method="average",
         ascending=True,
     )
-    return ranked.groupby("model", sort=True).agg(
-        avg_rank=("rank", "mean"),
-        n_ranked_tasks=("rank", "count"),
-    ).reset_index()
+    return (
+        ranked.groupby("model", sort=True)
+        .agg(
+            avg_rank=("rank", "mean"),
+            n_ranked_tasks=("rank", "count"),
+        )
+        .reset_index()
+    )
 
 
 def _compute_subgroup_scores(
@@ -359,10 +374,14 @@ def _compute_subgroup_scores(
     rows: list[dict[str, Any]] = []
     for attr in demographic_attrs:
         for (model_name, subgroup), group_df in with_demo.groupby(["model", attr], sort=True):
-            task_means = group_df.groupby(_task_cols(), sort=True).agg(
-                error=("error", "mean"),
-                n_units=("user_id", "nunique"),
-            ).reset_index()
+            task_means = (
+                group_df.groupby(_task_cols(), sort=True)
+                .agg(
+                    error=("error", "mean"),
+                    n_units=("user_id", "nunique"),
+                )
+                .reset_index()
+            )
             ratios: list[float] = []
             n_units = set(group_df["user_id"].astype(str).tolist())
             for _, row in task_means.iterrows():
@@ -434,13 +453,19 @@ def _build_fairness_summary(
             worst_idx = valid["skill_score"].idxmin()
             best_group = str(valid.loc[best_idx, "subgroup"])
             worst_group = str(valid.loc[worst_idx, "subgroup"])
-            disparity = float(valid.loc[best_idx, "skill_score"] - valid.loc[worst_idx, "skill_score"])
+            disparity = float(
+                valid.loc[best_idx, "skill_score"] - valid.loc[worst_idx, "skill_score"]
+            )
         else:
             best_group = ""
             worst_group = ""
             disparity = float("nan")
 
-        overall = float(global_lookup.loc[model_name]) if model_name in global_lookup.index else float("nan")
+        overall = (
+            float(global_lookup.loc[model_name])
+            if model_name in global_lookup.index
+            else float("nan")
+        )
         rows.append(
             {
                 "model": str(model_name),
@@ -493,9 +518,7 @@ def _build_model_summary(
             for _, row in model_fairness.iterrows()
             if np.isfinite(float(row["disparity"]))
         }
-        mean_disparity = (
-            float(np.mean(list(disparities.values()))) if disparities else float("nan")
-        )
+        mean_disparity = float(np.mean(list(disparities.values()))) if disparities else float("nan")
         rows.append(
             {
                 "model": model_name,
@@ -506,8 +529,7 @@ def _build_model_summary(
                 "sex_disparity": disparities.get("sex", float("nan")),
                 "mean_disparity": mean_disparity,
                 "lambda": float(lambda_fairness),
-                "fairness_adjusted_skill_score": overall
-                - float(lambda_fairness) * mean_disparity,
+                "fairness_adjusted_skill_score": overall - float(lambda_fairness) * mean_disparity,
             }
         )
     return pd.DataFrame(rows)
@@ -553,12 +575,10 @@ def _build_channel_summary(
         channel_idx = int(channel["channel_idx"])
         channel_name = channel["channel_name"]
         task_slice = task_errors.loc[
-            (task_errors["group"] == group_name)
-            & (task_errors["channel_idx"] == channel_idx)
+            (task_errors["group"] == group_name) & (task_errors["channel_idx"] == channel_idx)
         ]
         error_slice = error_df.loc[
-            (error_df["group"] == group_name)
-            & (error_df["channel_idx"] == channel_idx)
+            (error_df["group"] == group_name) & (error_df["channel_idx"] == channel_idx)
         ]
         channel_global_df = _compute_global_scores(
             task_errors=task_slice,
@@ -613,6 +633,7 @@ def compute_fairness_skill_score_tables(
     labels_path: str | Path | None = None,
     enrollment_path: str | Path | None = None,
     demographics: dict[str, dict[str, str]] | None = None,
+    within_user_aggregation: str = "micro",
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Compute subgroup, fairness, model-summary, and channel-summary tables."""
     if baseline_model not in models:
@@ -624,6 +645,8 @@ def compute_fairness_skill_score_tables(
         raise ValueError("clip bounds must be positive with lower <= upper")
     if lambda_fairness < 0:
         raise ValueError("lambda_fairness must be non-negative")
+    if within_user_aggregation not in {"micro", "macro"}:
+        raise ValueError("--within-user-aggregation must be either 'micro' or 'macro'")
 
     error_df = _build_error_table(
         models=models,
@@ -631,6 +654,7 @@ def compute_fairness_skill_score_tables(
         binary_metrics=binary_metrics,
         continuous_channel_indices=continuous_channel_indices,
         binary_channel_indices=binary_channel_indices,
+        within_user_aggregation=within_user_aggregation,
     )
     task_errors = _build_task_errors(error_df)
     global_df = _compute_global_scores(
@@ -699,6 +723,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--clip-lower", type=float, default=0.01)
     parser.add_argument("--clip-upper", type=float, default=100.0)
     parser.add_argument("--lambda-fairness", type=float, default=0.5)
+    parser.add_argument(
+        "--within-user-aggregation",
+        choices=["micro", "macro"],
+        default="micro",
+        help=(
+            "How to combine a user's prediction windows: 'micro' weights each window "
+            "by its finite horizon-cell count; 'macro' averages per-window means "
+            "unweighted (legacy)."
+        ),
+    )
     parser.add_argument("--labels-path", default="data/labels/last_labels.json")
     parser.add_argument("--enrollment-path", default="data/labels/enrollment_info.json")
     parser.add_argument("--output-dir", default="results/metrics_summary")
@@ -732,6 +766,7 @@ def main() -> None:
             lambda_fairness=float(args.lambda_fairness),
             labels_path=args.labels_path,
             enrollment_path=args.enrollment_path,
+            within_user_aggregation=str(args.within_user_aggregation),
         )
     )
 

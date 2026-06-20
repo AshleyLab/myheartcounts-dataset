@@ -61,9 +61,7 @@ class RotaryDayEmbedding(nn.Module):
             cos = self.cos_table[positions].unsqueeze(1)  # (B, 1, N, D/2)
             sin = self.sin_table[positions].unsqueeze(1)
 
-        def apply_rope(
-            q: torch.Tensor, k: torch.Tensor
-        ) -> tuple[torch.Tensor, torch.Tensor]:
+        def apply_rope(q: torch.Tensor, k: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
             c = cos.to(dtype=q.dtype)
             s = sin.to(dtype=q.dtype)
             return _apply_rotary(q, c, s), _apply_rotary(k, c, s)

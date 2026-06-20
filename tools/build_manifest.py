@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Build openmhc release manifests from private-repo eval configs.
+r"""Build openmhc release manifests from private-repo eval configs.
 
 Each ``results/imputation_eval/*/config.yaml`` from the private repo
 records exactly which checkpoint + stats file + architecture
@@ -264,9 +264,7 @@ def _pick_checkpoint(repo_root: Path, model_path: str) -> Path:
         return candidate
     matches = sorted(candidate.glob("*.pypots"))
     if not matches:
-        raise FileNotFoundError(
-            f"No .pypots file under directory {candidate}"
-        )
+        raise FileNotFoundError(f"No .pypots file under directory {candidate}")
     return matches[0]
 
 
@@ -299,8 +297,7 @@ def _extract_arch(pypots_block: dict[str, Any], kind: str) -> dict[str, Any]:
     for field_name in fields:
         if field_name not in pypots_block:
             raise KeyError(
-                f"Source config is missing required arch field {field_name!r} "
-                f"for kind={kind!r}"
+                f"Source config is missing required arch field {field_name!r} for kind={kind!r}"
             )
         arch[renames.get(field_name, field_name)] = pypots_block[field_name]
     return arch
@@ -364,6 +361,10 @@ def build_release(
             original file with a relative path. Useful for testing
             without duplicating large weight files.
         extra_provenance: Merged into the derived provenance block.
+        model_path_override: When given, use this checkpoint path instead of
+            the one recorded in the config.
+        stats_path_override: When given, use this normalization-stats path
+            instead of the one recorded in the config.
     """
     config = yaml.safe_load(config_path.read_text())
     method = config.get("method") or {}
@@ -374,14 +375,15 @@ def build_release(
     is_pypots = method_type == "pypots"
     if not (is_lsm2 or is_pypots):
         return BuildResult(
-            config_path, "skipped", None,
+            config_path,
+            "skipped",
+            None,
             f"unsupported method.type {method_type!r}",
         )
 
     # ------------------------------------------------------------------
     # Pull out a per-family block + resolve the source checkpoint path.
     # ------------------------------------------------------------------
-    arch_from_ckpt_stats: dict[str, Any] | None = None
     extracted_stats: dict[str, Any] | None = None
 
     if is_pypots:
@@ -389,12 +391,14 @@ def build_release(
         kind = method_block.get("model_name", "").lower()
         if kind not in ARCH_FIELDS_BY_KIND:
             return BuildResult(
-                config_path, "skipped", None,
-                f"unsupported model_name {kind!r}; "
-                f"expected one of {sorted(ARCH_FIELDS_BY_KIND)}",
+                config_path,
+                "skipped",
+                None,
+                f"unsupported model_name {kind!r}; expected one of {sorted(ARCH_FIELDS_BY_KIND)}",
             )
         raw_model_path = (
-            str(model_path_override) if model_path_override is not None
+            str(model_path_override)
+            if model_path_override is not None
             else method_block.get("model_path", "")
         )
         stats_yaml_field = "normalization_stats_path"
@@ -403,7 +407,8 @@ def build_release(
         method_block = method.get("lsm2") or method.get("mae") or {}
         kind = _LSM2_TYPE_ALIASES[method_type]
         raw_model_path = (
-            str(model_path_override) if model_path_override is not None
+            str(model_path_override)
+            if model_path_override is not None
             else method_block.get("checkpoint_path", "")
         )
         stats_yaml_field = "normalization_stats_path"
@@ -419,7 +424,8 @@ def build_release(
     # ------------------------------------------------------------------
     if is_pypots:
         stats_yaml = (
-            str(stats_path_override) if stats_path_override is not None
+            str(stats_path_override)
+            if stats_path_override is not None
             else method_block.get(stats_yaml_field)
         )
         stats_src = _resolve_stats(source_repo, stats_yaml)
@@ -460,9 +466,7 @@ def build_release(
     # ------------------------------------------------------------------
     if release_name is None:
         eval_run = config_path.parent.name
-        release_name = (
-            eval_run.removeprefix("pypots_").removeprefix("mae_").split("_max")[0]
-        )
+        release_name = eval_run.removeprefix("pypots_").removeprefix("mae_").split("_max")[0]
     release_dir = output_dir / release_name
     if release_dir.exists():
         if not overwrite:
@@ -568,6 +572,14 @@ def _cli() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Stage release directories from the given eval configs.
+
+    Args:
+        argv: Optional argument vector (defaults to ``sys.argv``).
+
+    Returns:
+        Process exit code (``0`` on success, non-zero on a usage error).
+    """
     args = _cli().parse_args(argv)
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
@@ -578,7 +590,9 @@ def main(argv: list[str] | None = None) -> int:
         logger.error("--release-name only valid with a single --config")
         return 2
     if (args.model_path_override or args.stats_path_override) and len(args.config) != 1:
-        logger.error("--model-path-override / --stats-path-override only valid with a single --config")
+        logger.error(
+            "--model-path-override / --stats-path-override only valid with a single --config"
+        )
         return 2
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -602,9 +616,7 @@ def main(argv: list[str] | None = None) -> int:
         if result.status == "built":
             logger.info("Built %s from %s", result.release_dir, result.config_path)
         else:
-            logger.warning(
-                "Skipped %s: %s", result.config_path, result.reason or "unknown"
-            )
+            logger.warning("Skipped %s: %s", result.config_path, result.reason or "unknown")
             exit_code = max(exit_code, 1)
     return exit_code
 

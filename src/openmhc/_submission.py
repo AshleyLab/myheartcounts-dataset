@@ -215,7 +215,6 @@ def _render_yaml_block(
     raw_block: str,
 ) -> str:
     """Format a complete paste-ready submission body."""
-    indent = "  "
     parts = [
         f"# Paste-ready submission body for: {method_name}",
         f"# Track: {track}",

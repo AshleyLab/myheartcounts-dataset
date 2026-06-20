@@ -50,14 +50,16 @@ DATA_DIR = Path.home() / ".cache" / "openmhc" / "data-full"
 # Override via MHC_BENCHMARK_MEAN_RUN env var to point at your local canonical
 # private mean run (the script is dev-only; the reference run lives in a
 # private repo).
-PRIVATE_RUN_DIR = Path(os.environ.get(
-    "MHC_BENCHMARK_MEAN_RUN",
-    str(
-        Path.home()
-        / "MHC-benchmark/results/imputation_eval"
-        / "baselines_max91d_21679652_imputation_mean_20260416_044624"
-    ),
-))
+PRIVATE_RUN_DIR = Path(
+    os.environ.get(
+        "MHC_BENCHMARK_MEAN_RUN",
+        str(
+            Path.home()
+            / "MHC-benchmark/results/imputation_eval"
+            / "baselines_max91d_21679652_imputation_mean_20260416_044624"
+        ),
+    )
+)
 PRIVATE_METRICS_FILE = PRIVATE_RUN_DIR / "pairs" / "aggregated_metrics.json"
 
 ATOL = 1e-3
@@ -68,8 +70,8 @@ ATOL = 1e-3
 
 logger.info("=== Step 1: Running public evaluate_imputation (version='full') ===")
 
-import openmhc
-from openmhc.imputers.mean import MeanImputer
+import openmhc  # noqa: E402
+from openmhc.imputers.mean import MeanImputer  # noqa: E402
 
 imputer = MeanImputer(version="full", data_dir=DATA_DIR)
 pub_results = openmhc.evaluate_imputation(imputer, version="full", data_dir=DATA_DIR)
@@ -96,7 +98,7 @@ logger.info("Loaded private metrics for scenarios: %s", list(priv_metrics.keys()
 logger.info("=== Step 3: Parity report (atol=%.0e) ===", ATOL)
 
 CONT_METRICS = ("mean_normalized_rmse", "mean_normalized_mse", "mean_normalized_mae")
-BIN_METRICS  = ("macro_balanced_accuracy", "macro_roc_auc")
+BIN_METRICS = ("macro_balanced_accuracy", "macro_roc_auc")
 
 scenario_names = list(priv_metrics.keys())
 all_match = True
@@ -106,10 +108,10 @@ for scenario in scenario_names:
         pub_split = pub_results.scenarios.get(scenario, {}).get(split, {})
         priv_split = priv_metrics.get(scenario, {}).get(split, {})
 
-        pub_cont  = pub_split.get("continuous", {})
+        pub_cont = pub_split.get("continuous", {})
         priv_cont = priv_split.get("continuous", {})
-        pub_bin   = pub_split.get("binary", {})
-        priv_bin  = priv_split.get("binary", {})
+        pub_bin = pub_split.get("binary", {})
+        priv_bin = priv_split.get("binary", {})
 
         for key in CONT_METRICS:
             pv = pub_cont.get(key, float("nan"))
@@ -120,8 +122,12 @@ for scenario in scenario_names:
                 all_match = False
             logger.info(
                 "  [%s] %s/%s/continuous %s: pub=%.6f  priv=%.6f  diff=%.2e  %s",
-                scenario, split, "continuous", key,
-                pv, rv,
+                scenario,
+                split,
+                "continuous",
+                key,
+                pv,
+                rv,
                 abs(pv - rv) if not (np.isnan(pv) or np.isnan(rv)) else float("nan"),
                 status,
             )
@@ -135,8 +141,12 @@ for scenario in scenario_names:
                 all_match = False
             logger.info(
                 "  [%s] %s/%s/binary %s: pub=%.6f  priv=%.6f  diff=%.2e  %s",
-                scenario, split, "binary", key,
-                pv, rv,
+                scenario,
+                split,
+                "binary",
+                key,
+                pv,
+                rv,
                 abs(pv - rv) if not (np.isnan(pv) or np.isnan(rv)) else float("nan"),
                 status,
             )

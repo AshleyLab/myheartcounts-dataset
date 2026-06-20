@@ -60,8 +60,8 @@ def prepare_daily_hourly_hf(ds: hf_ds.Dataset) -> hf_ds.Dataset:
         NaN for missing positions and ``mask`` (24, 19).
     """
     logger.info(
-        "Preparing daily_hourly_hf: transposing (19,24)->(24,19) and restoring NaN "
-        "(%d samples)", len(ds),
+        "Preparing daily_hourly_hf: transposing (19,24)->(24,19) and restoring NaN (%d samples)",
+        len(ds),
     )
 
     # Bulk-read values and mask, transpose, restore NaN
@@ -81,13 +81,15 @@ def prepare_daily_hourly_hf(ds: hf_ds.Dataset) -> hf_ds.Dataset:
     n_valid_hours = ds["n_valid_hours"]
 
     # Build new dataset with corrected schema (24, 19) instead of (19, 24)
-    new_features = hf_ds.Features({
-        "values": hf_ds.Array2D(shape=(_HOURS_PER_DAY, _N_CHANNELS), dtype="float32"),
-        "mask": hf_ds.Array2D(shape=(_HOURS_PER_DAY, _N_CHANNELS), dtype="float32"),
-        "user_id": hf_ds.Value("string"),
-        "date": hf_ds.Value("string"),
-        "n_valid_hours": hf_ds.Value("int32"),
-    })
+    new_features = hf_ds.Features(
+        {
+            "values": hf_ds.Array2D(shape=(_HOURS_PER_DAY, _N_CHANNELS), dtype="float32"),
+            "mask": hf_ds.Array2D(shape=(_HOURS_PER_DAY, _N_CHANNELS), dtype="float32"),
+            "user_id": hf_ds.Value("string"),
+            "date": hf_ds.Value("string"),
+            "n_valid_hours": hf_ds.Value("int32"),
+        }
+    )
 
     new_ds = hf_ds.Dataset.from_dict(
         {

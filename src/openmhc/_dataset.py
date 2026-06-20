@@ -123,9 +123,7 @@ def write_dataset_marker(
         Path to the written marker file.
     """
     if version not in EXPECTED_N_USERS:
-        raise ValueError(
-            f"version must be one of {sorted(EXPECTED_N_USERS)}, got {version!r}"
-        )
+        raise ValueError(f"version must be one of {sorted(EXPECTED_N_USERS)}, got {version!r}")
     root_path = Path(root).expanduser().resolve()
     if not root_path.exists():
         raise FileNotFoundError(f"dataset root does not exist: {root_path}")
@@ -171,9 +169,7 @@ def read_dataset_marker(root: str | Path) -> dict:
     except json.JSONDecodeError as exc:
         raise ValueError(f"malformed dataset marker {marker}: {exc}") from exc
     if not isinstance(payload, dict) or "version" not in payload:
-        raise ValueError(
-            f"dataset marker {marker} is missing required 'version' field"
-        )
+        raise ValueError(f"dataset marker {marker} is missing required 'version' field")
     if payload["version"] not in EXPECTED_N_USERS:
         raise ValueError(
             f"dataset marker {marker} has unknown version "
@@ -208,15 +204,12 @@ def download_dataset(
         ValueError: If ``version`` is unknown or not yet published.
     """
     if version not in _VERSION_DOIS:
-        raise ValueError(
-            f"version must be one of {sorted(_VERSION_DOIS)}, got {version!r}"
-        )
+        raise ValueError(f"version must be one of {sorted(_VERSION_DOIS)}, got {version!r}")
     doi = _VERSION_DOIS[version]
     if doi is None:
         available = [v for v, d in _VERSION_DOIS.items() if d]
         raise ValueError(
-            f"the {version!r} dataset is not yet published. "
-            f"Available versions: {available}"
+            f"the {version!r} dataset is not yet published. Available versions: {available}"
         )
 
     target = data_dir(dest)
@@ -297,10 +290,7 @@ def _extract_one(archive: Path, dest: Path) -> None:
         with tarfile.open(archive) as tf:
             tf.extractall(dest)
         return
-    raise ValueError(
-        f"could not detect archive format for {archive!r}; "
-        "expected zip or tar/tar.gz"
-    )
+    raise ValueError(f"could not detect archive format for {archive!r}; expected zip or tar/tar.gz")
 
 
 def _post_process_xs(dest: Path) -> None:

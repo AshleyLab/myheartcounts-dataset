@@ -147,9 +147,7 @@ class WeeklySparseLSM2Module(pl.LightningModule):
                 )
 
                 if is_wandb_reference(daily_checkpoint_path):
-                    daily_checkpoint_path = str(
-                        resolve_checkpoint_path(daily_checkpoint_path)
-                    )
+                    daily_checkpoint_path = str(resolve_checkpoint_path(daily_checkpoint_path))
                 self.model.load_daily_encoder_weights(daily_checkpoint_path)
             except ImportError:
                 pass
@@ -177,8 +175,12 @@ class WeeklySparseLSM2Module(pl.LightningModule):
     ):
         """Forward pass through the model."""
         return self.model(
-            x, inherited_mask, return_per_sample=return_per_sample, day_offsets=day_offsets,
-            original_target=original_target, day_recon_patch_mask=day_recon_patch_mask,
+            x,
+            inherited_mask,
+            return_per_sample=return_per_sample,
+            day_offsets=day_offsets,
+            original_target=original_target,
+            day_recon_patch_mask=day_recon_patch_mask,
         )
 
     def _apply_day_masking(
@@ -271,14 +273,21 @@ class WeeklySparseLSM2Module(pl.LightningModule):
 
         if self._store_residuals:
             loss, pred, total_mask, per_sample_losses, day_recon_loss = self(
-                x_filled, inherited_mask, return_per_sample=True, day_offsets=day_offsets,
-                original_target=original_target, day_recon_patch_mask=day_recon_patch_mask,
+                x_filled,
+                inherited_mask,
+                return_per_sample=True,
+                day_offsets=day_offsets,
+                original_target=original_target,
+                day_recon_patch_mask=day_recon_patch_mask,
             )
             return loss, total_mask, per_sample_losses, day_recon_loss
         else:
             loss, pred, total_mask, day_recon_loss = self(
-                x_filled, inherited_mask, day_offsets=day_offsets,
-                original_target=original_target, day_recon_patch_mask=day_recon_patch_mask,
+                x_filled,
+                inherited_mask,
+                day_offsets=day_offsets,
+                original_target=original_target,
+                day_recon_patch_mask=day_recon_patch_mask,
             )
             return loss, total_mask, None, day_recon_loss
 
@@ -288,17 +297,30 @@ class WeeklySparseLSM2Module(pl.LightningModule):
 
         bs = batch["X"].size(0)
         self.log(
-            "train/loss", loss,
-            on_step=True, on_epoch=True, prog_bar=True, sync_dist=True, batch_size=bs,
+            "train/loss",
+            loss,
+            on_step=True,
+            on_epoch=True,
+            prog_bar=True,
+            sync_dist=True,
+            batch_size=bs,
         )
         self.log(
-            "train/mask_ratio", total_mask.mean(),
-            on_step=False, on_epoch=True, sync_dist=True, batch_size=bs,
+            "train/mask_ratio",
+            total_mask.mean(),
+            on_step=False,
+            on_epoch=True,
+            sync_dist=True,
+            batch_size=bs,
         )
         if day_recon_loss is not None:
             self.log(
-                "train/loss_day_recon", day_recon_loss,
-                on_step=False, on_epoch=True, sync_dist=True, batch_size=bs,
+                "train/loss_day_recon",
+                day_recon_loss,
+                on_step=False,
+                on_epoch=True,
+                sync_dist=True,
+                batch_size=bs,
             )
 
         if self._store_residuals and per_sample_losses is not None:
@@ -318,17 +340,30 @@ class WeeklySparseLSM2Module(pl.LightningModule):
 
         bs = batch["X"].size(0)
         self.log(
-            "val/loss", loss,
-            on_step=False, on_epoch=True, prog_bar=True, sync_dist=True, batch_size=bs,
+            "val/loss",
+            loss,
+            on_step=False,
+            on_epoch=True,
+            prog_bar=True,
+            sync_dist=True,
+            batch_size=bs,
         )
         self.log(
-            "val/mask_ratio", total_mask.mean(),
-            on_step=False, on_epoch=True, sync_dist=True, batch_size=bs,
+            "val/mask_ratio",
+            total_mask.mean(),
+            on_step=False,
+            on_epoch=True,
+            sync_dist=True,
+            batch_size=bs,
         )
         if day_recon_loss is not None:
             self.log(
-                "val/loss_day_recon", day_recon_loss,
-                on_step=False, on_epoch=True, sync_dist=True, batch_size=bs,
+                "val/loss_day_recon",
+                day_recon_loss,
+                on_step=False,
+                on_epoch=True,
+                sync_dist=True,
+                batch_size=bs,
             )
 
         if self._store_residuals and per_sample_losses is not None:
@@ -347,13 +382,21 @@ class WeeklySparseLSM2Module(pl.LightningModule):
         bs = batch["X"].size(0)
         self.log("test/loss", loss, on_step=False, on_epoch=True, sync_dist=True, batch_size=bs)
         self.log(
-            "test/mask_ratio", total_mask.mean(),
-            on_step=False, on_epoch=True, sync_dist=True, batch_size=bs,
+            "test/mask_ratio",
+            total_mask.mean(),
+            on_step=False,
+            on_epoch=True,
+            sync_dist=True,
+            batch_size=bs,
         )
         if day_recon_loss is not None:
             self.log(
-                "test/loss_day_recon", day_recon_loss,
-                on_step=False, on_epoch=True, sync_dist=True, batch_size=bs,
+                "test/loss_day_recon",
+                day_recon_loss,
+                on_step=False,
+                on_epoch=True,
+                sync_dist=True,
+                batch_size=bs,
             )
 
     # -- Per-sample residual hooks --

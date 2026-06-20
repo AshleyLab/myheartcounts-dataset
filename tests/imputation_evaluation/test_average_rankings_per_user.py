@@ -65,8 +65,10 @@ def _make_cell_stats(
     has_data: np.ndarray | None = None,
     n_channels: int = N_CHANNELS,
 ) -> CellStats:
-    """Minimal CellStats builder for unit tests (mirror of the helper in
-    ``test_skill_score_parity.py``)."""
+    """Minimal CellStats builder for unit tests.
+
+    Mirror of the helper in ``test_skill_score_parity.py``.
+    """
     sae = _embed(sae, n_channels)
     sse = _embed(sse, n_channels)
     n = _embed(n, n_channels)
@@ -115,14 +117,16 @@ def _make_per_user_long(
         for ch in channels:
             for u in range(n_users):
                 e = float(max(1e-3, mu + rng.normal(0, 0.02)))
-                rows.append({
-                    "method": method,
-                    "scenario": scenario,
-                    "channel": ch,
-                    "channel_type": "continuous",
-                    "user_id": f"u{u}",
-                    "E": e,
-                })
+                rows.append(
+                    {
+                        "method": method,
+                        "scenario": scenario,
+                        "channel": ch,
+                        "channel_type": "continuous",
+                        "user_id": f"u{u}",
+                        "E": e,
+                    }
+                )
     return pd.DataFrame(rows)
 
 
@@ -156,33 +160,39 @@ def _make_per_user_E_matrix(
 
 
 def test_per_user_rank_point_flow_matches_bootstrap_identity_draw():
-    """`compute_average_rankings` ≡ bootstrap rank kernel
-    with `boot_idx = arange(U)`.
+    """`compute_average_rankings` ≡ bootstrap rank kernel at the identity draw.
 
-    Multi-method, multi-task fixture so the two-stage form is non-trivial
-    (per-task mean, then scope-mean). Single subgroup cell.
+    Equivalence holds with `boot_idx = arange(U)`. Multi-method, multi-task
+    fixture so the two-stage form is non-trivial (per-task mean, then
+    scope-mean). Single subgroup cell.
     """
     methods = ("locf", "mean", "linear")
     channels = ("ch_0", "ch_1", "ch_2")
     n_users = 7
     eu = _make_per_user_long(
-        methods=methods, channels=channels, n_users=n_users, seed=11,
+        methods=methods,
+        channels=channels,
+        n_users=n_users,
+        seed=11,
     )
     user_ids = [f"u{i}" for i in range(n_users)]
 
     # Point-flow.
     point = compute_average_rankings(eu)
-    point_overall = (
-        point[point["scope"] == "overall"].set_index("method")["avg_rank"]
-    )
+    point_overall = point[point["scope"] == "overall"].set_index("method")["avg_rank"]
 
     # Bootstrap identity draw — manual.
     per_user_E_by_method = _make_per_user_E_matrix(
-        eu, methods=methods, channels=channels, user_ids=user_ids,
+        eu,
+        methods=methods,
+        channels=channels,
+        user_ids=user_ids,
     )
     idx_b = np.arange(n_users).reshape(1, n_users)
     rank_by_method = _rank_per_draw_for_cell(
-        per_user_E_by_method, idx_b, channel_indices=range(len(channels)),
+        per_user_E_by_method,
+        idx_b,
+        channel_indices=range(len(channels)),
     )
     # Mirror Phase 1's emit + Phase 2's aggregation.
     rows: list[dict] = []
@@ -191,12 +201,14 @@ def test_per_user_rank_point_flow_matches_bootstrap_identity_draw():
             val = rank_mat[0, ch_idx]
             if not np.isfinite(val):
                 continue
-            rows.append({
-                "method": method,
-                "scenario": "scenarioA",
-                "channel": ch,
-                "task_rank": float(val),
-            })
+            rows.append(
+                {
+                    "method": method,
+                    "scenario": "scenarioA",
+                    "channel": ch,
+                    "task_rank": float(val),
+                }
+            )
     boot_per_task = pd.DataFrame(rows)
     boot = aggregate_task_ranks_to_scopes(boot_per_task)
     boot_overall = boot[boot["scope"] == "overall"].set_index("method")["avg_rank"]
@@ -213,7 +225,9 @@ def test_per_user_rank_point_flow_matches_bootstrap_identity_draw():
 
 
 def test_point_flow_paired_skill_matches_bootstrap_identity_draw():
-    """`compute_per_task_paired_R` + `compute_skill_scores(mode="paired")`
+    """Point-flow paired skill matches the bootstrap path at the identity draw.
+
+    `compute_per_task_paired_R` + `compute_skill_scores(mode="paired")`
     point-flow matches the bootstrap `_per_method_cell_paired_ratios` +
     `compute_skill_scores(mode="paired")` path at the identity draw.
     """
@@ -222,16 +236,18 @@ def test_point_flow_paired_skill_matches_bootstrap_identity_draw():
     n_users = 5
     base = {"locf": 1.0, "mean": 1.5, "linear": 0.7}
     eu = _make_per_user_long(
-        methods=methods, channels=channels, n_users=n_users,
-        base_error=base, seed=7,
+        methods=methods,
+        channels=channels,
+        n_users=n_users,
+        base_error=base,
+        seed=7,
     )
 
     point_R = compute_per_task_paired_R(eu, baseline_method="locf")
     point_skill = compute_skill_scores(point_R, mode="paired")
-    point_overall = (
-        point_skill[point_skill["scope"] == "overall"]
-        .set_index("method")["skill_score"]
-    )
+    point_overall = point_skill[point_skill["scope"] == "overall"].set_index("method")[
+        "skill_score"
+    ]
 
     # Bootstrap path — only need (method, baseline) per-channel R via
     # _per_method_cell_paired_ratios on identity-draw idx_b.
@@ -254,36 +270,45 @@ def test_point_flow_paired_skill_matches_bootstrap_identity_draw():
                 sae_m[u_idx, j] = em
                 sae_b[u_idx, j] = eb
         cs_m = _make_cell_stats(
-            n_users=n_users, sae=sae_m, sse=np.zeros_like(sae_m), n=n_arr,
+            n_users=n_users,
+            sae=sae_m,
+            sse=np.zeros_like(sae_m),
+            n=n_arr,
         )
         cs_b = _make_cell_stats(
-            n_users=n_users, sae=sae_b, sse=np.zeros_like(sae_b), n=n_arr,
+            n_users=n_users,
+            sae=sae_b,
+            sse=np.zeros_like(sae_b),
+            n=n_arr,
         )
         idx_b = np.arange(n_users).reshape(1, n_users)
         R = _per_method_cell_paired_ratios(
-            cs_m, cs_b, idx_b, include_auc=False,
+            cs_m,
+            cs_b,
+            idx_b,
+            include_auc=False,
         )
         for j, ch in enumerate(channels):
-            boot_R_rows.append({
-                "method": method,
-                "scenario": "scenarioA",
-                "channel": ch,
-                "channel_type": "continuous",
-                "R": float(R[0, j]),
-            })
+            boot_R_rows.append(
+                {
+                    "method": method,
+                    "scenario": "scenarioA",
+                    "channel": ch,
+                    "channel_type": "continuous",
+                    "R": float(R[0, j]),
+                }
+            )
     boot_R = pd.DataFrame(boot_R_rows)
     boot_skill = compute_skill_scores(boot_R, mode="paired")
-    boot_overall = (
-        boot_skill[boot_skill["scope"] == "overall"]
-        .set_index("method")["skill_score"]
-    )
+    boot_overall = boot_skill[boot_skill["scope"] == "overall"].set_index("method")["skill_score"]
 
     # Compare overall skill for methods present in both.
     common = set(point_overall.index) & set(boot_overall.index)
     assert common, "no methods in common between point-flow and bootstrap skill"
     for method in common:
         assert point_overall[method] == pytest.approx(
-            boot_overall[method], rel=1e-9,
+            boot_overall[method],
+            rel=1e-9,
         )
 
 
@@ -318,29 +343,29 @@ def _forecasting_mean_ranks_per_user(
     if not rows:
         return pd.DataFrame(columns=["scope", "metric", "model", "rank", "rank_n_users"])
     rank_all = pd.concat(rows, ignore_index=True)
-    return (
-        rank_all.groupby(["scope", "metric", "model"], as_index=False)
-        .agg(rank=("rank", "mean"), rank_n_users=("user_id", "nunique"))
+    return rank_all.groupby(["scope", "metric", "model"], as_index=False).agg(
+        rank=("rank", "mean"), rank_n_users=("user_id", "nunique")
     )
 
 
 def test_per_user_rank_single_task_matches_forecasting():
-    """Stage 1 parity: with a single (scenario, channel) task, the imputation
-    per-task rank equals forecasting's `_compute_mean_ranks` reducer.
+    """Stage 1 parity: single-task per-task rank equals forecasting's reducer.
 
-    Map ``(scenario, channel) ↔ (scope, metric)`` on the forecasting side.
+    With a single (scenario, channel) task, the imputation per-task rank
+    equals forecasting's `_compute_mean_ranks` reducer. Map
+    ``(scenario, channel) ↔ (scope, metric)`` on the forecasting side.
     """
     methods = ("locf", "mean", "linear")
     eu = _make_per_user_long(
-        methods=methods, channels=("ch_0",), n_users=8, seed=3,
+        methods=methods,
+        channels=("ch_0",),
+        n_users=8,
+        seed=3,
     )
 
     # Imputation per-user task_rank (mean over users) per (method, scenario, channel).
     imp_full = compute_average_rankings(eu)
-    imp_scenario = (
-        imp_full[imp_full["scope"] == "scenarioA"]
-        .set_index("method")["avg_rank"]
-    )
+    imp_scenario = imp_full[imp_full["scope"] == "scenarioA"].set_index("method")["avg_rank"]
 
     # Forecasting analog — relabel.
     forecast_df = eu.rename(
@@ -358,22 +383,23 @@ def test_per_user_rank_single_task_matches_forecasting():
 
 
 def test_per_user_rank_multitask_matches_forecasting_cross_channel_mean():
-    """Stage 2 parity: the imputation overall avg_rank equals the
-    cross-channel mean of forecasting per-channel ranks.
+    """Stage 2 parity: overall avg_rank equals the cross-channel mean of ranks.
 
-    This is the hard contract that the two tracks aggregate ranks across
-    tasks/channels in the same way.
+    The imputation overall avg_rank equals the cross-channel mean of
+    forecasting per-channel ranks. This is the hard contract that the two
+    tracks aggregate ranks across tasks/channels in the same way.
     """
     methods = ("locf", "mean", "linear")
     channels = ("ch_0", "ch_1", "ch_2")
     eu = _make_per_user_long(
-        methods=methods, channels=channels, n_users=10, seed=5,
+        methods=methods,
+        channels=channels,
+        n_users=10,
+        seed=5,
     )
 
     imp = compute_average_rankings(eu)
-    imp_overall = (
-        imp[imp["scope"] == "overall"].set_index("method")["avg_rank"]
-    )
+    imp_overall = imp[imp["scope"] == "overall"].set_index("method")["avg_rank"]
 
     # Forecasting: per-channel rank, then arithmetic mean across channels.
     forecast_df = eu.rename(
@@ -381,10 +407,7 @@ def test_per_user_rank_multitask_matches_forecasting_cross_channel_mean():
     )[["user_id", "model", "scope", "metric", "E"]]
     fc = _forecasting_mean_ranks_per_user(forecast_df)
     # Average per-channel ranks across channels per (scope=scenarioA, model).
-    fc_avg = (
-        fc.groupby("model", observed=True)["rank"]
-        .mean()
-    )
+    fc_avg = fc.groupby("model", observed=True)["rank"].mean()
 
     common = set(imp_overall.index) & set(fc_avg.index)
     assert common == set(methods)
@@ -399,46 +422,54 @@ def test_per_user_rank_multitask_matches_forecasting_cross_channel_mean():
 
 def test_compute_average_rankings_raises_without_user_id():
     """compute_average_rankings requires a user_id column; raises if absent."""
-    no_uid = pd.DataFrame({
-        "method": ["a", "b"],
-        "scenario": ["s", "s"],
-        "channel": ["ch_0", "ch_0"],
-        "channel_type": ["continuous", "continuous"],
-        "E": [1.0, 0.5],
-    })
+    no_uid = pd.DataFrame(
+        {
+            "method": ["a", "b"],
+            "scenario": ["s", "s"],
+            "channel": ["ch_0", "ch_0"],
+            "channel_type": ["continuous", "continuous"],
+            "E": [1.0, 0.5],
+        }
+    )
     with pytest.raises(ValueError, match="user_id"):
         compute_average_rankings(no_uid)
 
 
 def test_compute_skill_scores_paired_raises_without_R():
     """mode='paired' requires R; raises if absent."""
-    no_R = pd.DataFrame({
-        "method": ["a"],
-        "scenario": ["s"],
-        "channel": ["ch_0"],
-        "channel_type": ["continuous"],
-        "E": [0.5],
-    })
+    no_R = pd.DataFrame(
+        {
+            "method": ["a"],
+            "scenario": ["s"],
+            "channel": ["ch_0"],
+            "channel_type": ["continuous"],
+            "E": [0.5],
+        }
+    )
     with pytest.raises(ValueError, match="'R' column"):
         compute_skill_scores(no_R, mode="paired")
 
 
 def test_compute_skill_scores_pooled_still_works_explicitly():
     """The legacy pooled path still works when explicitly selected."""
-    errors = pd.DataFrame({
-        "method": ["m", "m"],
-        "scenario": ["s", "s"],
-        "channel": ["ch_0", "ch_1"],
-        "channel_type": ["continuous", "continuous"],
-        "E": [0.5, 0.4],
-    })
-    baseline = pd.DataFrame({
-        "method": ["b", "b"],
-        "scenario": ["s", "s"],
-        "channel": ["ch_0", "ch_1"],
-        "channel_type": ["continuous", "continuous"],
-        "E": [1.0, 1.0],
-    })
+    errors = pd.DataFrame(
+        {
+            "method": ["m", "m"],
+            "scenario": ["s", "s"],
+            "channel": ["ch_0", "ch_1"],
+            "channel_type": ["continuous", "continuous"],
+            "E": [0.5, 0.4],
+        }
+    )
+    baseline = pd.DataFrame(
+        {
+            "method": ["b", "b"],
+            "scenario": ["s", "s"],
+            "channel": ["ch_0", "ch_1"],
+            "channel_type": ["continuous", "continuous"],
+            "E": [1.0, 1.0],
+        }
+    )
     out = compute_skill_scores(errors, baseline, mode="pooled")
     assert not out.empty
     # m beats baseline → positive skill.
@@ -452,20 +483,46 @@ def test_compute_skill_scores_pooled_still_works_explicitly():
 
 
 def test_tie_handling_method_average():
-    """Two methods with identical per-user E on every user/task → both
-    get rank == 1.5 at the task grain and at the scope grain.
+    """Two methods tied on every (user, task) → both rank 1.5 at every grain.
+
+    Two methods with identical per-user E on every user/task get
+    rank == 1.5 at the task grain and at the scope grain.
     """
     # Two methods tied (E=0.5), one method strictly worse (E=2.0). With
     # method='average', the two ties share ranks 1 and 2 → both 1.5.
     rows = []
     for u in range(4):
         for ch in ("ch_0", "ch_1"):
-            rows.append({"method": "A", "scenario": "s", "channel": ch,
-                         "channel_type": "continuous", "user_id": f"u{u}", "E": 0.5})
-            rows.append({"method": "B", "scenario": "s", "channel": ch,
-                         "channel_type": "continuous", "user_id": f"u{u}", "E": 0.5})
-            rows.append({"method": "C", "scenario": "s", "channel": ch,
-                         "channel_type": "continuous", "user_id": f"u{u}", "E": 2.0})
+            rows.append(
+                {
+                    "method": "A",
+                    "scenario": "s",
+                    "channel": ch,
+                    "channel_type": "continuous",
+                    "user_id": f"u{u}",
+                    "E": 0.5,
+                }
+            )
+            rows.append(
+                {
+                    "method": "B",
+                    "scenario": "s",
+                    "channel": ch,
+                    "channel_type": "continuous",
+                    "user_id": f"u{u}",
+                    "E": 0.5,
+                }
+            )
+            rows.append(
+                {
+                    "method": "C",
+                    "scenario": "s",
+                    "channel": ch,
+                    "channel_type": "continuous",
+                    "user_id": f"u{u}",
+                    "E": 2.0,
+                }
+            )
     out = compute_average_rankings(pd.DataFrame(rows))
     overall = out[out["scope"] == "overall"].set_index("method")["avg_rank"]
     assert overall["A"] == pytest.approx(1.5, rel=1e-12)
@@ -479,24 +536,57 @@ def test_tie_handling_method_average():
 
 
 def test_ragged_user_coverage_tolerated():
-    """Method missing for some (user, task) cells: pivot.rank ignores
-    those cells (NaN passthrough); nanmean over users computes task_rank
-    only on users with finite E. The scope mean drops methods with zero
-    finite tasks gracefully.
+    """A method missing on some (user, task) cells is tolerated via nanmean.
+
+    pivot.rank ignores those cells (NaN passthrough); nanmean over users
+    computes task_rank only on users with finite E. The scope mean drops
+    methods with zero finite tasks gracefully.
     """
     rows = []
     # Method A present everywhere. Method B missing for user u3 on ch_1.
     for u in range(4):
-        rows.append({"method": "A", "scenario": "s", "channel": "ch_0",
-                     "channel_type": "continuous", "user_id": f"u{u}", "E": 0.5 + 0.1 * u})
-        rows.append({"method": "B", "scenario": "s", "channel": "ch_0",
-                     "channel_type": "continuous", "user_id": f"u{u}", "E": 1.0 + 0.1 * u})
+        rows.append(
+            {
+                "method": "A",
+                "scenario": "s",
+                "channel": "ch_0",
+                "channel_type": "continuous",
+                "user_id": f"u{u}",
+                "E": 0.5 + 0.1 * u,
+            }
+        )
+        rows.append(
+            {
+                "method": "B",
+                "scenario": "s",
+                "channel": "ch_0",
+                "channel_type": "continuous",
+                "user_id": f"u{u}",
+                "E": 1.0 + 0.1 * u,
+            }
+        )
     for u in range(4):
-        rows.append({"method": "A", "scenario": "s", "channel": "ch_1",
-                     "channel_type": "continuous", "user_id": f"u{u}", "E": 0.5})
+        rows.append(
+            {
+                "method": "A",
+                "scenario": "s",
+                "channel": "ch_1",
+                "channel_type": "continuous",
+                "user_id": f"u{u}",
+                "E": 0.5,
+            }
+        )
         if u != 3:
-            rows.append({"method": "B", "scenario": "s", "channel": "ch_1",
-                         "channel_type": "continuous", "user_id": f"u{u}", "E": 1.0})
+            rows.append(
+                {
+                    "method": "B",
+                    "scenario": "s",
+                    "channel": "ch_1",
+                    "channel_type": "continuous",
+                    "user_id": f"u{u}",
+                    "E": 1.0,
+                }
+            )
     out = compute_average_rankings(pd.DataFrame(rows))
     overall = out[out["scope"] == "overall"].set_index("method")["avg_rank"]
     # A < B on both tasks for every overlapping user → A rank 1, B rank 2
@@ -518,7 +608,9 @@ def test_per_user_errors_for_cell_continuous_round_trip():
     n_arr = np.full((n_users, n_channels), 4, dtype=np.int64)
     cs = _make_cell_stats(n_users=n_users, sae=sae, sse=sse, n=n_arr)
     per_user_E = _per_user_errors_for_cell(
-        cs, n_channels=N_CHANNELS, include_auc=False,
+        cs,
+        n_channels=N_CHANNELS,
+        include_auc=False,
     )
     np.testing.assert_allclose(per_user_E[:, 0], [0.5, 0.75, 0.25])
     np.testing.assert_allclose(per_user_E[:, 1], [1.0, 1.5, 0.5])

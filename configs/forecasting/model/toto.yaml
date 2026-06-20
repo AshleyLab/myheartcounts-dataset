@@ -1,5 +1,7 @@
 # @package model
 type: toto
+name: null
+release_dir: null
 toto:
   pretrained_model_name_or_path: Datadog/Toto-Open-Base-1.0
   device: auto

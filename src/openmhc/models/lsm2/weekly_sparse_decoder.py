@@ -138,9 +138,7 @@ class WeeklySparseDecoderLSM2(nn.Module):
                 f"divisible by patches_per_window ({self.patches_per_window}). "
                 f"Adjust window_minutes ({window_minutes}) or patch_size ({patch_size})."
             )
-        self.tokens_per_cross_window = (
-            num_days * in_channels * self.patches_per_window
-        )  # 1596
+        self.tokens_per_cross_window = num_days * in_channels * self.patches_per_window  # 1596
 
         # --- Encoder (matches daily MAE architecture) ---
         self.patch_embed = PatchEmbed1D(seq_length, patch_size, in_channels, embed_dim)
@@ -348,7 +346,11 @@ class WeeklySparseDecoderLSM2(nn.Module):
         # Split into daily slices
         # (B, C, D*L) -> (B, C, D, L) -> (B*D, C, L)
         x_days = x_week.reshape(B, self.in_channels, D_days, self.seq_length)
-        x_days = x_days.permute(0, 2, 1, 3).contiguous().reshape(B * D_days, self.in_channels, self.seq_length)
+        x_days = (
+            x_days.permute(0, 2, 1, 3)
+            .contiguous()
+            .reshape(B * D_days, self.in_channels, self.seq_length)
+        )
 
         # Split inherited mask: channel-major (B, C*D*T_per_day) -> per-day
         # channel-major (B*D, C*T_per_day).
@@ -356,8 +358,9 @@ class WeeklySparseDecoderLSM2(nn.Module):
         # so we must permute channels past days before flattening — a bare
         # .reshape(B, D, N_day) would mix channels across days.
         inh_days = (
-            inherited_mask_week
-            .reshape(B, self.in_channels, D_days, self.patches_per_channel_per_day)
+            inherited_mask_week.reshape(
+                B, self.in_channels, D_days, self.patches_per_channel_per_day
+            )
             .permute(0, 2, 1, 3)
             .contiguous()
             .reshape(B * D_days, self.tokens_per_day)
@@ -380,15 +383,13 @@ class WeeklySparseDecoderLSM2(nn.Module):
         # them with patchify(x), continuous_patch_mask, patch_weights, and the
         # HR slice — all of which assume channel-major layout.
         total_mask_week = (
-            total_mask
-            .reshape(B, D_days, self.in_channels, self.patches_per_channel_per_day)
+            total_mask.reshape(B, D_days, self.in_channels, self.patches_per_channel_per_day)
             .permute(0, 2, 1, 3)
             .contiguous()
             .reshape(B, self.num_patches)
         )
         artificial_mask_week = (
-            artificial_mask
-            .reshape(B, D_days, self.in_channels, self.patches_per_channel_per_day)
+            artificial_mask.reshape(B, D_days, self.in_channels, self.patches_per_channel_per_day)
             .permute(0, 2, 1, 3)
             .contiguous()
             .reshape(B, self.num_patches)
@@ -431,16 +432,13 @@ class WeeklySparseDecoderLSM2(nn.Module):
         # Unshuffle + mask token fill (per day)
         mask_tokens_drop = self.mask_token.expand(BD, L_full - L_keep, -1)
         x_ = torch.cat([x, mask_tokens_drop], dim=1)
-        x_full = torch.gather(
-            x_, dim=1, index=ids_restore.unsqueeze(-1).expand(-1, -1, D_dec)
-        )
+        x_full = torch.gather(x_, dim=1, index=ids_restore.unsqueeze(-1).expand(-1, -1, D_dec))
 
         # Replace masked positions with learnable mask token.
         # total_mask_week is channel-major (B, C*D*T_per_day); the decoder's
         # internal layout here is per-day (B*D, N_day), so permute back.
         total_mask_days = (
-            total_mask_week
-            .reshape(B, self.in_channels, D_days, self.patches_per_channel_per_day)
+            total_mask_week.reshape(B, self.in_channels, D_days, self.patches_per_channel_per_day)
             .permute(0, 2, 1, 3)
             .contiguous()
             .reshape(BD, N_day)
@@ -472,7 +470,8 @@ class WeeklySparseDecoderLSM2(nn.Module):
             else:
                 # Cross-day window attention
                 x_week = self._cross_day_attention(
-                    x_week, self.decoder_cross_blocks[cross_idx],
+                    x_week,
+                    self.decoder_cross_blocks[cross_idx],
                     day_offsets=day_offsets,
                 )
                 cross_idx += 1
@@ -530,13 +529,9 @@ class WeeklySparseDecoderLSM2(nn.Module):
                 clamped = day_offsets.clamp(min=0, max=max_pos)
                 # (B, D) → (B, D*C*Pw) → (B, W, D*C*Pw) → (B*W, D*C*Pw)
                 day_positions = clamped.repeat_interleave(C * Pw, dim=1)
-                day_positions = (
-                    day_positions.unsqueeze(1).expand(-1, W, -1).reshape(B * W, -1)
-                )
+                day_positions = day_positions.unsqueeze(1).expand(-1, W, -1).reshape(B * W, -1)
             else:
-                day_positions = torch.arange(
-                    D_days, device=x.device
-                ).repeat_interleave(C * Pw)
+                day_positions = torch.arange(D_days, device=x.device).repeat_interleave(C * Pw)
             rope_fn = self.rope_day.get_rope_fn(day_positions)
         x = block(x, rope_fn=rope_fn)
 
@@ -620,9 +615,9 @@ class WeeklySparseDecoderLSM2(nn.Module):
         per_sample_losses = None
         if return_per_sample:
             cont_mask_vals = mask * self.continuous_patch_mask.float()
-            per_sample_cont = (loss * cont_mask_vals).sum(dim=1) / cont_mask_vals.sum(
-                dim=1
-            ).clamp(min=1)
+            per_sample_cont = (loss * cont_mask_vals).sum(dim=1) / cont_mask_vals.sum(dim=1).clamp(
+                min=1
+            )
 
             bin_mask_vals = mask * (~self.continuous_patch_mask).float()
             per_sample_bin = (loss * bin_mask_vals).sum(dim=1) / bin_mask_vals.sum(dim=1).clamp(
@@ -710,9 +705,7 @@ class WeeklySparseDecoderLSM2(nn.Module):
             B = x.shape[0]
             inherited_mask = torch.zeros((B, self.num_patches), device=x.device)
 
-        latent, total_mask, artificial_mask, ids_restore = self.forward_encoder(
-            x, inherited_mask
-        )
+        latent, total_mask, artificial_mask, ids_restore = self.forward_encoder(x, inherited_mask)
         pred = self.forward_decoder(latent, ids_restore, total_mask, day_offsets=day_offsets)
 
         loss_mask = artificial_mask * (1 - inherited_mask)
@@ -765,9 +758,7 @@ class WeeklySparseDecoderLSM2(nn.Module):
 
         # MAEModule stores weights under "model." prefix
         prefix = "model."
-        daily_state = {
-            k[len(prefix) :]: v for k, v in state.items() if k.startswith(prefix)
-        }
+        daily_state = {k[len(prefix) :]: v for k, v in state.items() if k.startswith(prefix)}
         if not daily_state:
             daily_state = state
 
@@ -781,9 +772,7 @@ class WeeklySparseDecoderLSM2(nn.Module):
             "decoder_pred",
         ]:
             sub_state = {
-                k[len(name) + 1 :]: v
-                for k, v in daily_state.items()
-                if k.startswith(name + ".")
+                k[len(name) + 1 :]: v for k, v in daily_state.items() if k.startswith(name + ".")
             }
             if sub_state:
                 getattr(self, name).load_state_dict(sub_state)

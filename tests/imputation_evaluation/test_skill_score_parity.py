@@ -217,9 +217,7 @@ def test_binary_error_floor_keeps_perfect_auc_user_in_paired_set():
     n_arr = np.zeros((n_users, N_CHANNELS), dtype=np.int64)
     has_data = np.zeros(N_CHANNELS, dtype=bool)
     has_data[7] = True
-    cs = _make_cell_stats(
-        n_users=n_users, sae=sae, sse=sse, n=n_arr, has_data=has_data
-    )
+    cs = _make_cell_stats(n_users=n_users, sae=sae, sse=sse, n=n_arr, has_data=has_data)
     boot_idx = np.arange(n_users).reshape(1, n_users)
 
     R = _per_method_cell_paired_ratios(

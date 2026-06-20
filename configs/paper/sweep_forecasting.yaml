@@ -1,0 +1,78 @@
+# Forecasting (Track 3) paper-pipeline sweep.
+#
+# Consumed by scripts/paper_results/forecasting/run_paper_pipeline.py.
+#
+# `models` is the PRE-SPECIFIED expected set: the pipeline selects exactly these
+# (ignoring any extra model dirs present under the run label) and ERRORS if any
+# expected model's metrics are missing. Each entry:
+#   name       - output label == model.name == discovery key
+#   type       - Hydra model group (configs/forecasting/model/<type>.yaml)
+#   release_dir- optional bundle path -> model.release_dir= (finetuned / retrained)
+#   overrides  - optional extra Hydra dot-key strings for mhc-forecast-eval
+
+run_label: forecasting_full_20260609
+runs_root: results/forecasting_eval/simurgh
+output_root: results/forecasting_eval/simurgh/summary/forecasting_full_20260609
+
+baseline: seasonal_naive
+continuous_metrics: [mae]
+binary_metrics: [auroc]            # scored binary metric: auroc | auprc | f1 (eval still produces all three)
+aggregation_unit: user
+# How a user's prediction windows are combined before paired scoring:
+#   micro (default) = pool all finite horizon cells (continuous); binary is pooled per user by the producer
+#   macro           = legacy unweighted mean of per-window means
+within_user_aggregation: micro
+
+# Phase 0 (mhc-forecast-eval) overrides applied to every model.
+common_overrides: []
+
+# Phase 3 — paired user-level bootstrap CIs for skill score + mean rank, and
+# (when fairness: true) the disparity-ratio fairness skill score (point + CIs).
+bootstrap:
+  enabled: true
+  n_boot: 1000
+  seed: 42
+  ci_level: 0.95
+  splits: [test]
+  age_bins: [18, 30, 40, 50, 60]
+  fairness: true
+  # Point estimate + BCa (bias-corrected & accelerated) 95% CI on the headline
+  # scopes (overall + 4 categories + 2 attributes). The fairness disparity ratio
+  # is skewed/downward-biased (bootstrap mean < point, percentile CI biased low),
+  # so BCa re-anchors the interval near the reported point. Skill/rank are
+  # near-unbiased (mean ≈ point), so their BCa is opt-in for sanity-checking only.
+  bca: true                 # fairness: point + BCa columns (adds point/bca_lo/bca_hi)
+  bca_skill_rank: false     # also emit point + BCa for skill score + mean rank
+  # Demographics (age via birth_year, sex via BiologicalSex) default to
+  # <dataset_root>/labels/{last_labels,enrollment_info}.json, resolved from
+  # MHC_DATA_DIR. Uncomment to override:
+  # labels_path: /path/to/last_labels.json
+  # enrollment_path: /path/to/enrollment_info.json
+
+models:
+  - {name: seasonal_naive, type: seasonal_naive}
+  - {name: autoARIMA, type: autoARIMA}
+  - {name: autoETS, type: autoETS}
+  - {name: chronos2_zeroshot, type: chronos2}
+  - name: chronos2_finetuned
+    type: chronos2
+    release_dir: releases-fc/openmhc-chronos2-fc   # verify path before a real Phase-0 run
+  # Toto defaults to the 4k-context variant. The original 2048-context toto
+  # (toto_zeroshot / toto_finetuned) is excluded from the default sweep; its
+  # metrics still exist on disk under the canonical label if needed ad hoc.
+  - name: toto_zeroshot_ctx4096
+    type: toto
+    overrides: [model.toto.context_length=4096]
+  - name: toto_finetuned_ctx4096
+    type: toto
+    release_dir: releases-fc/openmhc-toto-fc
+    overrides: [model.toto.context_length=4096]
+  - name: dlinear
+    type: dlinear
+    release_dir: results/forecasting_train/simurgh/releases/dlinear_20260609_024228
+  - name: mixlinear
+    type: mixlinear
+    release_dir: results/forecasting_train/simurgh/releases/mixlinear_20260609_025728
+  - name: segrnn
+    type: segrnn
+    release_dir: results/forecasting_train/simurgh/releases/segrnn_20260609_031230

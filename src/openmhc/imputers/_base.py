@@ -11,8 +11,9 @@ Subclasses implement ``impute`` and typically call helpers in their
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Iterator, Literal
+from typing import Literal
 
 import numpy as np
 
@@ -96,11 +97,11 @@ class BaseImputer:
             obs = (mask > 0.5) & np.isfinite(data)
             data_obs = np.where(obs, data, 0.0)
             sums += data_obs.sum(axis=(0, 2))
-            sq_sums += (data_obs ** 2).sum(axis=(0, 2))
+            sq_sums += (data_obs**2).sum(axis=(0, 2))
             counts += obs.sum(axis=(0, 2))
         safe = np.maximum(counts, 1)
         means = np.where(counts > 0, sums / safe, 0.0)
-        variance = np.where(counts > 0, (sq_sums / safe) - means ** 2, 0.0)
+        variance = np.where(counts > 0, (sq_sums / safe) - means**2, 0.0)
         stds = np.sqrt(np.maximum(variance, 0.0))
         stds = np.where(counts > 1, stds, 1.0)
         stds = np.maximum(stds, 1e-6)
@@ -147,22 +148,16 @@ class BaseImputer:
     # Evaluation-split metadata helpers
     # ------------------------------------------------------------------
 
-    def load_metadata(
-        self, split: Literal["train", "val", "test"]
-    ) -> list[dict]:
+    def load_metadata(self, split: Literal["train", "val", "test"]) -> list[dict]:
         """Return per-sample metadata for the requested split.
 
         Each entry is ``{"sample_idx": int, "user_id": str, "date": str}``.
         ``sample_idx`` is the split-local position that aligns with the
         ``sample_indices`` kwarg passed to ``impute``.
         """
-        return load_sample_metadata(
-            split, version=self._version, data_dir=self._data_dir
-        )
+        return load_sample_metadata(split, version=self._version, data_dir=self._data_dir)
 
-    def build_user_index(
-        self, split: Literal["train", "val", "test"]
-    ) -> dict[str, list[int]]:
+    def build_user_index(self, split: Literal["train", "val", "test"]) -> dict[str, list[int]]:
         """Group sample indices by user for one split.
 
         Returns:
@@ -185,6 +180,4 @@ class BaseImputer:
         target_mask: np.ndarray,
         **kwargs,
     ) -> np.ndarray:
-        raise NotImplementedError(
-            "BaseImputer subclasses must implement `impute`."
-        )
+        raise NotImplementedError("BaseImputer subclasses must implement `impute`.")

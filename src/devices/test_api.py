@@ -77,6 +77,7 @@ def _load_devices_api(device_info_path: Path):
     """Reload devices.api with the given device-info file path."""
     os.environ["USER_DEVICE_INFO_PATH"] = str(device_info_path)
     import devices.api
+
     return importlib.reload(devices.api)
 
 

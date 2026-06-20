@@ -12,8 +12,8 @@ from pathlib import Path
 import pytest
 
 from openmhc.imputers._release import (
-    SPEC_VERSION,
     _SUPPORTED_SPEC_VERSIONS,
+    SPEC_VERSION,
     Manifest,
     load_manifest,
     write_manifest,
@@ -32,7 +32,14 @@ def _seed_files(dst: Path, *, fourier: bool = False) -> None:
             json.dumps(
                 {
                     "encoder.attn_layers.0.attention.inner_correlation": [
-                        0, 3, 7, 11, 18, 24, 29, 31,
+                        0,
+                        3,
+                        7,
+                        11,
+                        18,
+                        24,
+                        29,
+                        31,
                     ],
                 }
             )
@@ -47,6 +54,7 @@ def test_current_spec_version_is_two() -> None:
 
 
 def test_write_then_load_v2_with_sidecar(tmp_path: Path) -> None:
+    """A fedformer manifest round-trips at spec v2 with its fourier_modes sidecar."""
     _seed_files(tmp_path, fourier=True)
     write_manifest(
         tmp_path,
@@ -105,6 +113,7 @@ def test_load_v1_manifest_is_still_supported(tmp_path: Path) -> None:
 
 
 def test_write_rejects_sidecar_for_non_fedformer_kind(tmp_path: Path) -> None:
+    """Writing a fourier_modes sidecar for a non-fedformer kind raises ValueError."""
     _seed_files(tmp_path, fourier=True)
     with pytest.raises(ValueError, match="cannot carry a 'fourier_modes' sidecar"):
         write_manifest(
@@ -138,6 +147,7 @@ def test_load_rejects_sidecar_paired_with_wrong_kind(tmp_path: Path) -> None:
 
 
 def test_load_rejects_unknown_spec_version(tmp_path: Path) -> None:
+    """Loading a manifest with an unsupported spec_version raises ValueError."""
     _seed_files(tmp_path)
     (tmp_path / "openmhc_manifest.json").write_text(
         json.dumps(

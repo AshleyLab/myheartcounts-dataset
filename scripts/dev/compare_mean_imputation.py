@@ -26,10 +26,12 @@ import numpy as np
 REPO_ROOT = Path(__file__).parent.parent
 # Override via MHC_BENCHMARK_SRC env var to point at your local MHC-benchmark
 # clone (private repo, not pip-installable).
-PRIVATE_REPO_SRC = Path(os.environ.get(
-    "MHC_BENCHMARK_SRC",
-    str(Path.home() / "MHC-benchmark" / "src"),
-))
+PRIVATE_REPO_SRC = Path(
+    os.environ.get(
+        "MHC_BENCHMARK_SRC",
+        str(Path.home() / "MHC-benchmark" / "src"),
+    )
+)
 
 # Public repo src must come first so its versions of shared modules win.
 sys.path.insert(0, str(REPO_ROOT / "src"))
@@ -50,19 +52,19 @@ SPLIT_FILE = REPO_ROOT / "data" / "splits" / "sharable_users_seed42_2026_xs.json
 
 logger.info("=== Step 1: Loading the 2026-xs split ===")
 
-from imputation_evaluation.config import (
+from imputation_evaluation.config import (  # noqa: E402
     DataConfig,
     FilterConfig,
+    IntensityFailureConfig,
     MaskingConfig,
     PreprocessingConfig,
     RandomNoiseConfig,
-    TemporalSliceConfig,
     SignalSliceConfig,
     SleepGapConfig,
+    TemporalSliceConfig,
     WorkoutGapConfig,
-    IntensityFailureConfig,
 )
-from imputation_evaluation.data.data_loader import ImputationDataLoader
+from imputation_evaluation.data.data_loader import ImputationDataLoader  # noqa: E402
 
 data_cfg = DataConfig(
     daily_hf_dir=str(DATA_DIR / "processed" / "daily_hf"),
@@ -100,7 +102,7 @@ logger.info(
 logger.info("=== Step 2: Fitting both imputers ===")
 
 # --- Public MeanImputer ---
-from openmhc.imputers.mean import MeanImputer
+from openmhc.imputers.mean import MeanImputer  # noqa: E402
 
 public_imputer = MeanImputer(version="xs", data_dir=DATA_DIR)
 public_means = public_imputer._channel_means
@@ -109,7 +111,7 @@ logger.info("Public channel_means (first 7): %s", public_means[:7])
 # --- Private MeanImputation ---
 # Import without polluting the rest of the namespace; private repo may have
 # modules with the same name as the public repo.
-import importlib.util
+import importlib.util  # noqa: E402
 
 _spec = importlib.util.spec_from_file_location(
     "_private_mean_imputation",
@@ -135,7 +137,10 @@ if not means_close:
     for ch in worst:
         logger.warning(
             "  ch %2d: public=%.6f  private=%.6f  diff=%.2e",
-            ch, public_means[ch], private_means[ch], diffs[ch],
+            ch,
+            public_means[ch],
+            private_means[ch],
+            diffs[ch],
         )
 
 
@@ -158,15 +163,19 @@ masking_cfg = MaskingConfig(
         device_groups={"iphone": [0, 1, 2], "watch": [3, 4, 5, 6]},
     ),
     sleep_gap=SleepGapConfig(enabled=True, asleep_channel=7, inbed_channel=8),
-    workout_gap=WorkoutGapConfig(enabled=True, mask_channels=[5, 6],
-                                  workout_channels=list(range(9, 19))),
+    workout_gap=WorkoutGapConfig(
+        enabled=True, mask_channels=[5, 6], workout_channels=list(range(9, 19))
+    ),
     intensity_failure=IntensityFailureConfig(
-        enabled=True, hr_channel=5, hr_threshold=160.0,
-        hr_unit="auto", mask_channels=[5, 6],
+        enabled=True,
+        hr_channel=5,
+        hr_threshold=160.0,
+        hr_unit="auto",
+        mask_channels=[5, 6],
     ),
 )
 
-from imputation_evaluation.masking import MaskCacheGenerator, create_mask_generators
+from imputation_evaluation.masking import MaskCacheGenerator, create_mask_generators  # noqa: E402
 
 generators = create_mask_generators(masking_cfg)
 scenario_names = [g.name for g in generators]
@@ -179,8 +188,7 @@ mask_gen = MaskCacheGenerator(
     batch_size=data_cfg.batch_size,
 )
 mask_cache = mask_gen.generate(
-    split_indices={"val": loaded.split_indices["val"],
-                   "test": loaded.split_indices["test"]},
+    split_indices={"val": loaded.split_indices["val"], "test": loaded.split_indices["test"]},
     generators=generators,
     base_seed=masking_cfg.mask_seed,
 )
@@ -193,8 +201,8 @@ logger.info("Mask cache generated.")
 
 logger.info("=== Step 4: Running public evaluator ===")
 
-from openmhc._evaluate import _ImputerMethodAdapter
-from imputation_evaluation.evaluation.evaluator import ImputationEvaluator
+from imputation_evaluation.evaluation.evaluator import ImputationEvaluator  # noqa: E402
+from openmhc._evaluate import _ImputerMethodAdapter  # noqa: E402
 
 # The adapter computes channel stds via fit(); wrap the public MeanImputer.
 pub_adapter = _ImputerMethodAdapter(public_imputer)
@@ -316,32 +324,40 @@ for scenario in scenario_names:
         for key in ("mean_normalized_rmse", "mean_normalized_mse", "mean_normalized_mae"):
             pv = pub_m.get("continuous", {}).get(key, float("nan"))
             rv = priv_m.get("continuous", {}).get(key, float("nan"))
-            match = (
-                (np.isnan(pv) and np.isnan(rv))
-                or abs(pv - rv) <= ATOL
-            )
+            match = (np.isnan(pv) and np.isnan(rv)) or abs(pv - rv) <= ATOL
             status = "OK" if match else "MISMATCH"
             if not match:
                 all_match = False
             logger.info(
                 "  [%s] %s/%s %s: pub=%.6f  priv=%.6f  diff=%.2e  %s",
-                scenario, split, "continuous", key, pv, rv, abs(pv - rv) if not np.isnan(pv - rv) else float("nan"), status,
+                scenario,
+                split,
+                "continuous",
+                key,
+                pv,
+                rv,
+                abs(pv - rv) if not np.isnan(pv - rv) else float("nan"),
+                status,
             )
 
         # Binary summary metrics
         for key in ("macro_balanced_accuracy", "macro_roc_auc"):
             pv = pub_m.get("binary", {}).get(key, float("nan"))
             rv = priv_m.get("binary", {}).get(key, float("nan"))
-            match = (
-                (np.isnan(pv) and np.isnan(rv))
-                or abs(pv - rv) <= ATOL
-            )
+            match = (np.isnan(pv) and np.isnan(rv)) or abs(pv - rv) <= ATOL
             status = "OK" if match else "MISMATCH"
             if not match:
                 all_match = False
             logger.info(
                 "  [%s] %s/%s %s: pub=%.6f  priv=%.6f  diff=%.2e  %s",
-                scenario, split, "binary", key, pv, rv, abs(pv - rv) if not np.isnan(pv - rv) else float("nan"), status,
+                scenario,
+                split,
+                "binary",
+                key,
+                pv,
+                rv,
+                abs(pv - rv) if not np.isnan(pv - rv) else float("nan"),
+                status,
             )
 
 logger.info("")
@@ -352,4 +368,6 @@ else:
 
 # Summary of channel means check
 logger.info("")
-logger.info("Channel means parity: %s (max diff %.2e)", "OK" if means_close else "MISMATCH", max_diff)
+logger.info(
+    "Channel means parity: %s (max diff %.2e)", "OK" if means_close else "MISMATCH", max_diff
+)

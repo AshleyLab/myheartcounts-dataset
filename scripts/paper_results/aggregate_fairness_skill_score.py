@@ -84,38 +84,50 @@ def _parse_args() -> argparse.Namespace:
         ),
     )
     p.add_argument(
-        "--draws", type=Path, required=True,
+        "--draws",
+        type=Path,
+        required=True,
         help="Path to bootstrap_draws.parquet from Phase 1.",
     )
     p.add_argument(
-        "--output", type=Path, required=True,
+        "--output",
+        type=Path,
+        required=True,
         help="Output CSV path (typically fairness_skill_score_bootstrap.csv).",
     )
     p.add_argument(
-        "--baseline-method", default="locf",
+        "--baseline-method",
+        default="locf",
         help="Baseline model for the disparity ratio denominator (default: locf).",
     )
     p.add_argument(
-        "--clip-lower", type=float, default=1e-2,
+        "--clip-lower",
+        type=float,
+        default=1e-2,
         help="Lower clip bound for disparity ratios (default: 1e-2).",
     )
     p.add_argument(
-        "--clip-upper", type=float, default=100.0,
+        "--clip-upper",
+        type=float,
+        default=100.0,
         help="Upper clip bound for disparity ratios (default: 100.0).",
     )
     p.add_argument(
-        "--ci-level", type=float, default=0.95,
+        "--ci-level",
+        type=float,
+        default=0.95,
         help="Percentile CI level (default: 0.95).",
     )
     p.add_argument(
-        "--attrs", nargs="+", default=list(SENSITIVE_ATTRS),
-        help=(
-            "Sensitive attributes to include in the macro-average "
-            "(default: age_group sex)."
-        ),
+        "--attrs",
+        nargs="+",
+        default=list(SENSITIVE_ATTRS),
+        help=("Sensitive attributes to include in the macro-average (default: age_group sex)."),
     )
     p.add_argument(
-        "--method-filter", nargs="+", default=None,
+        "--method-filter",
+        nargs="+",
+        default=None,
         help=(
             "Restrict to these methods only. Fairness skill values are "
             "pairwise vs. the baseline so values stay the same as the "
@@ -125,7 +137,8 @@ def _parse_args() -> argparse.Namespace:
         ),
     )
     p.add_argument(
-        "--strict", action="store_true",
+        "--strict",
+        action="store_true",
         help=(
             "Fail (non-zero exit) on any sensitive attribute that is missing, "
             "degenerate, or yields no usable tasks instead of warning-and-"
@@ -134,7 +147,10 @@ def _parse_args() -> argparse.Namespace:
     )
     bca_grp = p.add_mutually_exclusive_group()
     bca_grp.add_argument(
-        "--bca", dest="bca", action="store_true", default=True,
+        "--bca",
+        dest="bca",
+        action="store_true",
+        default=True,
         help=(
             "Emit point + BCa (bias-corrected & accelerated) CI columns for "
             "the headline fairness scopes (default ON). The disparity ratio "
@@ -143,11 +159,15 @@ def _parse_args() -> argparse.Namespace:
         ),
     )
     bca_grp.add_argument(
-        "--no-bca", dest="bca", action="store_false",
+        "--no-bca",
+        dest="bca",
+        action="store_false",
         help="Disable BCa augmentation; emit only the legacy percentile columns.",
     )
     p.add_argument(
-        "--per-user-errors", type=Path, default=None,
+        "--per-user-errors",
+        type=Path,
+        default=None,
         help=(
             "Path to per_user_errors.parquet from Phase 1, required when --bca "
             "is on. Defaults to '<draws>.parent / per_user_errors.parquet'."
@@ -219,8 +239,12 @@ def _summarise_across_draws(
 
 
 _PER_CELL_GROUP_COLS = [
-    "method", "scenario", "channel", "channel_type",
-    "subgroup_attr", "subgroup_value",
+    "method",
+    "scenario",
+    "channel",
+    "channel_type",
+    "subgroup_attr",
+    "subgroup_value",
 ]
 
 
@@ -337,9 +361,7 @@ def compute_fairness_skill_scores(
     elsewhere). Requires ``per_user_df`` (the Phase 1 sibling Parquet).
     """
     if bca and per_user_df is None:
-        raise ValueError(
-            "compute_fairness_skill_scores(bca=True) requires per_user_df"
-        )
+        raise ValueError("compute_fairness_skill_scores(bca=True) requires per_user_df")
     splits = sorted(draws_df["split"].unique())
     if len(splits) > 1:
         logger.warning(
@@ -362,9 +384,8 @@ def compute_fairness_skill_scores(
     # rule downstream via ``b2_bucket_for_channel`` (rows it would drop are
     # filtered to ``bucket = None``), but stripping them up front cuts the
     # join cost and surfaces the row-count drop in the log.
-    is_per_channel_binary = (
-        draws_df["channel"].astype(str).str.match(r"^ch_(?:[7-9]|1[0-8])$")
-        & (draws_df["channel_type"].astype(str) == "binary")
+    is_per_channel_binary = draws_df["channel"].astype(str).str.match(r"^ch_(?:[7-9]|1[0-8])$") & (
+        draws_df["channel_type"].astype(str) == "binary"
     )
     if is_per_channel_binary.any():
         logger.info(
@@ -379,10 +400,9 @@ def compute_fairness_skill_scores(
         # match the percentile-CI denominator exactly. (The point flow's own
         # ``b2_bucket_for_channel`` would also filter these, but stripping up
         # front mirrors the draws_df path and cuts the recompute cost.)
-        is_per_channel_binary_pu = (
-            per_user_df["channel"].astype(str).str.match(r"^ch_(?:[7-9]|1[0-8])$")
-            & (per_user_df["channel_type"].astype(str) == "binary")
-        )
+        is_per_channel_binary_pu = per_user_df["channel"].astype(str).str.match(
+            r"^ch_(?:[7-9]|1[0-8])$"
+        ) & (per_user_df["channel_type"].astype(str) == "binary")
         if is_per_channel_binary_pu.any():
             per_user_df = per_user_df[~is_per_channel_binary_pu]
 
@@ -454,10 +474,7 @@ def compute_fairness_skill_scores(
         # attribute drop out of the overall row to keep the average honest.
         if per_attr_results:
             stacked = pd.concat(
-                [
-                    df.assign(attr=attr_name)
-                    for attr_name, df in per_attr_results.items()
-                ],
+                [df.assign(attr=attr_name) for attr_name, df in per_attr_results.items()],
                 ignore_index=True,
             )
             n_attrs_seen = (
@@ -528,8 +545,15 @@ def compute_fairness_skill_scores(
                     jack_by_key[(method, scope, split)] = arr
 
     base_cols = [
-        "method", "scope", "split", "n_tasks",
-        "mean", "se", "ci_lo", "ci_hi", "n_boot",
+        "method",
+        "scope",
+        "split",
+        "n_tasks",
+        "mean",
+        "se",
+        "ci_lo",
+        "ci_hi",
+        "n_boot",
     ]
     if not summary_frames:
         empty = pd.DataFrame(columns=base_cols)
@@ -562,8 +586,10 @@ def main() -> int:
     if meta is not None:
         logger.info(
             "Phase-1 meta: n_boot=%s, seed=%s, methods=%d, scenarios=%s",
-            meta.get("n_boot"), meta.get("seed"),
-            len(meta.get("methods", [])), meta.get("scenarios"),
+            meta.get("n_boot"),
+            meta.get("seed"),
+            len(meta.get("methods", [])),
+            meta.get("scenarios"),
         )
     if args.method_filter:
         df = df[df["method"].isin(args.method_filter)].copy()
@@ -586,12 +612,12 @@ def main() -> int:
             return 2
         per_user_df, _pu_meta = read_per_user_errors_parquet(per_user_path)
         logger.info(
-            "Loaded %d per-user rows from %s", len(per_user_df), per_user_path,
+            "Loaded %d per-user rows from %s",
+            len(per_user_df),
+            per_user_path,
         )
         if args.method_filter:
-            per_user_df = per_user_df[
-                per_user_df["method"].isin(args.method_filter)
-            ].copy()
+            per_user_df = per_user_df[per_user_df["method"].isin(args.method_filter)].copy()
             logger.info("After --method-filter (per-user): %d rows", len(per_user_df))
 
     out_df = compute_fairness_skill_scores(

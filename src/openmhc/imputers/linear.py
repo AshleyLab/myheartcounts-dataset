@@ -27,6 +27,7 @@ class LinearImputer(BaseImputer):
         version: Version,
         data_dir: str | Path | None = None,
     ) -> None:
+        """Fit the per-channel mean fallback on the official train split."""
         super().__init__(version=version, data_dir=data_dir)
         self._channel_means = self.compute_channel_means()
 
@@ -36,6 +37,18 @@ class LinearImputer(BaseImputer):
         observed_mask: np.ndarray,
         target_mask: np.ndarray,
     ) -> np.ndarray:
+        """Linearly interpolate ``target_mask == 1`` positions per sample.
+
+        Args:
+            data: ``(N, C, T)`` float32 batch with NaN at missing cells.
+            observed_mask: ``(N, C, T)``; 1 where a value is observed.
+            target_mask: ``(N, C, T)``; 1 at positions to impute.
+
+        Returns:
+            A copy of ``data`` with masked positions filled; ``(N, C, T)``
+            float32. Channels with no anchors in a sample fall back to the
+            per-channel mean.
+        """
         result = data.copy()
         N, C, T = data.shape
         for n in range(N):

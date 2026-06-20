@@ -95,9 +95,7 @@ def compute_sql(
 
     scales = np.asarray(scales_by_hour, dtype=float).reshape(-1)
     if scales.shape[0] != season_length:
-        raise ValueError(
-            f"scales_by_hour must have length {season_length}, got {scales.shape[0]}"
-        )
+        raise ValueError(f"scales_by_hour must have length {season_length}, got {scales.shape[0]}")
 
     target_indices = np.arange(target_start_idx, target_start_idx + ql.shape[0], dtype=int)
     scale_by_horizon = np.full(ql.shape, np.nan, dtype=float)

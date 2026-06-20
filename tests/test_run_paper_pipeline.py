@@ -38,8 +38,10 @@ def captured_cmds(monkeypatch):
 
 
 def test_phase0_sets_output_results_dir_per_method(tmp_path, captured_cmds):
-    """Each per-method command must pin BOTH hydra.run.dir AND output.results_dir
-    to the same per-method run directory."""
+    """Each per-method command pins hydra.run.dir and output.results_dir together.
+
+    Both must point at the same per-method run directory.
+    """
     runs_root = tmp_path / "runs"
     cfg = {
         "runs_root": str(runs_root),
@@ -65,11 +67,11 @@ def test_phase0_sets_output_results_dir_per_method(tmp_path, captured_cmds):
 
 
 def test_phase0_returned_pairs_dirs_match_overrides(tmp_path, captured_cmds):
-    """The {method: pairs_dir} returned by _phase0_run_methods must point at
-    the same location the runner would write pairs to, given the new override:
-    ``output.results_dir/pairs == runs_root/<method>/pairs``.
+    """The returned {method: pairs_dir} matches where the runner writes pairs.
 
-    This is the round-trip Phase 1's manifest builder depends on."""
+    Given the new override, ``output.results_dir/pairs == runs_root/<method>/pairs``.
+    This is the round-trip Phase 1's manifest builder depends on.
+    """
     runs_root = tmp_path / "runs"
     cfg = {"runs_root": str(runs_root), "common_overrides": []}
     methods = [{"name": "mean"}, {"name": "locf"}]
@@ -78,9 +80,7 @@ def test_phase0_returned_pairs_dirs_match_overrides(tmp_path, captured_cmds):
 
     for cmd, m in zip(captured_cmds, methods, strict=True):
         # Pull the output.results_dir override from the command.
-        results_dir_override = next(
-            tok for tok in cmd if tok.startswith("output.results_dir=")
-        )
+        results_dir_override = next(tok for tok in cmd if tok.startswith("output.results_dir="))
         results_dir = Path(results_dir_override.split("=", 1)[1])
         # The pairs_dir returned to the caller must equal the runner's
         # ``config.output.results_dir / "pairs"``.
@@ -114,9 +114,11 @@ def _phase2_cfg(method_filter: list[str] | None = None) -> dict:
 
 
 def test_phase2_aggregate_passes_method_filter(captured_cmds):
-    """When sweep config sets ``method_filter``, _phase2_aggregate forwards
-    it to aggregate_imputation_paper_metrics.py as ``--method-filter`` plus
-    the listed names in order."""
+    """A configured ``method_filter`` is forwarded by _phase2_aggregate.
+
+    It passes ``--method-filter`` plus the listed names, in order, to
+    aggregate_imputation_paper_metrics.py.
+    """
     cfg = _phase2_cfg(method_filter=["locf", "lsm2", "linear"])
     run_paper_pipeline._phase2_aggregate(cfg, dry_run=True)
 
@@ -128,8 +130,10 @@ def test_phase2_aggregate_passes_method_filter(captured_cmds):
 
 
 def test_phase2_fairness_passes_method_filter(captured_cmds):
-    """Same as above for the fairness sidecar — both aggregators must
-    receive the same filter so the two CSVs stay in lockstep."""
+    """The fairness sidecar receives the same ``method_filter`` as the aggregator.
+
+    Both aggregators must get the same filter so the two CSVs stay in lockstep.
+    """
     cfg = _phase2_cfg(method_filter=["locf", "lsm2", "linear"])
     run_paper_pipeline._phase2_fairness_skill_score(cfg, dry_run=True)
 
@@ -140,12 +144,12 @@ def test_phase2_fairness_passes_method_filter(captured_cmds):
 
 
 def test_phase2_no_method_filter_when_unset(captured_cmds):
-    """When ``method_filter`` is absent / null / empty in the sweep config,
-    neither Phase 2 helper emits ``--method-filter``. Phase 2 then sees
-    every method in the parquet (the default behaviour pre-existing in the
-    aggregator)."""
-    for cfg in (_phase2_cfg(), _phase2_cfg(method_filter=None),
-                _phase2_cfg(method_filter=[])):
+    """An absent / null / empty ``method_filter`` makes neither helper emit the flag.
+
+    Phase 2 then sees every method in the parquet (the aggregator's pre-existing
+    default behaviour).
+    """
+    for cfg in (_phase2_cfg(), _phase2_cfg(method_filter=None), _phase2_cfg(method_filter=[])):
         captured_cmds.clear()
         run_paper_pipeline._phase2_aggregate(cfg, dry_run=True)
         run_paper_pipeline._phase2_fairness_skill_score(cfg, dry_run=True)
@@ -154,12 +158,13 @@ def test_phase2_no_method_filter_when_unset(captured_cmds):
 
 
 def test_phase2_raises_if_baseline_not_in_filter(captured_cmds):
-    """The pipeline driver enforces the rule that the baseline method must
-    be in the comparison pool. Without it, skill / fairness rows would be
-    empty (the per-task paired ratio joins against the baseline). The
-    direct CLI doesn't enforce this; the YAML-driven path does, because
-    we have the cfg dict in hand and can fail fast before subprocess
-    launch."""
+    """A ``method_filter`` that excludes the baseline raises before any subprocess launch.
+
+    The driver enforces that the baseline method stays in the comparison pool;
+    without it, skill / fairness rows would be empty (the per-task paired ratio
+    joins against the baseline). The direct CLI doesn't enforce this; the
+    YAML-driven path does, because the cfg dict is in hand and can fail fast.
+    """
     cfg = _phase2_cfg(method_filter=["lsm2", "linear"])  # no 'locf'!
     with pytest.raises(ValueError, match="excludes the baseline"):
         run_paper_pipeline._phase2_aggregate(cfg, dry_run=True)

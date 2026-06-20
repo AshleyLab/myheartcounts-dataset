@@ -185,6 +185,8 @@ def _make_target(sample_idx: int) -> np.ndarray:
 
 
 class TestPersonalizedMeanLOO:
+    """Leave-one-sample-out behaviour of PersonalizedMeanImputer."""
+
     def test_loo_fill_excludes_self_sample(self, stub_personalized_streams):
         """LOSO fill must equal the mean of the user's OTHER samples."""
         from openmhc.imputers import PersonalizedMeanImputer
@@ -256,6 +258,8 @@ class TestPersonalizedMeanLOO:
 
 
 class TestPersonalizedTemporalMeanLOO:
+    """Leave-one-sample-out behaviour of PersonalizedTemporalMeanImputer."""
+
     def test_loo_minute_mean_excludes_self_sample(self, stub_personalized_streams):
         """LOSO temporal mean equals the other-samples per-minute mean."""
         from openmhc.imputers import PersonalizedTemporalMeanImputer
@@ -284,6 +288,8 @@ class TestPersonalizedTemporalMeanLOO:
 
 
 class TestPersonalizedModeLOO:
+    """Leave-one-sample-out behaviour of PersonalizedModeImputer."""
+
     def test_loo_mode_drops_self_only_value(self, stub_personalized_streams):
         """LOSO mode falls back to the other sample's value, not its own."""
         from openmhc.imputers import PersonalizedModeImputer
@@ -328,6 +334,8 @@ class TestPersonalizedModeLOO:
 
 
 class TestSingleSampleUserLOO:
+    """Single-sample users fall through to the global fallback under LOSO."""
+
     def _data_mask_target(self):
         """Tiny inputs for a single-sample impute call."""
         data = np.full((1, N_CHANNELS, SEQ_LEN), np.nan, dtype=np.float32)
@@ -369,9 +377,7 @@ class TestSingleSampleUserLOO:
             )
             t = target[0, 0] > 0.5
             # Global temporal mean for the all-zero train batch is 0 at every minute.
-            np.testing.assert_allclose(
-                out[0, 0][t], imp._global_fallback[0, :5], rtol=1e-5
-            )
+            np.testing.assert_allclose(out[0, 0][t], imp._global_fallback[0, :5], rtol=1e-5)
 
     def test_mode_falls_back_to_global_on_single_sample(self):
         """Per-user mode with one sample, LOSO-excluded → global fallback."""
@@ -450,11 +456,13 @@ def _stub_single_sample_split():
     import openmhc.imputers._base as _base
     import openmhc.imputers._personalized_base as _pbase
 
-    with patch.object(_du, "iter_split_data", _fake_iter_split_data), \
-         patch.object(_du, "iter_train_data", lambda **kw: _fake_iter_split_data("train", **kw)), \
-         patch.object(_du, "load_sample_metadata", _fake_load_sample_metadata), \
-         patch.object(_du, "open_eval_user_context", lambda **kw: fake_ctx), \
-         patch.object(_base, "iter_train_data", lambda **kw: _fake_iter_split_data("train", **kw)), \
-         patch.object(_base, "load_sample_metadata", _fake_load_sample_metadata), \
-         patch.object(_pbase, "open_eval_user_context", lambda **kw: fake_ctx):
+    with (
+        patch.object(_du, "iter_split_data", _fake_iter_split_data),
+        patch.object(_du, "iter_train_data", lambda **kw: _fake_iter_split_data("train", **kw)),
+        patch.object(_du, "load_sample_metadata", _fake_load_sample_metadata),
+        patch.object(_du, "open_eval_user_context", lambda **kw: fake_ctx),
+        patch.object(_base, "iter_train_data", lambda **kw: _fake_iter_split_data("train", **kw)),
+        patch.object(_base, "load_sample_metadata", _fake_load_sample_metadata),
+        patch.object(_pbase, "open_eval_user_context", lambda **kw: fake_ctx),
+    ):
         yield ((), {"version": "xs"})

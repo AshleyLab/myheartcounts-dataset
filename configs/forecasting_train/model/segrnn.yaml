@@ -1,0 +1,12 @@
+# @package model
+# SegRNN — segment-wise RNN forecaster (PyPOTS pypots.forecasting.SegRNN).
+# Architecture matches the published checkpoint
+# (releases-fc/openmhc-segrnn-fc/training_config.json) so the retrain stays
+# comparable to the original — only the short-history padding changes.
+model_name: segrnn
+n_steps: 336
+n_pred_steps: 24
+n_features: 19
+seg_len: 12
+d_model: 64
+dropout: 0.1

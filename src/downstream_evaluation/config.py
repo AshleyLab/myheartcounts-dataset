@@ -429,7 +429,9 @@ class MultiRocketConfig:
     normalise: bool = False
     n_jobs: int = 1
     random_state: int | None = None
-    transform_chunk_size: int = 0  # 0 = transform all at once; >0 = chunk size for incremental aggregation
+    transform_chunk_size: int = (
+        0  # 0 = transform all at once; >0 = chunk size for incremental aggregation
+    )
 
 
 @dataclass
@@ -494,9 +496,17 @@ class FeatureConfig:
     """
 
     type: Literal[
-        "statistical", "ssl_encoder", "multirocket", "jets_encoder",
-        "mae_encoder", "gru_d", "brits", "fe_xgboost", "hybrid",
-        "fe_handcrafted_weekly", "vlm",
+        "statistical",
+        "ssl_encoder",
+        "multirocket",
+        "jets_encoder",
+        "mae_encoder",
+        "gru_d",
+        "brits",
+        "fe_xgboost",
+        "hybrid",
+        "fe_handcrafted_weekly",
+        "vlm",
     ] = "statistical"
     statistical: BaselineFeatureConfig = field(default_factory=BaselineFeatureConfig)
     ssl_encoder: EncoderFeatureConfig = field(default_factory=EncoderFeatureConfig)
@@ -629,7 +639,9 @@ class XGBClassifierConfig:
     colsample_bytree: float = 0.8
     reg_alpha: float = 0.0  # L1 regularization
     reg_lambda: float = 1.0  # L2 regularization
-    scale_pos_weight: float | None = None  # None = auto-compute from training labels for binary tasks
+    scale_pos_weight: float | None = (
+        None  # None = auto-compute from training labels for binary tasks
+    )
     n_jobs: int = -1
     eval_metric: str = "logloss"
 
@@ -685,7 +697,9 @@ class ClassifierConfig:
         "xgboost_ordinal",
     ] = "logistic_regression"
     use_scaler: bool = True
-    scaler_type: Literal["robust", "standard"] = "robust"  # "robust" = z-score + clip ±10σ (prevents overflow), "standard" = z-score only
+    scaler_type: Literal["robust", "standard"] = (
+        "robust"  # "robust" = z-score + clip ±10σ (prevents overflow), "standard" = z-score only
+    )
     pca_n_components: int | None = None  # PCA dim reduction before classifier (None = disabled)
     pca_whiten: bool = False  # If True, whiten PCA output (unit variance per component)
     use_l2_norm: bool = False  # L2-normalize each sample before classifier
@@ -703,9 +717,7 @@ class ClassifierConfig:
     xgboost_regressor: XGBRegressorConfig = field(default_factory=XGBRegressorConfig)
     xgboost_ordinal: XGBOrdinalConfig = field(default_factory=XGBOrdinalConfig)
     ordinal_logit_at: OrderedLogitATConfig = field(default_factory=OrderedLogitATConfig)
-    ordinal_logit_ridge: OrderedLogitRidgeConfig = field(
-        default_factory=OrderedLogitRidgeConfig
-    )
+    ordinal_logit_ridge: OrderedLogitRidgeConfig = field(default_factory=OrderedLogitRidgeConfig)
 
 
 @dataclass

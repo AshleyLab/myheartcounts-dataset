@@ -11,10 +11,20 @@ Evaluation API and reference implementations for the **MyHeartCounts Datasets & 
 ```bash
 git clone https://github.com/AshleyLab/myheartcounts-dataset.git
 cd myheartcounts-dataset
-pip install -e .
+
+# Install into a dedicated environment (conda for Python, pip for the rest):
+conda create -n openmhc python=3.10 -y && conda activate openmhc
+pip install -e ".[all]"
 ```
 
-Python ≥ 3.10. Installs the `openmhc` package and its evaluation dependencies.
+Python ≥ 3.10. `[all]` pulls in every track (prediction, imputation,
+forecasting) plus the Hydra CLIs and W&B logging; use a bare `pip install -e .`
+for just Track 1 + the core API. **Install into an isolated environment** — the
+evaluation engines use non-unique top-level package names that will collide with
+the private `MHC-benchmark` repo if both share one environment.
+
+See [`docs/install.md`](docs/install.md) for the full guide (extras table, venv
+alternative, Sherlock cluster setup, verification).
 
 ## Quickstart
 
@@ -38,7 +48,7 @@ class MeanPoolEncoder:
         # weekly_tensors: (B, 168, 38). Return (B, D) embeddings.
         return weekly_tensors[:, :, :19].mean(axis=1).astype(np.float32)
 
-results = openmhc.evaluate_prediction(MeanPoolEncoder())
+results = openmhc.evaluate_prediction(MeanPoolEncoder(), version="xs")
 print(results.summary())
 print("global score (mean AUROC over binary tasks):", results.global_score)
 ```
@@ -60,7 +70,7 @@ class MeanImputer:
             out[:, ch, :][target] = self.means[ch]
         return out.astype(np.float32)
 
-results = openmhc.evaluate_imputation(MeanImputer())
+results = openmhc.evaluate_imputation(MeanImputer(), version="xs")
 print(results.summary())
 ```
 
@@ -99,9 +109,27 @@ class LastValueForecaster:
         last = np.nan_to_num(history[:, -1:], nan=0.0)
         return np.tile(last, (1, horizon)).astype(np.float32)
 
-results = openmhc.evaluate_forecasting(LastValueForecaster(), forecasting_length=24)
+results = openmhc.evaluate_forecasting(LastValueForecaster(), version="xs", forecasting_length=24)
 print(results.summary())
 ```
+
+For reproducible paper-style forecasting runs, use the Hydra CLI and config
+family at `configs/forecasting/`:
+
+```bash
+mhc-forecast-eval model=seasonal_naive
+mhc-forecast-eval --multirun model=seasonal_naive,autoARIMA,autoETS
+```
+
+Simurgh (SC) SLURM wrappers live in `jobs/sc-cluster/forecasting_eval/`. The
+forecasting implementation supports both device-channel scoring modes: per-task
+(default) — phone/watch channels scored separately and combined into
+steps/distance scopes by geometric mean, consistent with the imputation track —
+and the legacy signal-merge (`--combine-channels`) used for some appendix tables.
+
+See [`src/forecasting_evaluation/README.md`](src/forecasting_evaluation/README.md)
+for the full guide (Hydra overrides, release checkpoints, full-data Seasonal
+Naive parity checks, offline metrics, raw appendix tables, and SLURM dispatch).
 
 A more complete walkthrough is in [`notebooks/quickstart.ipynb`](notebooks/quickstart.ipynb).
 

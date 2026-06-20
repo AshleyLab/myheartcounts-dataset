@@ -126,32 +126,51 @@ class Imputer(Protocol):
 
 @runtime_checkable
 class Forecaster(Protocol):
-    """Protocol for forecasting evaluation (Track 3).
+    """Protocol for forecasting evaluation (Track 3) — the unified contract.
 
-    Forecast future hours from a history window. The benchmark evaluates
-    point predictions; quantile forecasts are optional via a return signature
-    extension (see below).
+    A forecaster receives, for each in-scope window, the **full-prefix** history
+    ``(n_channels, history_length)`` (selected by data-quality criteria only, so
+    the window set is identical across all models) and the forecast ``horizon``.
+    The model owns all context windowing / truncation / padding it needs.
+
+    The harness **never** drops a window for model-capability reasons. If the
+    model cannot predict a given window/channel/timestep it must emit ``NaN``
+    there; the harness substitutes the Seasonal-Naive baseline for those
+    positions before scoring and reports how often that happened
+    (``ForecastingResults.overall_fallback_rate``).
+
+    Optional metadata kwargs are keyword-only and forwarded only if declared
+    (the harness inspects the signature once, the same duck-typed pattern as
+    :class:`Encoder` / :class:`Imputer`): ``variable_names``,
+    ``past_covariates``, ``future_covariates``, ``index_days``.
+
+    The benchmark ranks point forecasts; quantile forecasts are optional by
+    returning a ``(point, quantiles)`` tuple instead of a bare point array
+    (``quantiles`` shape ``(n_channels, horizon, n_quantiles)``; expose the
+    matching levels as a ``quantile_levels`` attribute).
 
     Example:
         >>> class LastValueForecaster:
         ...     def predict(self, history, horizon):
-        ...         # history: (n_channels, history_length)
+        ...         # history: (n_channels, history_length), full prefix
         ...         # returns: (n_channels, horizon)
         ...         last = history[:, -1:]
         ...         return np.tile(last, (1, horizon))
     """
 
     def predict(self, history: np.ndarray, horizon: int) -> np.ndarray:
-        """Forecast ``horizon`` future hours given the history window.
+        """Forecast ``horizon`` future hours given the full-prefix history.
 
         Args:
-            history: Float array of shape ``(n_channels, history_length)``
-                with the past observations. May contain NaN at missing
-                positions.
+            history: Float array of shape ``(n_channels, history_length)`` with
+                the past observations (full prefix up to the forecast origin).
+                May contain NaN at missing positions and may be short.
             horizon: Number of future hours to predict.
 
         Returns:
             Float array of shape ``(n_channels, horizon)`` with the point
-            forecast. Must be float32.
+            forecast (float32), or a ``(point, quantiles)`` tuple. Use ``NaN``
+            for any position the model cannot predict — those are filled by the
+            Seasonal-Naive baseline before scoring.
         """
         ...

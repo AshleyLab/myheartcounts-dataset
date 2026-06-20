@@ -27,7 +27,18 @@ env/
 .cache/
 data/.hf_cache/
 data/processed/
+data/cache/
 
 # Generated outputs (eval run results, notebook-side artifacts)
 notebooks/data/
 results/
+logs/
+
+# Forecasting release staging + merge artifacts (large weights, not source)
+.merge_cache/
+releases-fc/
+forecasting_model_ckpt/
+__MACOSX/
+
+# Scratch / throwaway experiment + benchmark scaffolding
+scratch/

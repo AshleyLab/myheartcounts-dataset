@@ -20,6 +20,7 @@ from forecasting_evaluation.config import (
     ForecastingConfig,
     ForecastingEvalConfig,
     ForecastingModelConfig,
+    MetricsConfig,
     OutputConfig,
 )
 from forecasting_evaluation.hydra.registry import MODEL_REGISTRY
@@ -29,6 +30,11 @@ logger = logging.getLogger(__name__)
 
 
 def register_configs() -> None:
+    """Register the forecasting dataclass tree with Hydra's ConfigStore.
+
+    Called at module import time so the schema is available before
+    ``@hydra.main`` composes the defaults list.
+    """
     cs = ConfigStore.instance()
     register_dataclass_tree(
         cs,
@@ -41,6 +47,7 @@ def register_configs() -> None:
             "features": FeaturesConfig,
             "evaluator": EvaluatorConfig,
             "output": OutputConfig,
+            "metrics": MetricsConfig,
         },
     )
 
@@ -63,6 +70,12 @@ _CONFIG_PATH = str(Path(__file__).resolve().parents[3] / "configs" / "forecastin
     config_name="eval",
 )
 def main(cfg: DictConfig) -> dict[str, Any]:
+    """Run one forecasting evaluation from the composed Hydra config.
+
+    Builds the model via the model registry, runs ``run_eval``, writes
+    run artifacts and ``results.json`` into the Hydra run directory, and
+    returns the results dict.
+    """
     OmegaConf.resolve(cfg)
     typed_cfg: ForecastingEvalConfig = dict_to_dataclass(ForecastingEvalConfig, cfg)
 
@@ -80,9 +93,7 @@ def main(cfg: DictConfig) -> dict[str, Any]:
     logger.info("Running forecasting eval (model=%s) → %s", cfg.model.type, run_dir)
     results = run_eval(typed_cfg, model=model)
 
-    (run_dir / "results.json").write_text(
-        json.dumps(results, indent=2, default=_json_serializer)
-    )
+    (run_dir / "results.json").write_text(json.dumps(results, indent=2, default=_json_serializer))
 
     return results
 

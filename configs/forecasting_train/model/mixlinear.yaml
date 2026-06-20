@@ -1,0 +1,13 @@
+# @package model
+# MixLinear — periodicity-aware linear forecaster (PyPOTS pypots.forecasting.MixLinear).
+# Architecture matches the published checkpoint
+# (releases-fc/openmhc-mixlinear-fc/training_config.json) so the retrain stays
+# comparable to the original — only the short-history padding changes.
+model_name: mixlinear
+n_steps: 336
+n_pred_steps: 24
+n_features: 19
+period_len: 6
+lpf: 2
+alpha: 0.5
+rank: 2

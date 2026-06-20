@@ -13,6 +13,7 @@ def _lazy_main():
 
 
 def main(*args, **kwargs):
+    """Lazily import and invoke the Hydra CLI entry point."""
     return _lazy_main()(*args, **kwargs)
 
 

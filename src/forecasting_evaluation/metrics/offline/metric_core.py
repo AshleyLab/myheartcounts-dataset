@@ -76,10 +76,14 @@ class MetricsComputer:
     ):
         """Initialize metric scaling inputs and season length."""
         self.global_scales_by_feature = (
-            None if global_scales_by_feature is None else np.asarray(global_scales_by_feature, dtype=float)
+            None
+            if global_scales_by_feature is None
+            else np.asarray(global_scales_by_feature, dtype=float)
         )
         self.global_scales_all_by_feature = (
-            None if global_scales_all_by_feature is None else np.asarray(global_scales_all_by_feature, dtype=float)
+            None
+            if global_scales_all_by_feature is None
+            else np.asarray(global_scales_all_by_feature, dtype=float)
         )
         self.season_length = int(season_length)
 

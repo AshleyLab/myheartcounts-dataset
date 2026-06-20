@@ -31,17 +31,18 @@ def _build_fourier_block():
 
 
 def test_seed_everything_pins_fourier_indices() -> None:
+    """Same seed yields identical FourierBlock indices across two constructions."""
     seed_everything(42)
     a = _build_fourier_block()
     seed_everything(42)
     b = _build_fourier_block()
     assert list(a.index) == list(b.index), (
-        f"FourierBlock indices differ across seeded constructions: "
-        f"{a.index} vs {b.index}"
+        f"FourierBlock indices differ across seeded constructions: {a.index} vs {b.index}"
     )
 
 
 def test_different_seeds_produce_different_indices() -> None:
+    """Different seeds yield different FourierBlock indices, confirming seeding takes effect."""
     seed_everything(0)
     a = _build_fourier_block()
     seed_everything(123)

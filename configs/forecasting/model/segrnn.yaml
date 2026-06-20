@@ -1,6 +1,9 @@
 # @package model
-# Learned forecaster — set ``model.segrnn.checkpoint_path`` to a trained ckpt.
+# Learned forecaster — set ``model.release_dir`` or
+# ``model.segrnn.checkpoint_path`` to a trained checkpoint.
 type: segrnn
+name: null
+release_dir: null
 segrnn:
   checkpoint_path: ???
   device: auto

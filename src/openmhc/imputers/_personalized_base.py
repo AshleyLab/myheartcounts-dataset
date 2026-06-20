@@ -118,9 +118,7 @@ class PersonalizedImputerBase(BaseImputer, abc.ABC):
         """
 
     @abc.abstractmethod
-    def _init_sample_contribution(
-        self, sample_data: np.ndarray, sample_mask: np.ndarray
-    ) -> Any:
+    def _init_sample_contribution(self, sample_data: np.ndarray, sample_mask: np.ndarray) -> Any:
         """Capture the state needed to subtract this sample's contribution.
 
         Returned object is consumed by :meth:`_finalize_user_fill_values`
@@ -164,9 +162,7 @@ class PersonalizedImputerBase(BaseImputer, abc.ABC):
         Wrapped in a method so tests can monkeypatch this single seam
         instead of patching out every helper the real path uses.
         """
-        return open_eval_user_context(
-            version=self._version, data_dir=self._data_dir
-        )
+        return open_eval_user_context(version=self._version, data_dir=self._data_dir)
 
     def _build_user_state(self, user_id: str) -> None:
         """Stream one user's samples and build their accumulator + contributions."""
@@ -190,8 +186,8 @@ class PersonalizedImputerBase(BaseImputer, abc.ABC):
         ):
             s_idx = hf_to_split_local[int(hf_idx)]
             self._update_user_accumulator(acc, sample_data, sample_mask)
-            self._sample_contributions[(user_id, s_idx)] = (
-                self._init_sample_contribution(sample_data, sample_mask)
+            self._sample_contributions[(user_id, s_idx)] = self._init_sample_contribution(
+                sample_data, sample_mask
             )
 
         self._user_accumulators[user_id] = acc
@@ -243,11 +239,7 @@ class PersonalizedImputerBase(BaseImputer, abc.ABC):
         # Group batch positions by user so we touch each user's cache once.
         user_to_positions: dict[str | None, list[int]] = {}
         for i in range(N):
-            uid = (
-                user_ids[i]
-                if user_ids is not None and i < len(user_ids)
-                else None
-            )
+            uid = user_ids[i] if user_ids is not None and i < len(user_ids) else None
             user_to_positions.setdefault(uid, []).append(i)
 
         for uid, positions in user_to_positions.items():

@@ -1,4 +1,0 @@
-# @package model
-type: seasonal_naive_average_history
-seasonal_naive_average_history:
-  season_length: 24

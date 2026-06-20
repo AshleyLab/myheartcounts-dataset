@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections import Counter
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 
@@ -42,9 +41,7 @@ class PersonalizedMeanImputer(PersonalizedImputerBase):
         acc["sums"] += data_masked.sum(axis=1)
         acc["counts"] += valid.sum(axis=1)
 
-    def _init_sample_contribution(
-        self, sample_data: np.ndarray, sample_mask: np.ndarray
-    ) -> dict:
+    def _init_sample_contribution(self, sample_data: np.ndarray, sample_mask: np.ndarray) -> dict:
         # Mirror the per-sample addends in `_update_user_accumulator` so the
         # finalize step can subtract them exactly.
         valid = (sample_mask > 0.5) & np.isfinite(sample_data)
@@ -115,6 +112,14 @@ class PersonalizedModeImputer(PersonalizedImputerBase):
         decimal_precision: int = 1,
         data_dir: str | Path | None = None,
     ) -> None:
+        """Set up per-user mode imputation with rounding precision.
+
+        Args:
+            version: ``"xs"`` or ``"full"`` dataset version.
+            decimal_precision: Decimal places to round observed values to
+                before computing per-sample modes.
+            data_dir: Override for the dataset root.
+        """
         self.decimal_precision = decimal_precision
         super().__init__(version=version, data_dir=data_dir)
 
@@ -139,9 +144,7 @@ class PersonalizedModeImputer(PersonalizedImputerBase):
                 modes[ch] = counter.most_common(1)[0][0]
         return modes
 
-    def _compute_sample_mode(
-        self, sample_data: np.ndarray, sample_mask: np.ndarray
-    ) -> np.ndarray:
+    def _compute_sample_mode(self, sample_data: np.ndarray, sample_mask: np.ndarray) -> np.ndarray:
         """Per-channel mode of this sample's rounded observed values.
 
         Returns ``(n_channels,) float32``; NaN at channels where the
@@ -197,10 +200,7 @@ class PersonalizedModeImputer(PersonalizedImputerBase):
             rows = []
             excluded = False
             for row in acc:
-                if (
-                    not excluded
-                    and np.array_equal(row, sample_contrib, equal_nan=True)
-                ):
+                if not excluded and np.array_equal(row, sample_contrib, equal_nan=True):
                     excluded = True
                     continue
                 rows.append(row)
@@ -277,9 +277,7 @@ class PersonalizedTemporalMeanImputer(PersonalizedImputerBase):
             acc["minute_sums"] += data_masked[:, s : s + T]
             acc["minute_counts"] += valid[:, s : s + T]
 
-    def _init_sample_contribution(
-        self, sample_data: np.ndarray, sample_mask: np.ndarray
-    ) -> dict:
+    def _init_sample_contribution(self, sample_data: np.ndarray, sample_mask: np.ndarray) -> dict:
         # Mirror the per-sample addends folded by `_update_user_accumulator`.
         T = self.seq_len
         valid = (sample_mask > 0.5) & np.isfinite(sample_data)

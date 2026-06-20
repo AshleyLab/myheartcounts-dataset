@@ -38,6 +38,7 @@ def resolve_experiment_name(config: OutputConfig, full_config: ImputationEvalCon
 
     return base_experiment_name
 
+
 class ResultsWriter:
     """Write evaluation results to JSON/YAML files."""
 

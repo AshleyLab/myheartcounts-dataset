@@ -11,6 +11,7 @@ defaults:
   - features: default
   - evaluator: default
   - output: default
+  - metrics: default
   - _self_
 
 seed: 42

@@ -14,8 +14,6 @@ baseline errors using:
 from __future__ import annotations
 
 import argparse
-import importlib.util
-import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -28,168 +26,32 @@ SRC_ROOT = REPO_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-_CHANNEL_CONSTANTS_PATH = SRC_ROOT / "visualizations" / "constants.py"
-_CHANNEL_SPEC = importlib.util.spec_from_file_location(
-    "_forecasting_skill_score_channel_constants",
-    _CHANNEL_CONSTANTS_PATH,
-)
-if _CHANNEL_SPEC is None or _CHANNEL_SPEC.loader is None:
-    CHANNEL_INFO = {}
-else:
-    _channel_module = importlib.util.module_from_spec(_CHANNEL_SPEC)
-    _CHANNEL_SPEC.loader.exec_module(_channel_module)
-    CHANNEL_INFO = getattr(_channel_module, "CHANNEL_INFO", {})
+from forecasting_evaluation.metrics import metric_spec as _spec  # noqa: E402
 
-LOWER_IS_BETTER_METRICS = {"mae", "mse", "mase", "mase_all", "ql", "sql"}
-HIGHER_IS_BETTER_METRICS = {"f1", "auprc", "auroc"}
+CHANNEL_INFO = _spec.CHANNEL_INFO
+LOWER_IS_BETTER_METRICS = _spec.LOWER_IS_BETTER_METRICS
+HIGHER_IS_BETTER_METRICS = _spec.HIGHER_IS_BETTER_METRICS
 
 
-def _safe_read_parquet(file_path: str | Path, **kwargs: Any) -> pd.DataFrame | None:
-    path = Path(file_path)
-    try:
-        if not path.exists() or path.stat().st_size == 0:
-            return None
-        return pd.read_parquet(path, **kwargs)
-    except Exception:
-        return None
+_safe_read_parquet = _spec.safe_read_parquet
 
 
-def _list_parquet_files(metric_dir: str | Path) -> list[Path]:
-    path = Path(metric_dir)
-    if not path.exists():
-        return []
-    return sorted(path.rglob("*.parquet"))
+_list_parquet_files = _spec.list_parquet_files
 
 
-def _channel_label(channel_idx: int) -> str:
-    metadata = CHANNEL_INFO.get(channel_idx)
-    if metadata is None:
-        return f"Channel {channel_idx}"
-    return str(metadata["name"])
+_channel_label = _spec.channel_label
 
 
-def _parse_channel_indices(raw_value: str | None, default: tuple[int, ...]) -> tuple[int, ...]:
-    if raw_value is None or not raw_value.strip():
-        return default
-
-    indices: list[int] = []
-    for part in raw_value.split(","):
-        token = part.strip()
-        if token:
-            indices.append(int(token))
-
-    if not indices:
-        raise ValueError("At least one channel index must be provided.")
-    return tuple(indices)
+_parse_channel_indices = _spec.parse_channel_indices
 
 
-def _load_models_dict(args: argparse.Namespace) -> dict[str, dict[str, str]]:
-    if args.models_json:
-        parsed = json.loads(args.models_json)
-    elif args.config:
-        config_path = Path(args.config)
-        if not config_path.exists():
-            raise ValueError(f"Config file not found: {config_path}")
-        if config_path.suffix.lower() in {".yaml", ".yml"}:
-            try:
-                import yaml
-            except ImportError as exc:
-                raise ImportError("PyYAML is required for yaml config input") from exc
-            with config_path.open("r", encoding="utf-8") as file:
-                parsed = yaml.safe_load(file)
-        else:
-            with config_path.open("r", encoding="utf-8") as file:
-                parsed = json.load(file)
-    else:
-        raise ValueError("Please provide --models-json or --config")
-
-    if isinstance(parsed, dict) and "models" in parsed:
-        parsed = parsed["models"]
-
-    models: dict[str, dict[str, str]] = {}
-    if isinstance(parsed, dict):
-        for key, value in parsed.items():
-            model_name = str(key).strip()
-            if isinstance(value, dict):
-                model_path = str(value.get("path", "")).strip()
-                display_name = str(value.get("display_name", model_name)).strip()
-            else:
-                model_path = str(value).strip()
-                display_name = model_name
-            if not model_name or not model_path:
-                raise ValueError("Model configuration must use non-empty model names and paths")
-            models[model_name] = {
-                "path": model_path,
-                "display_name": display_name or model_name,
-            }
-    elif isinstance(parsed, list):
-        for item in parsed:
-            if not isinstance(item, dict):
-                raise ValueError("Model configuration list entries must be dictionaries")
-            model_name = str(item.get("name", "")).strip()
-            model_path = str(item.get("path", "")).strip()
-            display_name = str(item.get("display_name", model_name)).strip()
-            if not model_name or not model_path:
-                raise ValueError("Each model entry must contain non-empty name and path")
-            models[model_name] = {
-                "path": model_path,
-                "display_name": display_name or model_name,
-            }
-    else:
-        raise ValueError("Model configuration must be a dict or list")
-
-    if not models:
-        raise ValueError("No model mappings found in configuration")
-    return models
+_load_models_dict = _spec.load_models_dict
 
 
-def _safe_to_metric_array(value: Any) -> np.ndarray | None:
-    if value is None:
-        return None
-    try:
-        arr = np.asarray(value, dtype=float)
-        if arr.ndim in {1, 2}:
-            return arr
-    except Exception:
-        pass
-
-    try:
-        obj = np.asarray(value, dtype=object)
-    except Exception:
-        return None
-    if obj.ndim != 1:
-        return None
-
-    rows: list[np.ndarray] = []
-    for item in obj.tolist():
-        try:
-            row = np.asarray(item, dtype=float).reshape(-1)
-        except Exception:
-            return None
-        if row.size == 0:
-            return None
-        rows.append(row)
-    if not rows:
-        return None
-    min_len = min(row.shape[0] for row in rows)
-    if min_len <= 0:
-        return None
-    return np.vstack([row[:min_len] for row in rows])
+_safe_to_metric_array = _spec.safe_to_metric_array
 
 
-def _metric_to_error(metric_name: str, metric_value: float) -> float:
-    metric_key = metric_name.strip().lower()
-    if not np.isfinite(metric_value):
-        return float("nan")
-    if metric_key in LOWER_IS_BETTER_METRICS:
-        return float(metric_value) if metric_value >= 0.0 else float("nan")
-    if metric_key in HIGHER_IS_BETTER_METRICS:
-        if metric_value < 0.0 or metric_value > 1.0:
-            return float("nan")
-        return float(1.0 - metric_value)
-    raise ValueError(
-        f"Unknown metric '{metric_name}'. Add it to lower- or higher-is-better sets."
-    )
+_metric_to_error = _spec.metric_to_error
 
 
 def compute_skill_from_errors(
@@ -223,20 +85,10 @@ def compute_skill_from_errors(
     return float(1.0 - geometric_mean_ratio), geometric_mean_ratio, int(valid_ratios.shape[0])
 
 
-def _metric_channel_value(metric: np.ndarray, channel_idx: int) -> float:
-    if metric.ndim == 1:
-        if channel_idx >= metric.shape[0]:
-            return float("nan")
-        value = float(metric[channel_idx])
-        return value if np.isfinite(value) else float("nan")
+_metric_channel_value = _spec.metric_channel_value
 
-    if channel_idx >= metric.shape[0]:
-        return float("nan")
-    values = metric[channel_idx]
-    finite_values = values[np.isfinite(values)]
-    if finite_values.size == 0:
-        return float("nan")
-    return float(np.mean(finite_values))
+
+_metric_channel_sum_count = _spec.metric_channel_sum_count
 
 
 def _row_sample_key(row: pd.Series, occurrence: int) -> str:
@@ -255,10 +107,14 @@ def _load_metric_values(
     channel_indices: tuple[int, ...],
     group_name: str,
     aggregation_unit: str,
+    within_user_aggregation: str = "micro",
 ) -> pd.DataFrame:
     metric_dir = Path(model_root) / metric_name
     rows: list[dict[str, Any]] = []
-    per_unit_values: dict[tuple[str, int, str], list[float]] = {}
+    # Per (unit, channel, metric): one (cell_sum, cell_count) pair per window. Both
+    # macro (mean of per-window means) and micro (sum/count over finite horizon
+    # cells) are derivable from these pairs.
+    per_unit_pairs: dict[tuple[str, int, str], list[tuple[float, int]]] = {}
 
     for parquet_file in _list_parquet_files(metric_dir):
         df = _safe_read_parquet(
@@ -283,18 +139,16 @@ def _load_metric_values(
             unit_id = user_id if aggregation_unit == "user" else f"{user_id}|{sample_id}"
 
             for channel_idx in channel_indices:
-                value = _metric_channel_value(metric=metric, channel_idx=channel_idx)
-                if not np.isfinite(value):
+                sum_count = _metric_channel_sum_count(metric=metric, channel_idx=channel_idx)
+                if sum_count is None:
                     continue
-                error = _metric_to_error(metric_name=metric_name, metric_value=value)
-                if not np.isfinite(error):
-                    continue
-                per_unit_values.setdefault((unit_id, int(channel_idx), metric_name), []).append(error)
+                per_unit_pairs.setdefault((unit_id, int(channel_idx), metric_name), []).append(
+                    sum_count
+                )
 
-    for (unit_id, channel_idx, metric), values in per_unit_values.items():
-        finite_values = np.asarray(values, dtype=float)
-        finite_values = finite_values[np.isfinite(finite_values)]
-        if finite_values.size == 0:
+    for (unit_id, channel_idx, metric), pairs in per_unit_pairs.items():
+        error, n_values = _aggregate_unit_error(metric, pairs, within_user_aggregation)
+        if not np.isfinite(error):
             continue
         rows.append(
             {
@@ -304,12 +158,42 @@ def _load_metric_values(
                 "channel_idx": int(channel_idx),
                 "channel_name": _channel_label(channel_idx),
                 "unit_id": unit_id,
-                "error": float(np.mean(finite_values)),
-                "n_values": int(finite_values.size),
+                "error": error,
+                "n_values": int(n_values),
             }
         )
 
     return pd.DataFrame(rows)
+
+
+def _aggregate_unit_error(
+    metric_name: str,
+    pairs: list[tuple[float, int]],
+    within_user_aggregation: str,
+) -> tuple[float, int]:
+    """Reduce a unit's per-window (sum, count) pairs to one (error, n_values).
+
+    ``macro`` reproduces the legacy behaviour: convert each window's finite-mean to
+    an error and average those unweighted (n_values = #windows). ``micro`` pools all
+    finite horizon cells across the unit's windows, then converts once
+    (n_values = #finite cells).
+    """
+    if within_user_aggregation == "macro":
+        errors: list[float] = []
+        for cell_sum, cell_count in pairs:
+            error = _metric_to_error(metric_name=metric_name, metric_value=cell_sum / cell_count)
+            if np.isfinite(error):
+                errors.append(error)
+        if not errors:
+            return float("nan"), 0
+        return float(np.mean(errors)), len(errors)
+
+    total_sum = float(sum(cell_sum for cell_sum, _ in pairs))
+    total_count = int(sum(cell_count for _, cell_count in pairs))
+    if total_count == 0:
+        return float("nan"), 0
+    error = _metric_to_error(metric_name=metric_name, metric_value=total_sum / total_count)
+    return error, total_count
 
 
 def _build_error_table(
@@ -317,6 +201,7 @@ def _build_error_table(
     models: dict[str, dict[str, str]],
     metric_groups: dict[str, dict[str, Any]],
     aggregation_unit: str,
+    within_user_aggregation: str = "micro",
 ) -> pd.DataFrame:
     frames: list[pd.DataFrame] = []
     for group_name, group_spec in metric_groups.items():
@@ -331,6 +216,7 @@ def _build_error_table(
                     channel_indices=channel_indices,
                     group_name=group_name,
                     aggregation_unit=aggregation_unit,
+                    within_user_aggregation=within_user_aggregation,
                 )
                 if not frame.empty:
                     frames.append(frame)
@@ -438,16 +324,22 @@ def _compute_long_skill_scores(
                     "geometric_mean_ratio": gm_ratio,
                     "n_users": _count_users_from_unit_index(paired.index),
                     "n_pairs": int(n_pairs),
-                    "model_error_mean": float(paired["model_error"].mean()) if not paired.empty else float("nan"),
-                    "baseline_error_mean": float(paired["baseline_error"].mean()) if not paired.empty else float("nan"),
+                    "model_error_mean": float(paired["model_error"].mean())
+                    if not paired.empty
+                    else float("nan"),
+                    "baseline_error_mean": float(paired["baseline_error"].mean())
+                    if not paired.empty
+                    else float("nan"),
                 }
             )
 
     if not rows:
         return pd.DataFrame(columns=columns)
-    return pd.DataFrame(rows, columns=columns).sort_values(
-        ["group", "channel_idx", "metric", "model"]
-    ).reset_index(drop=True)
+    return (
+        pd.DataFrame(rows, columns=columns)
+        .sort_values(["group", "channel_idx", "metric", "model"])
+        .reset_index(drop=True)
+    )
 
 
 def _count_users_from_unit_index(index: pd.Index) -> int:
@@ -466,7 +358,9 @@ def _aggregate_rows_score(rows_df: pd.DataFrame) -> tuple[float, int]:
     return float(1.0 - np.exp(np.mean(np.log(ratios)))), int(ratios.size)
 
 
-def _aggregate_group_score(long_df: pd.DataFrame, model_name: str, group_name: str) -> tuple[float, int]:
+def _aggregate_group_score(
+    long_df: pd.DataFrame, model_name: str, group_name: str
+) -> tuple[float, int]:
     group_rows = long_df.loc[
         (long_df["model"] == model_name)
         & (long_df["group"] == group_name)
@@ -503,6 +397,62 @@ def _aggregate_binary_collection_score(
     return _aggregate_rows_score(collection_rows)
 
 
+def _aggregate_continuous_collection_score(
+    long_df: pd.DataFrame,
+    model_name: str,
+    channel_indices: tuple[int, ...],
+) -> tuple[float, int]:
+    """Per-task device-pair skill: geomean of the per-channel ratios (continuous).
+
+    The continuous analogue of ``_aggregate_binary_collection_score``. On
+    ``combine_channels=False`` trees both device channels carry a real ratio, so
+    this yields the per-task (task-level) skill; on ``combine_channels=True`` trees
+    the merged-away channel's ratio is NaN, so it collapses to the merged channel's
+    skill — letting one code path report either scheme depending on the input tree.
+    """
+    collection_rows = long_df.loc[
+        (long_df["model"] == model_name)
+        & (long_df["group"] == "continuous")
+        & (long_df["channel_idx"].isin(channel_indices))
+        & np.isfinite(long_df["geometric_mean_ratio"])
+    ]
+    return _aggregate_rows_score(collection_rows)
+
+
+def _aggregate_overall_category_balanced_score(
+    long_df: pd.DataFrame, model_name: str
+) -> tuple[float, int]:
+    """Category-balanced overall skill: two-stage geomean over the 4 sensor scopes.
+
+    Stage 1 (within scope): mean of ``log(geometric_mean_ratio)`` over every
+    ``(metric, channel)`` task-row whose channel maps to that sensor-category scope
+    (activity / physiology / sleep / workout), reading ONLY the per-channel rows
+    (``group in {"continuous", "binary"}``) — never the derived ``<group>_score``
+    columns — so each of the 4 categories contributes exactly one Stage-1 voice
+    regardless of how many channels it holds. Stage 2 (across scopes): arithmetic
+    mean of the scope log-ratios over the scopes present; ``overall = 1 - exp`` of
+    that. Returns ``(overall_skill, n_scopes_present)`` with ``n_scopes_present <= 4``.
+    """
+    rows = long_df.loc[
+        (long_df["model"] == model_name)
+        & (long_df["group"].isin(("continuous", "binary")))
+        & long_df["channel_idx"].notna()
+        & np.isfinite(long_df["geometric_mean_ratio"])
+        & (long_df["geometric_mean_ratio"] > 0.0)
+    ].copy()
+    if rows.empty:
+        return float("nan"), 0
+    rows["scope"] = rows["channel_idx"].map(_spec.category_scope_for_channel)
+    rows = rows[rows["scope"].notna()]
+    if rows.empty:
+        return float("nan"), 0
+    rows["log_ratio"] = np.log(rows["geometric_mean_ratio"].to_numpy(dtype=float))
+    scope_log = rows.groupby("scope", observed=True)["log_ratio"].mean()
+    if scope_log.empty:
+        return float("nan"), 0
+    return float(1.0 - np.exp(float(scope_log.mean()))), int(scope_log.size)
+
+
 def _build_model_summary(
     *,
     long_df: pd.DataFrame,
@@ -517,7 +467,9 @@ def _build_model_summary(
         }
         continuous_channels = sorted(
             int(idx)
-            for idx in long_df.loc[long_df["group"] == "continuous", "channel_idx"].dropna().unique()
+            for idx in long_df.loc[long_df["group"] == "continuous", "channel_idx"]
+            .dropna()
+            .unique()
         )
         for channel_idx in continuous_channels:
             score, n_units = _aggregate_channel_score(long_df, model_name, channel_idx)
@@ -538,6 +490,25 @@ def _build_model_summary(
                 "workout_n_units": n_workout,
             }
         )
+        binary_channels = sorted(
+            int(idx)
+            for idx in long_df.loc[long_df["group"] == "binary", "channel_idx"].dropna().unique()
+        )
+        for channel_idx in binary_channels:
+            score, n_units = _aggregate_binary_collection_score(long_df, model_name, (channel_idx,))
+            row[f"channel_{channel_idx}_score"] = score
+            row[f"channel_{channel_idx}_n_units"] = n_units
+
+        for group_name, channel_indices in _spec.CONTINUOUS_GROUPS:
+            score, n_units = _aggregate_continuous_collection_score(
+                long_df, model_name, channel_indices
+            )
+            row[f"{group_name}_score"] = score
+            row[f"{group_name}_n_units"] = n_units
+
+        overall_score, n_overall = _aggregate_overall_category_balanced_score(long_df, model_name)
+        row["overall_score"] = overall_score
+        row["overall_n_units"] = n_overall
         rows.append(row)
     return pd.DataFrame(rows)
 
@@ -587,6 +558,7 @@ def compute_skill_score_tables(
     clip_upper: float,
     min_pairs: int,
     aggregation_unit: str,
+    within_user_aggregation: str = "micro",
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Compute long, model summary, and wide skill score tables."""
     if baseline_model not in models:
@@ -598,6 +570,8 @@ def compute_skill_score_tables(
         raise ValueError("--clip-lower and --clip-upper must be positive with lower <= upper")
     if aggregation_unit not in {"user", "sample"}:
         raise ValueError("--aggregation-unit must be either 'user' or 'sample'")
+    if within_user_aggregation not in {"micro", "macro"}:
+        raise ValueError("--within-user-aggregation must be either 'micro' or 'macro'")
 
     metric_groups = {
         "continuous": {
@@ -613,6 +587,7 @@ def compute_skill_score_tables(
         models=models,
         metric_groups=metric_groups,
         aggregation_unit=aggregation_unit,
+        within_user_aggregation=within_user_aggregation,
     )
     long_df = _compute_long_skill_scores(
         error_df=error_df,
@@ -675,6 +650,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Collapse metrics to user-level or sample-level before paired ratios.",
     )
     parser.add_argument(
+        "--within-user-aggregation",
+        choices=["micro", "macro"],
+        default="micro",
+        help=(
+            "How to combine a unit's prediction windows: 'micro' weights each window "
+            "by its finite horizon-cell count (sum/count over all cells); 'macro' "
+            "averages per-window means unweighted (legacy)."
+        ),
+    )
+    parser.add_argument(
         "--output-dir",
         default="results/metrics_summary",
         help="Directory for generated CSV files.",
@@ -711,6 +696,7 @@ def main() -> None:
         clip_upper=float(args.clip_upper),
         min_pairs=int(args.min_pairs),
         aggregation_unit=str(args.aggregation_unit),
+        within_user_aggregation=str(args.within_user_aggregation),
     )
 
     output_dir = Path(args.output_dir)
@@ -733,6 +719,7 @@ def main() -> None:
     print(f"Saved wide table: {wide_path}")
     print(f"Baseline: {args.baseline}")
     print(f"Aggregation unit: {args.aggregation_unit}")
+    print(f"Within-user aggregation: {args.within_user_aggregation}")
     print(f"Ratio clip: [{args.clip_lower}, {args.clip_upper}]")
 
 

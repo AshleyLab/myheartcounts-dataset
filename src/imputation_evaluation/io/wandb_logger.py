@@ -83,9 +83,7 @@ def log_results(results: dict) -> None:
 
             # Fallback substitution visibility (model-capability gap).
             if "overall_fallback_rate" in metrics:
-                flat_metrics[f"{prefix}/overall_fallback_rate"] = metrics[
-                    "overall_fallback_rate"
-                ]
+                flat_metrics[f"{prefix}/overall_fallback_rate"] = metrics["overall_fallback_rate"]
 
             # Continuous aggregate metrics
             cont = metrics.get("continuous", {})

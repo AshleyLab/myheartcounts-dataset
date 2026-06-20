@@ -19,11 +19,10 @@ from __future__ import annotations
 
 import json
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
-
-from pathlib import Path
 
 from imputation_evaluation.data.data_loader import ImputationDataLoader
 from imputation_evaluation.evaluation.evaluator import ImputationEvaluator
@@ -37,8 +36,8 @@ logger = logging.getLogger(__name__)
 
 
 def run_eval(
-    config: "ImputationEvalConfig",
-    method: "ImputationMethod",
+    config: ImputationEvalConfig,
+    method: ImputationMethod,
     *,
     subgroup_mappings: dict | None = None,
 ) -> dict:
@@ -84,7 +83,9 @@ def run_eval(
         raise ValueError("evaluation.eval_splits must contain at least one of {'val','test'}")
     for s in eval_splits:
         if s not in ("val", "test"):
-            raise ValueError(f"evaluation.eval_splits got {s!r}; only 'val' and 'test' are supported")
+            raise ValueError(
+                f"evaluation.eval_splits got {s!r}; only 'val' and 'test' are supported"
+            )
     if eval_splits != ["val", "test"]:
         logger.info("evaluation.eval_splits=%s (default is ['val','test'])", eval_splits)
     if config.masking.masks_file:

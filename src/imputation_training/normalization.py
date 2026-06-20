@@ -26,7 +26,19 @@ class ChannelStats:
     epsilon: float
 
     @classmethod
-    def from_path(cls, path: str | Path) -> "ChannelStats":
+    def from_path(cls, path: str | Path) -> ChannelStats:
+        """Load channel stats from a ``normalization_stats.json`` file.
+
+        Args:
+            path: Path to the JSON file holding ``means``, ``stds``, and
+                ``channels`` (and an optional ``epsilon``).
+
+        Returns:
+            The parsed :class:`ChannelStats`.
+
+        Raises:
+            FileNotFoundError: If ``path`` does not exist.
+        """
         p = Path(path)
         if not p.exists():
             raise FileNotFoundError(f"normalization_stats.json not found: {p}")

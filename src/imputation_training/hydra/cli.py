@@ -79,6 +79,16 @@ _CONFIG_PATH = str(Path(__file__).resolve().parents[3] / "configs" / "training")
     config_name="train",
 )
 def main(cfg: DictConfig) -> dict[str, Any]:
+    """Run a Hydra-composed PyPOTS training job and return the release dir.
+
+    Args:
+        cfg: Hydra-composed config validated against
+            :class:`PyPOTSTrainingConfig`.
+
+    Returns:
+        A dict with the staged ``release_dir`` path under the ``release_dir``
+        key.
+    """
     OmegaConf.resolve(cfg)
     typed_cfg: PyPOTSTrainingConfig = dict_to_dataclass(PyPOTSTrainingConfig, cfg)
 

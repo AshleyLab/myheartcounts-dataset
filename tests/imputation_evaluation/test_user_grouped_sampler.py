@@ -19,7 +19,10 @@ def _flatten(batches):
 
 
 class TestUserGroupedBatchSampler:
+    """Batching invariants for ``UserGroupedBatchSampler``."""
+
     def test_keeps_a_user_contiguous_within_a_batch(self):
+        """Each emitted batch spans exactly one user and drops no position."""
         # User u0 has 3 samples, u1 has 2, u2 has 5. batch_size=4.
         # Expected: u0 + u1 don't fit together (3+2=5 > 4) → flush u0 in
         # its own batch; u1 in next; u2 has 5 > 4 → chunked into [5,6,7,8]
@@ -36,6 +39,7 @@ class TestUserGroupedBatchSampler:
         assert sorted(_flatten(batches)) == list(range(len(ptu)))
 
     def test_packs_small_users_together(self):
+        """Multiple small users whose samples fit are packed into one batch."""
         # Three small users (2 samples each) at batch_size=8 → all six
         # positions fit in one batch.
         ptu = ["u0", "u0", "u1", "u1", "u2", "u2"]
@@ -45,6 +49,7 @@ class TestUserGroupedBatchSampler:
         assert sorted(batches[0]) == list(range(6))
 
     def test_splits_user_larger_than_batch_size_into_consecutive_batches(self):
+        """A user larger than batch_size is chunked into consecutive batches."""
         # Single user with 10 samples, batch_size=4 → batches of 4, 4, 2.
         ptu = ["u0"] * 10
         s = UserGroupedBatchSampler(ptu, batch_size=4)
@@ -53,6 +58,7 @@ class TestUserGroupedBatchSampler:
         assert _flatten(batches) == list(range(10))
 
     def test_iterating_twice_is_stable(self):
+        """Two passes over the same sampler yield identical batches."""
         ptu = ["u0", "u0", "u1", "u1", "u1", "u2"]
         s = UserGroupedBatchSampler(ptu, batch_size=3)
         first = list(iter(s))

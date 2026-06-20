@@ -17,8 +17,9 @@ logger = logging.getLogger(__name__)
 class MultivariateFeatureExtractor:
     """Extract multivariate forecasting features from one trajectory row.
 
-    Output schema is consumed by ``SubTrajectoryGenerator.generate`` and includes
-    both values and observed-value masks in channel-first format.
+    Output schema is consumed by the evaluator's raw history cache + row-group
+    manifest path and includes both values and observed-value masks in
+    channel-first format.
     """
 
     def __init__(self, config: FeaturesConfig, forecasting_length: int = 24):
@@ -79,7 +80,7 @@ class MultivariateFeatureExtractor:
         history = selected_values.T  # (n_features, T)
         # history_mask = selected_mask.T  # (n_features, T)
         # trajectory_length = history.shape[1]
-        
+
         # Placeholder-only covariate interfaces:
         # - dynamic covariates (past/future) are kept as empty dicts by default.
         # - static covariates are set to None.
@@ -95,7 +96,7 @@ class MultivariateFeatureExtractor:
         past_covariates: dict[str, np.ndarray] = {}
         future_covariates: dict[str, np.ndarray] = {}
         static_covariates: dict[str, object] | None = None
-        
+
         return {
             "history": history,
             "variable_names": selected_channel_names,

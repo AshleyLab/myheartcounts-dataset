@@ -34,7 +34,6 @@ from imputation_evaluation.evaluation.bootstrap_skill_rank import (
     write_per_user_errors_parquet,
 )
 
-
 # Load aggregate_fairness_skill_score and aggregate_imputation_paper_metrics as
 # modules even though they live under scripts/. They both define top-level
 # functions we want to exercise directly without subprocess overhead.
@@ -85,8 +84,11 @@ def test_bca_symmetric_matches_percentile_large_sample():
 
 
 def test_bca_skewed_jackknife_shifts_endpoints():
-    """Right-skewed jackknife (a < 0) with the point at the median shifts both
-    endpoints below the percentile endpoints (the expected direction)."""
+    """A right-skewed jackknife (a < 0) shifts both endpoints below percentile.
+
+    Right-skewed jackknife (a < 0) with the point at the median shifts both
+    endpoints below the percentile endpoints (the expected direction).
+    """
     draws = np.concatenate([np.linspace(-10.0, -0.1, 100), np.linspace(0.1, 10.0, 100)])
     jack = np.array([0.0, 0.0, 0.0, 0.0, 5.0])  # long right tail -> a < 0
     a = _jackknife_acceleration(jack)
@@ -126,8 +128,11 @@ def test_jackknife_acceleration_guards():
 
 
 def test_augment_with_bca_fills_point_and_gates_scopes():
-    """``point`` for every row; ``bca_lo``/``bca_hi`` only for in-scope rows; the
-    percentile columns are left untouched."""
+    """``point`` for every row; BCa bounds only for in-scope rows; others kept.
+
+    ``point`` for every row; ``bca_lo``/``bca_hi`` only for in-scope rows; the
+    percentile columns are left untouched.
+    """
     summary = pd.DataFrame(
         {
             "method": ["m", "m"],
@@ -192,15 +197,15 @@ def _tiny_per_user_df() -> pd.DataFrame:
     """Smallest valid per-user errors frame — covers both channel + collapsed."""
     return pd.DataFrame(
         {
-            "method":         ["locf",  "locf",  "mymodel", "mymodel"],
-            "scenario":       ["s1",    "s1",    "s1",      "s1"],
-            "split":          ["test",  "test",  "test",    "test"],
-            "channel":        ["ch_0",  "cat_collapsed:sleep", "ch_0", "cat_collapsed:sleep"],
-            "channel_type":   ["continuous", "binary_collapsed", "continuous", "binary_collapsed"],
-            "subgroup_attr":  ["all",   "all",   "all",     "all"],
-            "subgroup_value": ["all",   "all",   "all",     "all"],
-            "user_id":        ["u1",    "u1",    "u1",      "u1"],
-            "E_per_user":     [0.5,     0.3,     0.4,       0.2],
+            "method": ["locf", "locf", "mymodel", "mymodel"],
+            "scenario": ["s1", "s1", "s1", "s1"],
+            "split": ["test", "test", "test", "test"],
+            "channel": ["ch_0", "cat_collapsed:sleep", "ch_0", "cat_collapsed:sleep"],
+            "channel_type": ["continuous", "binary_collapsed", "continuous", "binary_collapsed"],
+            "subgroup_attr": ["all", "all", "all", "all"],
+            "subgroup_value": ["all", "all", "all", "all"],
+            "user_id": ["u1", "u1", "u1", "u1"],
+            "E_per_user": [0.5, 0.3, 0.4, 0.2],
         }
     )
 
@@ -214,9 +219,7 @@ def test_phase1_per_user_errors_parquet_roundtrip(tmp_path):
     assert list(out.columns) == PER_USER_ERRORS_PARQUET_COLUMNS
     assert meta == {"n_boot": 1}
     # Round-trip: same values modulo categorical / float32 conversion.
-    out_cmp = out.assign(
-        **{c: out[c].astype(str) for c in PER_USER_ERRORS_PARQUET_COLUMNS[:-1]}
-    )
+    out_cmp = out.assign(**{c: out[c].astype(str) for c in PER_USER_ERRORS_PARQUET_COLUMNS[:-1]})
     pd.testing.assert_series_equal(
         out_cmp["E_per_user"].astype(np.float64).reset_index(drop=True),
         src["E_per_user"].astype(np.float64).reset_index(drop=True),
@@ -299,9 +302,9 @@ def _fair_fixture(
     draws_rows: list[dict] = []
     baseline_mu_per_cell: dict[tuple, float] = {}
     # First pass: baseline mean per (scenario, channel, attr, val) for R
-    for (scenario, ch, attr, val), grp in per_user_df[
-        per_user_df["method"] == "locf"
-    ].groupby(["scenario", "channel", "subgroup_attr", "subgroup_value"], observed=True):
+    for (scenario, ch, attr, val), grp in per_user_df[per_user_df["method"] == "locf"].groupby(
+        ["scenario", "channel", "subgroup_attr", "subgroup_value"], observed=True
+    ):
         baseline_mu_per_cell[(scenario, ch, attr, val)] = float(grp["E_per_user"].mean())
 
     for (method, scenario, ch, attr, val), grp in per_user_df.groupby(
@@ -336,8 +339,11 @@ def _fair_fixture(
 
 
 def test_fairness_bca_columns_present():
-    """The three BCa columns are emitted, populated for in-scope rows, and BCa
-    brackets the (reported) point; baseline-vs-self -> [0, 0]."""
+    """BCa columns are emitted, in-scope rows populated, bounds bracket the point.
+
+    The three BCa columns are emitted, populated for in-scope rows, and BCa
+    brackets the (reported) point; baseline-vs-self -> [0, 0].
+    """
     per_user_df, draws_df = _fair_fixture(seed=1)
     out = fairness_mod.compute_fairness_skill_scores(
         draws_df,
@@ -359,9 +365,7 @@ def test_fairness_bca_columns_present():
     assert (defined["bca_lo"] <= defined["point"] + 1e-9).all()
     assert (defined["point"] <= defined["bca_hi"] + 1e-9).all()
     # Baseline vs itself is exactly fair -> point and BCa endpoints all 0
-    base = out[
-        (out["method"] == "locf") & out["scope"].isin(fairness_mod.BCA_HEADLINE_SCOPES)
-    ]
+    base = out[(out["method"] == "locf") & out["scope"].isin(fairness_mod.BCA_HEADLINE_SCOPES)]
     assert (base["point"].abs() < 1e-9).all()
     assert (base["bca_lo"].abs() < 1e-9).all()
     assert (base["bca_hi"].abs() < 1e-9).all()
@@ -435,15 +439,19 @@ def test_fairness_bca_requires_per_user_df():
 
 
 def test_skill_rank_bca_off_by_default_via_argparse():
-    """``--bca-skill-rank`` defaults False — the CLI flag plumbing exists but
-    is not enabled by default."""
+    """``--bca-skill-rank`` defaults False — flag plumbing exists but is off.
+
+    The CLI flag plumbing exists but is not enabled by default.
+    """
     # Simulate parsing with no BCa flag.
     saved = sys.argv
     try:
         sys.argv = [
             "aggregate_imputation_paper_metrics",
-            "--draws", "/tmp/x.parquet",
-            "--output-dir", "/tmp/x",
+            "--draws",
+            "/tmp/x.parquet",
+            "--output-dir",
+            "/tmp/x",
         ]
         args = paper_metrics_mod._parse_args()
     finally:
@@ -453,9 +461,11 @@ def test_skill_rank_bca_off_by_default_via_argparse():
 
 
 def test_skill_rank_bca_opt_in_currently_stubbed(tmp_path):
-    """Turning ``--bca-skill-rank`` on currently raises NotImplementedError
-    (the LOO recompute for skill/rank is tracked as follow-up — see the
-    error message and METRICS.md §S7)."""
+    """Turning ``--bca-skill-rank`` on currently raises NotImplementedError.
+
+    The LOO recompute for skill/rank is tracked as follow-up — see the
+    error message and METRICS.md §S7.
+    """
     # Build a tiny pair of parquets so the load-path validation passes.
     from imputation_evaluation.evaluation.bootstrap_skill_rank import (
         DRAWS_PARQUET_COLUMNS,
@@ -468,10 +478,17 @@ def test_skill_rank_bca_opt_in_currently_stubbed(tmp_path):
         pd.DataFrame(
             [
                 {
-                    "method": "locf", "scenario": "s1", "split": "test",
-                    "channel": "ch_0", "channel_type": "continuous",
-                    "subgroup_attr": "all", "subgroup_value": "all",
-                    "draw": 0, "E": 1.0, "R": 1.0, "rank": 1.0,
+                    "method": "locf",
+                    "scenario": "s1",
+                    "split": "test",
+                    "channel": "ch_0",
+                    "channel_type": "continuous",
+                    "subgroup_attr": "all",
+                    "subgroup_value": "all",
+                    "draw": 0,
+                    "E": 1.0,
+                    "R": 1.0,
+                    "rank": 1.0,
                 }
             ]
         )[DRAWS_PARQUET_COLUMNS],
@@ -483,10 +500,13 @@ def test_skill_rank_bca_opt_in_currently_stubbed(tmp_path):
     try:
         sys.argv = [
             "aggregate_imputation_paper_metrics",
-            "--draws", str(draws_path),
-            "--output-dir", str(tmp_path / "out"),
+            "--draws",
+            str(draws_path),
+            "--output-dir",
+            str(tmp_path / "out"),
             "--bca-skill-rank",
-            "--per-user-errors", str(per_user_path),
+            "--per-user-errors",
+            str(per_user_path),
         ]
         with pytest.raises(NotImplementedError, match="LOO jackknife"):
             paper_metrics_mod.main()

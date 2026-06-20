@@ -69,7 +69,9 @@ def _parse_named_paths(items: list[str]) -> dict[str, str]:
     return parsed
 
 
-def _append_records_to_parquet(output_dir: Path, user_id: str, records: list[dict[str, Any]]) -> None:
+def _append_records_to_parquet(
+    output_dir: Path, user_id: str, records: list[dict[str, Any]]
+) -> None:
     if not records:
         return
 
@@ -89,9 +91,10 @@ def _save_binary_metrics_by_metric(
     output_root: Path,
     model_key: str,
     records_by_user: dict[str, list[dict[str, Any]]],
+    metric_names: tuple[str, ...] = _METRIC_NAMES,
 ) -> dict[str, dict[str, str]]:
     saved: dict[str, dict[str, str]] = {}
-    for metric_name in _METRIC_NAMES:
+    for metric_name in metric_names:
         metric_dir = output_root / metric_name
         metric_saved: dict[str, str] = {}
         for user_id, records in records_by_user.items():
@@ -103,6 +106,7 @@ def _save_binary_metrics_by_metric(
                         "model": record.get("model"),
                         "history_length": record.get("history_length"),
                         "forecasting_length": record.get("forecasting_length"),
+                        "n_windows": record.get("n_windows"),
                         metric_name: record.get(metric_name),
                         "binary_valid_count": record.get("binary_valid_count"),
                         "binary_positive_count": record.get("binary_positive_count"),
@@ -136,6 +140,60 @@ def _compute_f1_from_scores(truth: np.ndarray, score: np.ndarray, threshold: flo
     return float((2.0 * tp) / denominator)
 
 
+def _extract_binary_pairs(
+    truth_row: np.ndarray, score_row: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    """Finite + binary-labeled (truth, score) pairs for one channel/window row."""
+    truth_values = np.asarray(truth_row, dtype=float).reshape(-1)
+    score_values = np.asarray(score_row, dtype=float).reshape(-1)
+    finite_mask = np.isfinite(truth_values) & np.isfinite(score_values)
+    truth_values = truth_values[finite_mask]
+    score_values = score_values[finite_mask]
+    binary_mask = (truth_values == 1.0) | (truth_values == 0.0)
+    return truth_values[binary_mask], score_values[binary_mask]
+
+
+def _binary_channel_scores(
+    truth_binary: np.ndarray, score_binary: np.ndarray, threshold: float
+) -> dict[str, float]:
+    """f1/auroc/auprc + counts for one channel's (already filtered) binary pairs.
+
+    The same kernel serves the per-window and the pooled (per-user) paths, so both
+    share identical NaN/threshold/edge-case handling.
+    """
+    n_positive = int(np.sum(truth_binary == 1.0))
+    n_negative = int(np.sum(truth_binary == 0.0))
+    scores = {
+        "f1": float("nan"),
+        "auroc": float("nan"),
+        "auprc": float("nan"),
+        "valid": int(truth_binary.shape[0]),
+        "positive": n_positive,
+        "negative": n_negative,
+    }
+    if n_positive <= 0:
+        return scores
+    scores["f1"] = _compute_f1_from_scores(
+        truth=truth_binary, score=score_binary, threshold=threshold
+    )
+    scores["auprc"] = float(average_precision_score(truth_binary, score_binary))
+    if n_negative > 0:
+        scores["auroc"] = float(roc_auc_score(truth_binary, score_binary))
+    return scores
+
+
+def _pack_binary_metrics(per_channel: list[dict[str, float]]) -> dict[str, list[float]]:
+    """Stack per-channel score dicts into the stored column lists."""
+    return {
+        "f1": [c["f1"] for c in per_channel],
+        "auroc": [c["auroc"] for c in per_channel],
+        "auprc": [c["auprc"] for c in per_channel],
+        "binary_valid_count": [int(c["valid"]) for c in per_channel],
+        "binary_positive_count": [int(c["positive"]) for c in per_channel],
+        "binary_negative_count": [int(c["negative"]) for c in per_channel],
+    }
+
+
 def _compute_binary_metrics_for_sample(
     *,
     point_predictions: np.ndarray | None,
@@ -143,66 +201,73 @@ def _compute_binary_metrics_for_sample(
     threshold: float,
 ) -> dict[str, list[float]]:
     n_features, _ = ground_truth.shape
-    f1 = np.full(n_features, np.nan, dtype=float)
-    auroc = np.full(n_features, np.nan, dtype=float)
-    auprc = np.full(n_features, np.nan, dtype=float)
-    valid_count = np.zeros(n_features, dtype=int)
-    positive_count = np.zeros(n_features, dtype=int)
-    negative_count = np.zeros(n_features, dtype=int)
+    empty = {
+        "f1": float("nan"),
+        "auroc": float("nan"),
+        "auprc": float("nan"),
+        "valid": 0,
+        "positive": 0,
+        "negative": 0,
+    }
 
     if point_predictions is None or point_predictions.shape != ground_truth.shape:
-        return {
-            "f1": f1.tolist(),
-            "auroc": auroc.tolist(),
-            "auprc": auprc.tolist(),
-            "binary_valid_count": valid_count.tolist(),
-            "binary_positive_count": positive_count.tolist(),
-            "binary_negative_count": negative_count.tolist(),
-        }
+        return _pack_binary_metrics([dict(empty) for _ in range(n_features)])
 
+    per_channel: list[dict[str, float]] = []
     for feature_idx in range(n_features):
-        truth_row = np.asarray(ground_truth[feature_idx], dtype=float).reshape(-1)
-        score_row = np.asarray(point_predictions[feature_idx], dtype=float).reshape(-1)
-        finite_mask = np.isfinite(truth_row) & np.isfinite(score_row)
-        if not np.any(finite_mask):
-            continue
-
-        truth_values = truth_row[finite_mask]
-        score_values = score_row[finite_mask]
-        positive_mask = truth_values == 1.0
-        negative_mask = truth_values == 0.0
-        binary_mask = positive_mask | negative_mask
-        if not np.any(binary_mask):
-            continue
-
-        truth_binary = truth_values[binary_mask]
-        score_binary = score_values[binary_mask]
-        n_positive = int(np.sum(truth_binary == 1.0))
-        n_negative = int(np.sum(truth_binary == 0.0))
-        positive_count[feature_idx] = n_positive
-        negative_count[feature_idx] = n_negative
-        valid_count[feature_idx] = int(truth_binary.shape[0])
-
-        if n_positive <= 0:
-            continue
-
-        f1[feature_idx] = _compute_f1_from_scores(
-            truth=truth_binary,
-            score=score_binary,
-            threshold=threshold,
+        truth_binary, score_binary = _extract_binary_pairs(
+            ground_truth[feature_idx], point_predictions[feature_idx]
         )
-        auprc[feature_idx] = float(average_precision_score(truth_binary, score_binary))
-        if n_negative > 0:
-            auroc[feature_idx] = float(roc_auc_score(truth_binary, score_binary))
+        if truth_binary.size == 0:
+            per_channel.append(dict(empty))
+            continue
+        per_channel.append(_binary_channel_scores(truth_binary, score_binary, threshold))
+    return _pack_binary_metrics(per_channel)
 
-    return {
-        "f1": f1.tolist(),
-        "auroc": auroc.tolist(),
-        "auprc": auprc.tolist(),
-        "binary_valid_count": valid_count.tolist(),
-        "binary_positive_count": positive_count.tolist(),
-        "binary_negative_count": negative_count.tolist(),
-    }
+
+def _compute_pooled_binary_metrics_for_user(
+    *,
+    windows: list[tuple[np.ndarray, np.ndarray | None]],
+    n_features: int,
+    threshold: float,
+) -> dict[str, list[float]]:
+    """Pool a user's windows per channel, then compute one f1/auroc/auprc per channel.
+
+    Concatenates the finite, binary-labeled (truth, score) pairs across all of the
+    user's prediction windows for each channel and scores the pool once -- the true
+    "micro" within-user aggregate for these non-decomposable metrics.
+    """
+    truth_by_channel: list[list[np.ndarray]] = [[] for _ in range(n_features)]
+    score_by_channel: list[list[np.ndarray]] = [[] for _ in range(n_features)]
+    for ground_truth, point_predictions in windows:
+        if point_predictions is None or point_predictions.shape != ground_truth.shape:
+            continue
+        for feature_idx in range(n_features):
+            truth_binary, score_binary = _extract_binary_pairs(
+                ground_truth[feature_idx], point_predictions[feature_idx]
+            )
+            if truth_binary.size:
+                truth_by_channel[feature_idx].append(truth_binary)
+                score_by_channel[feature_idx].append(score_binary)
+
+    per_channel: list[dict[str, float]] = []
+    for feature_idx in range(n_features):
+        if not truth_by_channel[feature_idx]:
+            per_channel.append(
+                {
+                    "f1": float("nan"),
+                    "auroc": float("nan"),
+                    "auprc": float("nan"),
+                    "valid": 0,
+                    "positive": 0,
+                    "negative": 0,
+                }
+            )
+            continue
+        pooled_truth = np.concatenate(truth_by_channel[feature_idx])
+        pooled_score = np.concatenate(score_by_channel[feature_idx])
+        per_channel.append(_binary_channel_scores(pooled_truth, pooled_score, threshold))
+    return _pack_binary_metrics(per_channel)
 
 
 class BinaryOfflineMetricsPipeline:
@@ -216,6 +281,8 @@ class BinaryOfflineMetricsPipeline:
         metrics_output_path: Path,
         threshold: float,
         max_user: int | None = None,
+        combine_channels: bool = True,
+        metric_names: tuple[str, ...] = _METRIC_NAMES,
     ):
         """Initialize binary metric generation for one forecasting run."""
         self.run_key = str(run_key)
@@ -223,6 +290,8 @@ class BinaryOfflineMetricsPipeline:
         self.metrics_output_path = Path(metrics_output_path)
         self.threshold = float(threshold)
         self.max_user = int(max_user) if max_user is not None else None
+        self.combine_channels = bool(combine_channels)
+        self.metric_names = tuple(metric_names)
 
     def run(self) -> dict[str, Any]:
         """Compute and save binary metrics for one forecasting run."""
@@ -241,7 +310,9 @@ class BinaryOfflineMetricsPipeline:
         for user_context in user_contexts.values():
             history = np.asarray(user_context["history"], dtype=float)
             variable_names = list(user_context["variable_names"])
-            merge_plan = resolve_channel_merges(variable_names)
+            merge_plan = resolve_channel_merges(
+                variable_names, combine_channels=self.combine_channels
+            )
             user_context["history"] = merge_channel_first_array(history, merge_plan)
             user_context["merge_plan"] = merge_plan
 
@@ -279,7 +350,11 @@ class BinaryOfflineMetricsPipeline:
 
             history = np.asarray(user_context["history"], dtype=float)
             merge_plan = user_context["merge_plan"]
-            user_records: list[dict[str, Any]] = []
+            # Collect all of the user's prediction windows, then pool per channel
+            # so f1/auroc/auprc are computed once over the concatenated (truth,
+            # score) pairs -- the true within-user micro for these non-decomposable
+            # metrics. One pooled row is emitted per user.
+            user_windows: list[tuple[np.ndarray, np.ndarray | None]] = []
             for row in prediction_rows_by_user.get(user_id, []):
                 history_length = coerce_non_negative_int(row.get("history_length"))
                 if history_length is None:
@@ -300,16 +375,21 @@ class BinaryOfflineMetricsPipeline:
                     coerce_2d_float_array(row.get("point_predictions")),
                     merge_plan,
                 )
-                metrics_output = _compute_binary_metrics_for_sample(
-                    point_predictions=point_predictions,
-                    ground_truth=ground_truth,
+                user_windows.append((ground_truth, point_predictions))
+
+            if user_windows:
+                n_features = int(user_windows[0][0].shape[0])
+                metrics_output = _compute_pooled_binary_metrics_for_user(
+                    windows=user_windows,
+                    n_features=n_features,
                     threshold=self.threshold,
                 )
                 record = {
                     "user_id": user_id,
                     "model": model_name,
-                    "history_length": history_length,
+                    "history_length": None,  # pooled across the user's windows
                     "forecasting_length": forecast_length,
+                    "n_windows": len(user_windows),
                     "f1": metrics_output["f1"],
                     "auroc": metrics_output["auroc"],
                     "auprc": metrics_output["auprc"],
@@ -317,17 +397,15 @@ class BinaryOfflineMetricsPipeline:
                     "binary_positive_count": metrics_output["binary_positive_count"],
                     "binary_negative_count": metrics_output["binary_negative_count"],
                 }
-                user_records.append(record)
+                records_by_user[user_id] = [record]
                 saved_rows += 1
-
-            if user_records:
-                records_by_user[user_id] = user_records
                 computed_user_count += 1
 
         saved_files_by_metric = _save_binary_metrics_by_metric(
             output_root=output_run_dir,
             model_key=sanitize_name(model_name),
             records_by_user=records_by_user,
+            metric_names=self.metric_names,
         )
         return {
             "run_key": self.run_key,
@@ -352,6 +430,8 @@ class BinaryOfflineMetricsCalculator:
         metrics_output_path: str,
         threshold: float,
         max_user: int | None = None,
+        combine_channels: bool = True,
+        metric_names: tuple[str, ...] = _METRIC_NAMES,
     ):
         """Initialize binary metric generation across forecasting runs."""
         self.evaluation_result_paths = {
@@ -361,6 +441,8 @@ class BinaryOfflineMetricsCalculator:
         self.metrics_output_path.mkdir(parents=True, exist_ok=True)
         self.threshold = float(threshold)
         self.max_user = int(max_user) if max_user is not None else None
+        self.combine_channels = bool(combine_channels)
+        self.metric_names = tuple(metric_names)
 
     def run(self) -> dict[str, Any]:
         """Run binary metric generation for all configured runs."""
@@ -377,6 +459,8 @@ class BinaryOfflineMetricsCalculator:
                 metrics_output_path=self.metrics_output_path,
                 threshold=self.threshold,
                 max_user=self.max_user,
+                combine_channels=self.combine_channels,
+                metric_names=self.metric_names,
             )
             run_summaries.append(pipeline.run())
 

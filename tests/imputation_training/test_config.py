@@ -14,6 +14,7 @@ from imputation_training import (
 
 
 def test_default_construction() -> None:
+    """PyPOTSTrainingConfig defaults construct with the expected nested config types."""
     cfg = PyPOTSTrainingConfig()
     assert cfg.seed == 42
     assert isinstance(cfg.data.__class__.__name__, str)
@@ -24,9 +25,12 @@ def test_default_construction() -> None:
 
 
 def test_model_names_are_lowercase() -> None:
-    """The factory uses ``.lower()``, so we don't bother case-checking
+    """The default model_name is already lowercase.
+
+    The factory uses ``.lower()``, so we don't bother case-checking
     everywhere — but make sure the default is already lowercase to
-    avoid surprises in CLI overrides."""
+    avoid surprises in CLI overrides.
+    """
     assert ModelConfig().model_name == ModelConfig().model_name.lower()
 
 

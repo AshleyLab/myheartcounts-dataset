@@ -16,9 +16,10 @@ metadata without depending on the internal evaluation harness.
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Iterator, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import numpy as np
 
@@ -89,9 +90,7 @@ def iter_split_data(
         dtype ``float32``.
     """
     if split not in _VALID_SPLITS:
-        raise ValueError(
-            f"Unknown split {split!r}. Valid splits: {_VALID_SPLITS}"
-        )
+        raise ValueError(f"Unknown split {split!r}. Valid splits: {_VALID_SPLITS}")
     from imputation_evaluation.data.data_loader import ImputationDataLoader
 
     cfg = _make_data_config(data_dir, version, batch_size, num_workers, seed)
@@ -164,9 +163,7 @@ def load_sample_metadata(
         ``YYYY-MM-DD`` form).
     """
     if split not in _VALID_SPLITS:
-        raise ValueError(
-            f"Unknown split {split!r}. Valid splits: {_VALID_SPLITS}"
-        )
+        raise ValueError(f"Unknown split {split!r}. Valid splits: {_VALID_SPLITS}")
 
     from imputation_evaluation.data.data_loader import ImputationDataLoader
 
@@ -228,9 +225,7 @@ class EvalUserContext:
     split_hf_indices: dict[str, np.ndarray]
     transform: Any
 
-    def iter_user_samples(
-        self, user_id: str
-    ) -> Iterator[tuple[np.ndarray, np.ndarray]]:
+    def iter_user_samples(self, user_id: str) -> Iterator[tuple[np.ndarray, np.ndarray]]:
         """Yield ``(data, mask)`` per sample for one user, in dataset order.
 
         Each yielded tuple is shape ``((19, 1440), (19, 1440))`` float32 —
@@ -250,9 +245,7 @@ class EvalUserContext:
                 # Transform expects a torch tensor.
                 import torch
 
-                values = transform(
-                    torch.as_tensor(row["values"], dtype=torch.float32)
-                ).numpy()
+                values = transform(torch.as_tensor(row["values"], dtype=torch.float32)).numpy()
             else:
                 values = np.asarray(row["values"], dtype=np.float32)
             mask = np.isfinite(values).astype(np.float32)
@@ -277,9 +270,7 @@ def open_eval_user_context(
     """
     from imputation_evaluation.data.data_loader import ImputationDataLoader
 
-    cfg = _make_data_config(
-        data_dir, version, batch_size=5000, num_workers=0, seed=seed
-    )
+    cfg = _make_data_config(data_dir, version, batch_size=5000, num_workers=0, seed=seed)
     loader = ImputationDataLoader(cfg)
     # Reuse the existing public helper; it loads + filters the dataset
     # once and surfaces the split indices and per-row metadata we need.
@@ -310,9 +301,7 @@ def open_eval_user_context(
             # reassignment) — harmless because contributions stack.
             user_to_split[uid] = split_name
 
-    user_to_hf_arr = {
-        u: np.asarray(sorted(idxs), dtype=np.int64) for u, idxs in user_to_hf.items()
-    }
+    user_to_hf_arr = {u: np.asarray(sorted(idxs), dtype=np.int64) for u, idxs in user_to_hf.items()}
     split_hf_indices_arr = {
         split_name: np.asarray(split_indices[split_name], dtype=np.int64)
         for split_name in ("val", "test")

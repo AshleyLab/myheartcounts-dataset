@@ -40,21 +40,41 @@ logger = logging.getLogger(__name__)
 # inference wrapper's __init__ as unexpected kwargs).
 _ARCH_FIELDS: dict[str, tuple[str, ...]] = {
     "brits": (
-        "n_steps", "n_features", "rnn_hidden_size",
+        "n_steps",
+        "n_features",
+        "rnn_hidden_size",
     ),
     "dlinear": (
-        "n_steps", "n_features", "d_model", "moving_avg_window_size",
+        "n_steps",
+        "n_features",
+        "d_model",
+        "moving_avg_window_size",
     ),
     "timesnet": (
-        "n_steps", "n_features", "n_layers", "top_k", "d_model", "d_ffn",
-        "n_kernels", "dropout", "apply_nonstationary_norm",
+        "n_steps",
+        "n_features",
+        "n_layers",
+        "top_k",
+        "d_model",
+        "d_ffn",
+        "n_kernels",
+        "dropout",
+        "apply_nonstationary_norm",
     ),
     "fedformer": (
         # Note: openmhc's FEDformerImputer renames PyPOTS's "version" →
         # "variant" to avoid collision with the dataset version. We do
         # that translation below in build_arch().
-        "n_steps", "n_features", "n_layers", "d_model", "n_heads", "d_ffn",
-        "moving_avg_window_size", "dropout", "modes", "mode_select",
+        "n_steps",
+        "n_features",
+        "n_layers",
+        "d_model",
+        "n_heads",
+        "d_ffn",
+        "moving_avg_window_size",
+        "dropout",
+        "modes",
+        "mode_select",
     ),
 }
 

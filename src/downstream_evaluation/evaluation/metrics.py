@@ -339,21 +339,25 @@ def compute_per_user_regression_metrics(
             # R² / Pearson r undefined when labels are constant. Keep a NaN
             # record so callers can see the user existed.
             n_zero_var += 1
-            per_user_records.append({
-                "user_id": str(unique_users[u_idx]),
-                "n_obs": n_obs,
-                "r2": float("nan"),
-                "pearson_r": float("nan"),
-            })
+            per_user_records.append(
+                {
+                    "user_id": str(unique_users[u_idx]),
+                    "n_obs": n_obs,
+                    "r2": float("nan"),
+                    "pearson_r": float("nan"),
+                }
+            )
             continue
         u_r2 = float(r2_score(yt, yp))
         u_r = float(pearsonr(yt, yp)[0]) if np.var(yp) > _VAR_EPS else float("nan")
-        per_user_records.append({
-            "user_id": str(unique_users[u_idx]),
-            "n_obs": n_obs,
-            "r2": u_r2,
-            "pearson_r": u_r,
-        })
+        per_user_records.append(
+            {
+                "user_id": str(unique_users[u_idx]),
+                "n_obs": n_obs,
+                "r2": u_r2,
+                "pearson_r": u_r,
+            }
+        )
 
     # Aggregates over records with defined R² / Pearson r only
     finite_r2 = [r["r2"] for r in per_user_records if not np.isnan(r["r2"])]

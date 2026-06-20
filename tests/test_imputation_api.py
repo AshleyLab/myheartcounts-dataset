@@ -30,9 +30,7 @@ def _make_synthetic_batch(
     return data, mask.astype(np.float32)
 
 
-def _make_target_mask(
-    observed_mask: np.ndarray, frac: float = 0.2, seed: int = 1
-) -> np.ndarray:
+def _make_target_mask(observed_mask: np.ndarray, frac: float = 0.2, seed: int = 1) -> np.ndarray:
     """Subset of observed_mask == 1 marked as target_mask == 1."""
     rng = np.random.default_rng(seed)
     pool = observed_mask > 0.5
@@ -43,6 +41,7 @@ def _make_target_mask(
 @pytest.fixture
 def stub_iter_train_data(monkeypatch):
     """Patch ``openmhc.iter_train_data`` to yield synthetic batches."""
+
     def _fake_iter_split_data(
         split, version=None, data_dir=None, batch_size=5000, num_workers=4, seed=42
     ):
@@ -58,9 +57,7 @@ def stub_iter_train_data(monkeypatch):
     import openmhc._data_utils as _du
 
     monkeypatch.setattr(_du, "iter_split_data", _fake_iter_split_data)
-    monkeypatch.setattr(
-        _du, "iter_train_data", lambda **kw: _fake_iter_split_data("train", **kw)
-    )
+    monkeypatch.setattr(_du, "iter_train_data", lambda **kw: _fake_iter_split_data("train", **kw))
 
     import openmhc.imputers._base as _base
 
@@ -132,6 +129,7 @@ def stub_iter_train_data(monkeypatch):
 @pytest.fixture
 def stub_metadata(monkeypatch):
     """Patch ``load_sample_metadata`` so personalized imputers see synthetic users."""
+
     def _fake(split, version=None, data_dir=None, seed=42):
         n = {"train": 80, "val": 20, "test": 20}[split]
         # Five distinct users, cycling.
@@ -158,7 +156,11 @@ def stub_metadata(monkeypatch):
 
 
 class TestImputerProtocol:
+    """Structural (runtime-checkable) ``Imputer`` protocol membership."""
+
     def test_fake_imputer_satisfies_protocol(self):
+        """An object with a minimal three-arg ``impute`` satisfies the protocol."""
+
         class FakeImputer:
             def impute(self, data, observed_mask, target_mask):
                 return data
@@ -166,6 +168,8 @@ class TestImputerProtocol:
         assert isinstance(FakeImputer(), Imputer)
 
     def test_imputer_with_metadata_kwargs_satisfies_protocol(self):
+        """An ``impute`` with optional metadata kwargs still satisfies the protocol."""
+
         class FakeImputer:
             def impute(
                 self,
@@ -182,6 +186,8 @@ class TestImputerProtocol:
         assert isinstance(FakeImputer(), Imputer)
 
     def test_object_without_impute_is_not_imputer(self):
+        """An object lacking ``impute`` is rejected by the protocol check."""
+
         class NotAnImputer:
             def fit(self, data, masks):
                 pass
@@ -195,7 +201,11 @@ class TestImputerProtocol:
 
 
 class TestAdapterHardBreak:
+    """The adapter refuses to wrap objects lacking the new ``impute`` API."""
+
     def test_rejects_imputer_without_impute(self):
+        """Wrapping an old-style ``fit``-only imputer raises ``TypeError``."""
+
         class OldStyle:
             def fit(self, data, masks):
                 pass
@@ -210,6 +220,7 @@ class _RecordingImputer:
     def __init__(self, signature_form="minimal"):
         # Build an impute that matches the requested signature shape.
         if signature_form == "minimal":
+
             def impute(self, data, observed_mask, target_mask):
                 self.called_with = {
                     "data": data,
@@ -219,8 +230,14 @@ class _RecordingImputer:
                 return data
 
         elif signature_form == "personalized":
+
             def impute(
-                self, data, observed_mask, target_mask, *, user_ids=None,
+                self,
+                data,
+                observed_mask,
+                target_mask,
+                *,
+                user_ids=None,
             ):
                 self.called_with = {
                     "data": data,
@@ -231,6 +248,7 @@ class _RecordingImputer:
                 return data
 
         elif signature_form == "full":
+
             def impute(
                 self,
                 data,
@@ -270,7 +288,10 @@ class _FakeHfDataset:
 
 
 class TestAdapterSignatureFiltering:
+    """The adapter forwards only the metadata kwargs an imputer's signature declares."""
+
     def test_minimal_signature_gets_only_three_args(self):
+        """A minimal-signature imputer receives only data and the two masks."""
         imp = _RecordingImputer("minimal")
         adapter = _ImputerMethodAdapter(imp)
         adapter.prepare_split(
@@ -280,12 +301,11 @@ class TestAdapterSignatureFiltering:
         )
         data, mask = _make_synthetic_batch(2, seed=0)
         target = _make_target_mask(mask)
-        adapter.impute(
-            data, mask, target, sample_indices=np.array([0, 1])
-        )
+        adapter.impute(data, mask, target, sample_indices=np.array([0, 1]))
         assert set(imp.called_with) == {"data", "observed_mask", "target_mask"}
 
     def test_personalized_signature_gets_user_ids(self):
+        """A ``user_ids``-only signature gets user IDs but not other metadata."""
         imp = _RecordingImputer("personalized")
         adapter = _ImputerMethodAdapter(imp)
         adapter.prepare_split(
@@ -295,14 +315,13 @@ class TestAdapterSignatureFiltering:
         )
         data, mask = _make_synthetic_batch(2, seed=0)
         target = _make_target_mask(mask)
-        adapter.impute(
-            data, mask, target, sample_indices=np.array([0, 1])
-        )
+        adapter.impute(data, mask, target, sample_indices=np.array([0, 1]))
         assert imp.called_with["user_ids"] == ["alice", "bob"]
         assert "sample_indices" not in imp.called_with
         assert "dates" not in imp.called_with
 
     def test_full_signature_gets_all_metadata(self):
+        """A full-signature imputer receives user IDs, dates, and sample indices."""
         imp = _RecordingImputer("full")
         adapter = _ImputerMethodAdapter(imp)
         adapter.prepare_split(
@@ -312,16 +331,18 @@ class TestAdapterSignatureFiltering:
         )
         data, mask = _make_synthetic_batch(2, seed=0)
         target = _make_target_mask(mask)
-        adapter.impute(
-            data, mask, target, sample_indices=np.array([0, 1])
-        )
+        adapter.impute(data, mask, target, sample_indices=np.array([0, 1]))
         assert imp.called_with["user_ids"] == ["alice", "bob"]
         assert imp.called_with["dates"] == ["2024-01-01", "2024-01-02"]
         assert imp.called_with["sample_indices"].tolist() == [0, 1]
 
 
 class TestAdapterFitComputesStds:
+    """The adapter's ``fit`` derives per-channel stds from the streamed loader."""
+
     def test_fit_streams_loader_and_sets_channel_stds(self):
+        """``fit`` populates ``channel_stds`` as finite, floored float32 per channel."""
+
         class FakeImputer:
             def impute(self, data, observed_mask, target_mask):
                 return data
@@ -340,6 +361,7 @@ class TestAdapterFitComputesStds:
         assert np.all(stds >= 1e-6)
 
     def test_fit_does_not_invoke_user_methods(self):
+        """``fit`` only streams stats; it never calls the imputer's ``impute``/``fit``."""
         calls = []
 
         class FakeImputer:
@@ -361,7 +383,10 @@ class TestAdapterFitComputesStds:
 
 
 class TestBaseImputer:
+    """Behaviour of the ``BaseImputer`` superclass."""
+
     def test_default_impute_raises(self):
+        """The base ``impute`` is abstract and raises ``NotImplementedError``."""
         from openmhc.imputers import BaseImputer
 
         bi = BaseImputer(version="xs")
@@ -381,8 +406,7 @@ _FIXTURE_TRAIN_BATCH_SIZE: int = 40
 def _materialize_fixture_train_data() -> tuple[np.ndarray, np.ndarray]:
     """Reproduce the concatenated (data, mask) the stub fixture streams."""
     batches = [
-        _make_synthetic_batch(_FIXTURE_TRAIN_BATCH_SIZE, seed=s)
-        for s in _FIXTURE_TRAIN_BATCH_SEEDS
+        _make_synthetic_batch(_FIXTURE_TRAIN_BATCH_SIZE, seed=s) for s in _FIXTURE_TRAIN_BATCH_SEEDS
     ]
     data = np.concatenate([b[0] for b in batches], axis=0)
     mask = np.concatenate([b[1] for b in batches], axis=0)
@@ -390,7 +414,10 @@ def _materialize_fixture_train_data() -> tuple[np.ndarray, np.ndarray]:
 
 
 class TestMeanImputer:
+    """``MeanImputer`` fills target cells with the training per-channel mean."""
+
     def test_fills_only_target_positions_with_channel_mean(self, stub_iter_train_data):
+        """Only target cells are filled, each with its channel's training mean."""
         from openmhc.imputers import MeanImputer
 
         imp = MeanImputer(version="xs")
@@ -427,7 +454,10 @@ class TestMeanImputer:
 
 
 class TestModeImputer:
+    """``ModeImputer`` fills target cells with each channel's training mode."""
+
     def test_fills_with_per_channel_mode(self, stub_iter_train_data):
+        """Each channel's constant fill is a most-frequent rounded training value."""
         from openmhc.imputers import ModeImputer
 
         imp = ModeImputer(version="xs")
@@ -474,7 +504,10 @@ class TestModeImputer:
 
 
 class TestLinearImputer:
+    """``LinearImputer`` linearly interpolates between observed anchors."""
+
     def test_interpolates_between_known_anchors(self, stub_iter_train_data):
+        """A masked block on a perfect ramp is recovered exactly by interpolation."""
         from openmhc.imputers import LinearImputer
 
         imp = LinearImputer(version="xs")
@@ -493,7 +526,10 @@ class TestLinearImputer:
 
 
 class TestLOCFImputer:
+    """``LOCFImputer`` carries the last observed value forward over a gap."""
+
     def test_carries_last_known_value_forward(self, stub_iter_train_data):
+        """A masked block is filled with the preceding observed value."""
         from openmhc.imputers import LOCFImputer
 
         imp = LOCFImputer(version="xs")
@@ -509,7 +545,10 @@ class TestLOCFImputer:
 
 
 class TestTemporalMeanImputer:
+    """``TemporalMeanImputer`` produces correctly shaped, fully filled output."""
+
     def test_output_shape_dtype_and_fill_positions(self, stub_iter_train_data):
+        """Output keeps shape/dtype and every target cell is finite (filled)."""
         from openmhc.imputers import TemporalMeanImputer
 
         imp = TemporalMeanImputer(version="xs")
@@ -528,7 +567,10 @@ class TestTemporalMeanImputer:
 
 
 class TestPersonalizedMeanImputer:
+    """``PersonalizedMeanImputer`` fills using per-user training statistics."""
+
     def test_per_user_dispatch(self, stub_iter_train_data, stub_metadata):
+        """Different users yield different per-channel fill values."""
         from openmhc.imputers import PersonalizedMeanImputer
 
         imp = PersonalizedMeanImputer(version="xs")
@@ -536,11 +578,15 @@ class TestPersonalizedMeanImputer:
         target = _make_target_mask(mask, frac=0.1)
         # Two different users -> two different fill values (in general).
         out_a = imp.impute(
-            data.copy(), mask.copy(), target.copy(),
+            data.copy(),
+            mask.copy(),
+            target.copy(),
             user_ids=["user_0", "user_1"],
         )
         out_b = imp.impute(
-            data.copy(), mask.copy(), target.copy(),
+            data.copy(),
+            mask.copy(),
+            target.copy(),
             user_ids=["user_2", "user_3"],
         )
         # At least one (sample, channel) should differ — different users
@@ -553,6 +599,7 @@ class TestPersonalizedMeanImputer:
         assert any(diffs)
 
     def test_unknown_user_falls_back_to_global(self, stub_iter_train_data, stub_metadata):
+        """An unseen user is filled with the global fallback statistics."""
         from openmhc.imputers import PersonalizedMeanImputer
 
         imp = PersonalizedMeanImputer(version="xs")
@@ -563,9 +610,7 @@ class TestPersonalizedMeanImputer:
         for ch in range(N_CHANNELS):
             t = target_bool[0, ch]
             if t.any():
-                np.testing.assert_allclose(
-                    out[0, ch][t], imp._global_fallback[ch], rtol=1e-5
-                )
+                np.testing.assert_allclose(out[0, ch][t], imp._global_fallback[ch], rtol=1e-5)
 
 
 # ---------------------------------------------------------------------------
@@ -574,7 +619,10 @@ class TestPersonalizedMeanImputer:
 
 
 class TestTorchImputer:
+    """``TorchImputer`` runs a torch model and post-processes its output."""
+
     def test_tiny_model_round_trip(self, stub_iter_train_data):
+        """An identity model fills targets with the model output and leaves observed cells intact."""
         torch = pytest.importorskip("torch")
         from openmhc.imputers import TorchImputer
 
@@ -618,6 +666,7 @@ class TestTorchImputer:
         np.testing.assert_array_equal(out[keep], data[keep])
 
     def test_sigmoid_applied_on_binary_channels(self, stub_iter_train_data):
+        """Sigmoid is applied to binary channels only, leaving continuous ones raw."""
         torch = pytest.importorskip("torch")
         from openmhc.imputers import TorchImputer
 
@@ -660,6 +709,8 @@ class TestAdapterFallbackFill:
     """The adapter's single fit pass should populate ``fallback_fill`` correctly."""
 
     def test_fit_sets_fallback_fill_with_correct_shape_and_dtype(self):
+        """``fit`` sets ``fallback_fill`` to a finite float32 value per channel."""
+
         class FakeImputer:
             def impute(self, data, observed_mask, target_mask):
                 return data
@@ -673,6 +724,8 @@ class TestAdapterFallbackFill:
         assert np.all(np.isfinite(fill))
 
     def test_binary_channels_are_zero_or_one(self):
+        """Binary-channel fallback fills are the majority class (0.0 or 1.0)."""
+
         class FakeImputer:
             def impute(self, data, observed_mask, target_mask):
                 return data
@@ -685,6 +738,7 @@ class TestAdapterFallbackFill:
 
     def test_binary_majority_class_matches_observed_mean(self):
         """If observed mean > 0.5 → fill=1.0; else fill=0.0."""
+
         class FakeImputer:
             def impute(self, data, observed_mask, target_mask):
                 return data
@@ -709,6 +763,7 @@ class TestApplyFallbackParity:
     """A finite imputed array must be byte-identical after _apply_fallback (no-op)."""
 
     def test_finite_imputed_is_unchanged_and_counts_are_zero(self):
+        """A finite array is untouched; sub counts are zero and asked counts match targets."""
         from imputation_evaluation.evaluation.evaluator import _apply_fallback
 
         rng = np.random.default_rng(0)
@@ -730,6 +785,7 @@ class TestApplyFallbackParity:
         np.testing.assert_array_equal(asked, expected_asked)
 
     def test_fill_none_is_complete_noop(self):
+        """A ``None`` fill leaves NaN target cells in place and records zero counts."""
         from imputation_evaluation.evaluation.evaluator import _apply_fallback
 
         rng = np.random.default_rng(0)
@@ -742,9 +798,7 @@ class TestApplyFallbackParity:
         sub, asked = _apply_fallback(imputed, artificial, None)
 
         # fill=None → array unchanged (NaN survives), counts zero.
-        np.testing.assert_array_equal(
-            np.isnan(imputed), np.isnan(before)
-        )
+        np.testing.assert_array_equal(np.isnan(imputed), np.isnan(before))
         assert int(sub.sum()) == 0
         assert int(asked.sum()) == 0
 
@@ -753,6 +807,7 @@ class TestApplyFallbackSubstitution:
     """When the imputer returns NaN at target cells, those cells must be substituted and counted."""
 
     def test_nan_cells_at_target_get_filled_and_counted(self):
+        """NaN target cells are replaced by the channel fill and counted per channel."""
         from imputation_evaluation.evaluation.evaluator import _apply_fallback
 
         # Build a controlled scenario: 1 sample, target spans first 10 timesteps on every channel.
@@ -789,6 +844,7 @@ class TestMetricAccumulatorFallback:
         return MetricAccumulator(channel_stds=np.ones(N_CHANNELS, dtype=np.float32))
 
     def test_compute_emits_zero_rate_when_no_substitutions(self):
+        """With no substitutions, overall and per-channel fallback rates are zero."""
         acc = self._make_acc()
         # Drive a single batch through the accumulator with finite values.
         rng = np.random.default_rng(0)
@@ -806,6 +862,7 @@ class TestMetricAccumulatorFallback:
             assert metrics["fallback_rate"][f"ch_{ch}"] == 0.0
 
     def test_compute_emits_nonzero_rate_when_substitutions_occur(self):
+        """Substitutions surface as matching overall and per-channel fallback rates."""
         acc = self._make_acc()
         rng = np.random.default_rng(1)
         gt = rng.standard_normal((2, N_CHANNELS, 10)).astype(np.float32)
@@ -828,10 +885,13 @@ class TestMetricAccumulatorFallback:
             assert metrics["fallback_rate"][f"ch_{ch}"] == 0.0
 
     def test_merge_sums_fallback_counters(self):
+        """Merging two accumulators sums their substituted and asked counters."""
         acc_a = self._make_acc()
         acc_b = self._make_acc()
-        sub_a = np.zeros(N_CHANNELS, dtype=np.int64); sub_a[0] = 3
-        sub_b = np.zeros(N_CHANNELS, dtype=np.int64); sub_b[0] = 5
+        sub_a = np.zeros(N_CHANNELS, dtype=np.int64)
+        sub_a[0] = 3
+        sub_b = np.zeros(N_CHANNELS, dtype=np.int64)
+        sub_b[0] = 5
         asked_a = np.full(N_CHANNELS, 10, dtype=np.int64)
         asked_b = np.full(N_CHANNELS, 10, dtype=np.int64)
         acc_a.add_fallback(sub_a, asked_a)
@@ -872,6 +932,4 @@ class TestMetricAccumulatorFallback:
             ch_wo = m_without["per_channel"][f"ch_{ch}"]
             # Every key present in the without-fb dict must match.
             for k, v in ch_wo.items():
-                assert ch_w[k] == v or (
-                    isinstance(v, float) and np.isnan(v) and np.isnan(ch_w[k])
-                )
+                assert ch_w[k] == v or (isinstance(v, float) and np.isnan(v) and np.isnan(ch_w[k]))

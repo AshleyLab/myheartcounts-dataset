@@ -24,10 +24,12 @@ if TYPE_CHECKING:
 from openmhc._dataset import (
     EXPECTED_N_USERS,
     Version,
-    data_dir as _resolve_dataset_root,
     read_dataset_marker,
 )
-from openmhc._results import PredictionResults, ImputationResults
+from openmhc._dataset import (
+    data_dir as _resolve_dataset_root,
+)
+from openmhc._results import ForecastingResults, ImputationResults, PredictionResults
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +83,7 @@ class _DatasetPaths:
         cls,
         override: str | Path | None = None,
         version: Version | None = None,
-    ) -> "_DatasetPaths":
+    ) -> _DatasetPaths:
         """Build the paths bundle for an explicit version + dataset root.
 
         Args:
@@ -108,9 +110,7 @@ class _DatasetPaths:
                 "can cross-check it against the dataset_version.json marker."
             )
         if version not in EXPECTED_N_USERS:
-            raise ValueError(
-                f"version must be one of {sorted(EXPECTED_N_USERS)}, got {version!r}"
-            )
+            raise ValueError(f"version must be one of {sorted(EXPECTED_N_USERS)}, got {version!r}")
 
         root = _resolve_dataset_root(override)
 
@@ -154,9 +154,7 @@ class _DatasetPaths:
             payload = json.loads(splits_file.read_text())
         except json.JSONDecodeError as exc:
             raise ValueError(f"malformed split file {splits_file}: {exc}") from exc
-        n_users = sum(
-            len(v) for v in payload.values() if isinstance(v, (list, set, tuple))
-        )
+        n_users = sum(len(v) for v in payload.values() if isinstance(v, (list, set, tuple)))
         expected = marker.get("n_users", EXPECTED_N_USERS[version])
         if n_users != expected:
             raise ValueError(
@@ -350,9 +348,7 @@ def evaluate_prediction(
     # Build a lightweight store for aggregation.
     from downstream_evaluation.feature_store import WeekFeatureStore, _StoreMetadata
 
-    segment_starts_ns = (
-        pd.to_datetime(segment_starts.tolist()).astype("int64").values
-    )
+    segment_starts_ns = pd.to_datetime(segment_starts.tolist()).astype("int64").values
 
     n_valid_hours = (
         np.array(hf_dataset["n_valid_hours"], dtype=np.int32)
@@ -404,9 +400,7 @@ def evaluate_prediction(
 
             for clf_type in classifiers:
                 if task_name not in labels_df.columns:
-                    logger.warning(
-                        "Task %s missing from labels lookup, skipping", task_name
-                    )
+                    logger.warning("Task %s missing from labels lookup, skipping", task_name)
                     break
                 task_labels = labels_df[task_name].values
                 try:
@@ -419,9 +413,7 @@ def evaluate_prediction(
                         pooling_method="mean",
                     )
                 except Exception as e:
-                    logger.warning(
-                        "Task %s/%s failed aggregation: %s", task_name, tw.name, e
-                    )
+                    logger.warning("Task %s/%s failed aggregation: %s", task_name, tw.name, e)
                     continue
 
                 # Current signature returns 4-tuple (X, y, user_ids, n_weeks)
@@ -460,35 +452,31 @@ def evaluate_prediction(
                         row["value"] = m["auroc"]
                         records.append(row)
                         binary_aurocs.append(m["auroc"])
-                        records.append({
-                            **row,
-                            "metric": "auprc",
-                            "value": m["auprc"],
-                        })
+                        records.append(
+                            {
+                                **row,
+                                "metric": "auprc",
+                                "value": m["auprc"],
+                            }
+                        )
 
                     elif task_type == "ordinal":
                         test_pred = clf.predict(X_test)
                         m = compute_ordinal_metrics(y_test, test_pred)
                         for metric_name in ("spearman_r", "qwk", "mae_ordinal"):
-                            records.append(
-                                {**row, "metric": metric_name, "value": m[metric_name]}
-                            )
+                            records.append({**row, "metric": metric_name, "value": m[metric_name]})
 
                     elif task_type == "multiclass":
                         test_pred = clf.predict(X_test)
                         m = compute_multiclass_metrics(y_test, test_pred)
                         for metric_name in ("accuracy", "f1_macro"):
-                            records.append(
-                                {**row, "metric": metric_name, "value": m[metric_name]}
-                            )
+                            records.append({**row, "metric": metric_name, "value": m[metric_name]})
 
                     elif task_type == "regression":
                         test_pred = clf.predict(X_test)
                         m = compute_regression_metrics(y_test, test_pred)
                         for metric_name in ("mse", "mae", "pearson_r", "r2"):
-                            records.append(
-                                {**row, "metric": metric_name, "value": m[metric_name]}
-                            )
+                            records.append({**row, "metric": metric_name, "value": m[metric_name]})
 
     global_score = float(np.mean(binary_aurocs)) if binary_aurocs else 0.0
 
@@ -540,9 +528,7 @@ def _extract_encoder_features(
     train_users = split_users.get("train", set())
     train_mask = np.array([uid in train_users for uid in user_ids])
 
-    logger.info(
-        "Computing normalization stats from %d training samples...", train_mask.sum()
-    )
+    logger.info("Computing normalization stats from %d training samples...", train_mask.sum())
     n_channels = 19
     sums = np.zeros(n_channels, dtype=np.float64)
     sq_sums = np.zeros(n_channels, dtype=np.float64)
@@ -551,9 +537,7 @@ def _extract_encoder_features(
     train_indices = np.where(train_mask)[0]
     stats_n = min(len(train_indices), 10000)
     rng = np.random.RandomState(seed)
-    stats_indices = (
-        rng.choice(train_indices, stats_n, replace=False) if stats_n > 0 else []
-    )
+    stats_indices = rng.choice(train_indices, stats_n, replace=False) if stats_n > 0 else []
 
     for idx in stats_indices:
         vals = np.array(hf_dataset[int(idx)]["values"], dtype=np.float32)
@@ -606,9 +590,7 @@ def _extract_encoder_features(
         all_features.append(np.asarray(embeddings, dtype=np.float32))
 
     features = np.concatenate(all_features, axis=0)
-    logger.info(
-        "Extracted %dD features for %d samples", features.shape[1], features.shape[0]
-    )
+    logger.info("Extracted %dD features for %d samples", features.shape[1], features.shape[0])
 
     return features, user_ids, segment_starts
 
@@ -698,8 +680,7 @@ def evaluate_imputation(
     for s in scenario_list:
         if s not in MASKING_SCENARIOS:
             raise ValueError(
-                f"Unknown masking scenario: {s!r}. "
-                f"Valid scenarios: {MASKING_SCENARIOS}"
+                f"Unknown masking scenario: {s!r}. Valid scenarios: {MASKING_SCENARIOS}"
             )
 
     paths = _DatasetPaths.resolve(data_dir, version=version)
@@ -728,9 +709,7 @@ def evaluate_imputation(
         overrides.setdefault("enabled", True)
         bootstrap_cfg = BootstrapConfig(**overrides)
     else:
-        raise TypeError(
-            f"bootstrap must be bool or dict, got {type(bootstrap).__name__}"
-        )
+        raise TypeError(f"bootstrap must be bool or dict, got {type(bootstrap).__name__}")
 
     masking_cfg = MaskingConfig(mask_seed=seed)
     masking_cfg.random_noise.enabled = "random_noise" in scenario_list
@@ -900,11 +879,11 @@ class _ImputerMethodAdapter:
             obs = (mask > 0.5) & np.isfinite(data)
             data_obs = np.where(obs, data, 0.0)
             sums += data_obs.sum(axis=(0, 2))
-            sq_sums += (data_obs ** 2).sum(axis=(0, 2))
+            sq_sums += (data_obs**2).sum(axis=(0, 2))
             counts += obs.sum(axis=(0, 2))
         safe = np.maximum(counts, 1)
         means = np.where(counts > 0, sums / safe, 0.0)
-        variance = np.where(counts > 0, (sq_sums / safe) - means ** 2, 0.0)
+        variance = np.where(counts > 0, (sq_sums / safe) - means**2, 0.0)
         stds = np.sqrt(np.maximum(variance, 0.0))
         stds = np.where(counts > 1, stds, 1.0)
         self._channel_stds = np.maximum(stds, 1e-6).astype(np.float32)
@@ -969,13 +948,16 @@ def evaluate_forecasting(
     data_dir: str | Path | None = None,
     seed: int = 42,
     max_samples: int | None = None,
-) -> "ForecastingResults":
+) -> ForecastingResults:
     """Run forecasting evaluation (Track 3) with a custom forecaster.
 
     Args:
-        forecaster: Object satisfying the :class:`Forecaster` protocol —
-            has ``predict(history, horizon)`` returning a ``(n_channels,
-            horizon)`` array.
+        forecaster: Object satisfying the :class:`Forecaster` protocol — has
+            ``predict(history, horizon)`` returning a ``(n_channels, horizon)``
+            point forecast (optionally a ``(point, quantiles)`` tuple).
+            ``history`` is the full-prefix window; emit ``NaN`` for any cell the
+            model cannot predict and the harness substitutes the Seasonal-Naive
+            baseline (reported via ``ForecastingResults.overall_fallback_rate``).
         version: ``"xs"`` or ``"full"``. Required — cross-checked against
             the dataset root's ``dataset_version.json`` marker.
         forecasting_length: Forecast horizon in hours. Defaults to 24
@@ -988,8 +970,6 @@ def evaluate_forecasting(
     Returns:
         :class:`ForecastingResults` with per-channel metrics.
     """
-    from openmhc._results import ForecastingResults
-
     paths = _DatasetPaths.resolve(data_dir, version=version)
     paths.require(
         "hourly_trajectory",
@@ -1010,9 +990,13 @@ def evaluate_forecasting(
     )
     from forecasting_evaluation.runner import run_eval
 
-    # Pick a sample-index file matching the requested forecasting horizon.
+    # Pick the paper/Hydra-default sample-index file for the requested horizon:
+    # the quality-filtered set (M = target day retained, H_7_3 = >=3 of prior 7
+    # days retained, S_100 = <=100 start days/user, seed 42). Matches
+    # configs/forecasting/data/default.yaml so the public API is paper-parity.
     sample_index_file = (
-        paths.forecasting_sample_index_dir / f"sample_index_P_{forecasting_length}_raw.json"
+        paths.forecasting_sample_index_dir
+        / f"sample_index_P_{forecasting_length}_M_H_7_3_S_100.json"
     )
 
     data_cfg = DataConfig(
@@ -1037,40 +1021,15 @@ def evaluate_forecasting(
             evaluator=EvaluatorConfig(),
             output=OutputConfig(results_dir=tmp_results),
         )
-        adapter = _build_forecaster_adapter(forecaster)
-        result = run_eval(cfg, model=adapter)
+        # The user's forecaster satisfies the unified Forecaster contract
+        # (``predict(history, horizon, *optional kwargs)``); the evaluator
+        # invokes it directly through its duck-typed call path — no adapter.
+        result = run_eval(cfg, model=forecaster)
 
     return ForecastingResults(
         per_channel=result.get("per_channel", {}),
         run_dir=str(result.get("run_dir", "")),
         n_samples=int(result.get("n_samples", 0)),
+        overall_fallback_rate=float(result.get("overall_fallback_rate", 0.0)),
+        fallback_rate=dict(result.get("fallback_rate", {})),
     )
-
-
-def _build_forecaster_adapter(forecaster):
-    """Wrap a user's ``Forecaster`` as an internal ``BasePredictionModel``.
-
-    Subclasses ``BasePredictionModel`` so we inherit ``predict_wrapper`` (which
-    adds timing + memory tracking around the user's ``predict()`` call).
-    """
-    from forecasting_evaluation.models.base import BasePredictionModel
-
-    class _ForecasterAdapter(BasePredictionModel):
-        model_name = "openmhc_custom_forecaster"
-        quantile_levels = None
-        uses_standard_scaler = False
-        scaler_stats = None
-
-        def __init__(self, forecaster):
-            self._forecaster = forecaster
-
-        def predict(self, inputs):
-            """Translate ``SubTrajectoryInput`` → user's ``predict(history, horizon)``."""
-            point = self._forecaster.predict(inputs.history, inputs.prediction_hours)
-            return np.asarray(point, dtype=np.float32), None
-
-        def reset(self):
-            if hasattr(self._forecaster, "reset"):
-                self._forecaster.reset()
-
-    return _ForecasterAdapter(forecaster)

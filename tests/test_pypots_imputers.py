@@ -34,9 +34,7 @@ def _make_synthetic_batch(
     return data, mask
 
 
-def _make_target_mask(
-    observed_mask: np.ndarray, frac: float = 0.2, seed: int = 1
-) -> np.ndarray:
+def _make_target_mask(observed_mask: np.ndarray, frac: float = 0.2, seed: int = 1) -> np.ndarray:
     rng = np.random.default_rng(seed)
     target = (observed_mask > 0.5) & (rng.random(observed_mask.shape) < frac)
     return target.astype(np.float32)
@@ -57,9 +55,7 @@ def _assert_round_trip(out: np.ndarray, data: np.ndarray, target: np.ndarray) ->
     assert np.isfinite(out[target_bool]).all()
     # Non-target positions match the input bit-for-bit (including NaN).
     keep = ~target_bool
-    np.testing.assert_array_equal(
-        np.isnan(out[keep]), np.isnan(data[keep])
-    )
+    np.testing.assert_array_equal(np.isnan(out[keep]), np.isnan(data[keep]))
     finite_keep = keep & np.isfinite(data)
     np.testing.assert_array_equal(out[finite_keep], data[finite_keep])
 
@@ -70,6 +66,7 @@ def _assert_round_trip(out: np.ndarray, data: np.ndarray, target: np.ndarray) ->
 
 
 def test_brits_round_trip(tmp_path):
+    """BRITSImputer loads a saved BRITS model and imputes target cells while leaving non-targets untouched."""
     from pypots.imputation import BRITS
 
     from openmhc.imputers import BRITSImputer
@@ -104,6 +101,7 @@ def test_brits_round_trip(tmp_path):
 
 
 def test_timesnet_round_trip(tmp_path):
+    """TimesNetImputer loads a saved TimesNet model and round-trips an impute() call."""
     from pypots.imputation import TimesNet
 
     from openmhc.imputers import TimesNetImputer
@@ -146,6 +144,7 @@ def test_timesnet_round_trip(tmp_path):
 
 
 def test_dlinear_round_trip(tmp_path):
+    """DLinearImputer loads a saved DLinear model and round-trips an impute() call."""
     from pypots.imputation import DLinear
 
     from openmhc.imputers import DLinearImputer
@@ -180,6 +179,7 @@ def test_dlinear_round_trip(tmp_path):
 
 
 def test_fedformer_round_trip(tmp_path):
+    """FEDformerImputer round-trips an impute() call, including the version->variant kwarg rename."""
     from pypots.imputation import FEDformer
 
     from openmhc.imputers import FEDformerImputer
@@ -311,6 +311,7 @@ def test_directory_path_resolution(tmp_path):
 
 
 def test_missing_path_raises(tmp_path):
+    """A model_path that does not exist raises FileNotFoundError at construction."""
     from openmhc.imputers import BRITSImputer
 
     with pytest.raises(FileNotFoundError):
@@ -324,6 +325,7 @@ def test_missing_path_raises(tmp_path):
 
 
 def test_empty_directory_raises(tmp_path):
+    """A directory containing no .pypots file raises FileNotFoundError at construction."""
     from openmhc.imputers import BRITSImputer
 
     with pytest.raises(FileNotFoundError):
@@ -389,6 +391,7 @@ def _build_brits_release(tmp_path, *, with_stats: bool = True, rnn_hidden_size: 
 
 
 def test_from_release_round_trip(tmp_path):
+    """from_release loads a manifest-described BRITS release (recovering arch) and round-trips impute()."""
     from openmhc.imputers import BRITSImputer
 
     release = _build_brits_release(tmp_path)
@@ -403,15 +406,19 @@ def test_from_release_round_trip(tmp_path):
 
 
 def test_from_release_accepts_manifest_file_path(tmp_path):
+    """from_release accepts a direct path to the manifest JSON, not just the release directory."""
     from openmhc.imputers import BRITSImputer
 
     release = _build_brits_release(tmp_path)
     manifest_file = release / "openmhc_manifest.json"
-    imp = BRITSImputer.from_release(manifest_file, version="xs", device="cpu", inference_batch_size=4)
+    imp = BRITSImputer.from_release(
+        manifest_file, version="xs", device="cpu", inference_batch_size=4
+    )
     assert imp.name == "pypots_brits"
 
 
 def test_from_release_kind_mismatch_raises(tmp_path):
+    """Loading a 'brits' release through TimesNetImputer raises ValueError on the kind mismatch."""
     from openmhc.imputers import TimesNetImputer
 
     release = _build_brits_release(tmp_path)
@@ -461,6 +468,7 @@ def test_release_bundle_is_movable(tmp_path):
 
 
 def test_load_manifest_rejects_bad_spec_version(tmp_path):
+    """load_manifest rejects a manifest with an unsupported spec_version."""
     import json
 
     from openmhc.imputers import load_manifest
@@ -473,20 +481,20 @@ def test_load_manifest_rejects_bad_spec_version(tmp_path):
 
 
 def test_load_manifest_rejects_unknown_kind(tmp_path):
+    """load_manifest rejects a manifest whose kind is not a registered imputer."""
     import json
 
     from openmhc.imputers import load_manifest
 
     (tmp_path / "openmhc_manifest.json").write_text(
-        json.dumps(
-            {"spec_version": 1, "kind": "saits", "checkpoint": "x", "arch": {}}
-        )
+        json.dumps({"spec_version": 1, "kind": "saits", "checkpoint": "x", "arch": {}})
     )
     with pytest.raises(ValueError, match="Unknown manifest kind"):
         load_manifest(tmp_path)
 
 
 def test_load_manifest_rejects_missing_checkpoint(tmp_path):
+    """load_manifest raises FileNotFoundError when the declared checkpoint file is absent."""
     import json
 
     from openmhc.imputers import load_manifest

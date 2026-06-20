@@ -18,7 +18,6 @@ overriding ``run()`` on a thin subclass.
 from __future__ import annotations
 
 import logging
-import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -35,7 +34,7 @@ logger = logging.getLogger(__name__)
 class _CustomModelEvaluator(ForecastingEvaluator):
     """Subclass that injects a pre-constructed model rather than using the registry."""
 
-    def __init__(self, config: "ForecastingEvalConfig", model: "BasePredictionModel"):
+    def __init__(self, config: ForecastingEvalConfig, model: BasePredictionModel):
         super().__init__(config)
         self._injected_model = model
 
@@ -45,7 +44,7 @@ class _CustomModelEvaluator(ForecastingEvaluator):
 
         print_config(self.config)
         model = self._injected_model
-        data_context = self._load_evaluation_data(model)
+        data_context = self._load_evaluation_data()
 
         public_writer = PublicWriter(
             self.config,
@@ -57,12 +56,13 @@ class _CustomModelEvaluator(ForecastingEvaluator):
             "run_dir": str(run_dir),
             "prediction_samples": public_writer.total_written,
             "skipped_users": public_writer.skipped_users,
+            **self._fallback_summary,
         }
 
 
 def run_eval(
-    config: "ForecastingEvalConfig",
-    model: "BasePredictionModel",
+    config: ForecastingEvalConfig,
+    model: BasePredictionModel,
     metrics_output_dir: str | Path | None = None,
 ) -> dict:
     """Run forecasting eval + offline metrics in one call.
@@ -81,6 +81,9 @@ def run_eval(
         - ``metrics_dir``: where offline metrics were written
         - ``per_channel``: aggregated per-channel metrics
         - ``n_samples``: prediction samples emitted
+        - ``overall_fallback_rate``: fraction of forecast cells where the model
+          returned NaN and the Seasonal-Naive baseline was substituted
+        - ``fallback_rate``: per-channel Seasonal-Naive substitution fractions
     """
     # Phase 1: prediction generation.
     evaluator = _CustomModelEvaluator(config, model)
@@ -95,11 +98,36 @@ def run_eval(
     metrics_output_dir = Path(metrics_output_dir)
     metrics_output_dir.mkdir(parents=True, exist_ok=True)
 
+    metrics_cfg = getattr(config, "metrics", None)
+    run_key = config.experiment_name or "openmhc_run"
+    eval_paths = {run_key: str(run_dir)}
+    point_metrics = tuple(metrics_cfg.point_metrics) if metrics_cfg else None
+    combine_channels = bool(metrics_cfg.combine_channels) if metrics_cfg else True
+
     calculator = OfflineMetricsCalculator(
-        evaluation_result_paths={config.experiment_name or "openmhc_run": str(run_dir)},
+        evaluation_result_paths=eval_paths,
         metrics_output_path=str(metrics_output_dir),
+        combine_channels=combine_channels,
+        metric_columns=point_metrics,
     )
     calculator.run()
+
+    # Binary-channel metrics (f1/auroc/auprc) into the SAME metrics tree (same
+    # run_key), so the skill/ranking scripts read one model-root containing both
+    # point and binary metrics. Skipped when binary_metrics is empty.
+    binary_metrics = tuple(metrics_cfg.binary_metrics) if metrics_cfg else ()
+    if binary_metrics:
+        from forecasting_evaluation.metrics.binary_offline_calculate import (
+            BinaryOfflineMetricsCalculator,
+        )
+
+        BinaryOfflineMetricsCalculator(
+            evaluation_result_paths=eval_paths,
+            metrics_output_path=str(metrics_output_dir),
+            threshold=float(metrics_cfg.f1_threshold),
+            combine_channels=combine_channels,
+            metric_names=binary_metrics,
+        ).run()
 
     per_channel = _load_per_channel_metrics(metrics_output_dir)
 
@@ -108,6 +136,8 @@ def run_eval(
         "metrics_dir": str(metrics_output_dir),
         "per_channel": per_channel,
         "n_samples": int(eval_summary["prediction_samples"]),
+        "overall_fallback_rate": float(eval_summary.get("overall_fallback_rate", 0.0)),
+        "fallback_rate": dict(eval_summary.get("fallback_rate", {})),
     }
 
 

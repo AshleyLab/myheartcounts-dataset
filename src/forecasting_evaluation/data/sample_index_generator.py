@@ -1,6 +1,4 @@
-
 """Build per-user forecasting sample-index files from hourly trajectories."""
-
 
 import argparse
 import json
@@ -25,7 +23,7 @@ class SampleIndexGenerator:
     """Generate and persist candidate forecasting start-day indices by user."""
 
     def __init__(
-        self, 
+        self,
         hourly_trajectory_path: str,
         sample_index_path: str,
         day_remain_mask_path: str,
@@ -51,7 +49,7 @@ class SampleIndexGenerator:
             raise ValueError("forecasting_length must be a positive integer")
 
         self.sample_index = {}
-        
+
         self._check_all_data()
 
         logger.info("Loading hourly trajectory data from %s", hourly_trajectory_path)
@@ -62,10 +60,14 @@ class SampleIndexGenerator:
 
     def _check_all_data(self):
         if not os.path.exists(self.hourly_trajectory_path):
-            raise FileNotFoundError(f"Hourly trajectory dataset not found at {self.hourly_trajectory_path}")
-        
+            raise FileNotFoundError(
+                f"Hourly trajectory dataset not found at {self.hourly_trajectory_path}"
+            )
+
         if not os.path.exists(self.day_remain_mask_path):
-            raise FileNotFoundError(f"Day remain mask file not found at {self.day_remain_mask_path}")
+            raise FileNotFoundError(
+                f"Day remain mask file not found at {self.day_remain_mask_path}"
+            )
         else:
             with open(self.day_remain_mask_path, encoding="utf-8") as f:
                 self.day_remain_mask = json.load(f)
@@ -103,7 +105,7 @@ class SampleIndexGenerator:
                 json.dump(self.sample_index, f, ensure_ascii=False, indent=2)
 
             logger.info("Saved sample index to %s", output_path)
-        
+
         logger.info("****Sample index stats for %s:****", name)
 
         # Log user count, total sample count, and per-user quantiles (10%..90%).
@@ -216,13 +218,12 @@ class SampleIndexGenerator:
     def _filter_name_suffix(self, key, value):
         if key == "missing_mask":
             return "_M"
-        
+
         if key == "historical_check":
             return f"_H_{value['recent_day_count']}_{value['minimum_valid_day']}"
 
         if key == "maximum_sample_count_per_user":
             return f"_S_{value}"
-
 
     def generate(self):
         """Generate sample indices, apply optional filters, and persist outputs.
@@ -238,9 +239,11 @@ class SampleIndexGenerator:
             with open(self.sample_index_path, encoding="utf-8") as f:
                 self.sample_index = json.load(f)
             return self.sample_index
-        
+
         # Load hourly trajectory dataset
-        logger.info("Loading hourly trajectory Hugging Face dataset from %s", self.hourly_trajectory_path)
+        logger.info(
+            "Loading hourly trajectory Hugging Face dataset from %s", self.hourly_trajectory_path
+        )
         ds = hf_ds.load_from_disk(self.hourly_trajectory_path)
         if isinstance(ds, hf_ds.DatasetDict):
             ds = hf_ds.concatenate_datasets(list(ds.values()))
@@ -281,14 +284,17 @@ class SampleIndexGenerator:
 
                 if key == "historical_check":
                     if not self._load_sample_index(sample_index_name):
-                        self.sample_index = self._historical_check_filter(ds, self.sample_index.copy(), value)
+                        self.sample_index = self._historical_check_filter(
+                            ds, self.sample_index.copy(), value
+                        )
                     self._save_sample_index(sample_index_name)
 
                 if key == "maximum_sample_count_per_user":
                     if not self._load_sample_index(sample_index_name):
-                        self.sample_index = self._maximum_sample_count_filter(self.sample_index.copy(), value)
+                        self.sample_index = self._maximum_sample_count_filter(
+                            self.sample_index.copy(), value
+                        )
                     self._save_sample_index(sample_index_name)
-
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M")
         self._save_sample_index(f"sample_index_final_{timestamp}")
@@ -296,7 +302,9 @@ class SampleIndexGenerator:
 
 
 def _build_cli_parser():
-    parser = argparse.ArgumentParser(description="Generate forecasting sample index with configurable filters.")
+    parser = argparse.ArgumentParser(
+        description="Generate forecasting sample index with configurable filters."
+    )
     parser.add_argument("--hourly_trajectory_path", type=str, required=True)
     parser.add_argument("--sample_index_path", type=str, required=True)
     parser.add_argument("--day_remain_mask_path", type=str, required=True)
@@ -329,7 +337,9 @@ def _build_cli_parser():
 
 def _load_filter_parameters(filter_parameters_json=None, filter_parameters_path=None):
     if filter_parameters_json and filter_parameters_path:
-        raise ValueError("Please provide only one of --filter_parameters_json or --filter_parameters_path")
+        raise ValueError(
+            "Please provide only one of --filter_parameters_json or --filter_parameters_path"
+        )
 
     if filter_parameters_json:
         return json.loads(filter_parameters_json)
@@ -362,7 +372,6 @@ def main():
         forecasting_length=args.forecasting_length,
     )
     generator.generate()
-
 
 
 if __name__ == "__main__":

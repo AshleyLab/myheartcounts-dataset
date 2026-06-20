@@ -18,7 +18,6 @@ from imputation_evaluation.evaluation.bootstrap_skill_rank import (
     _per_user_auc_from_cell_stats,
 )
 
-
 N_CHANNELS = 19
 CONTINUOUS_CH = 0  # ch_0 is continuous
 BINARY_CH = 7  # ch_7 is binary (sleep:asleep)
@@ -66,6 +65,8 @@ def _make_cell_stats(
 
 
 class TestUserMacroContinuousE:
+    """Continuous-channel user-macro E reduction in ``_per_method_cell_errors``."""
+
     def test_balanced_data_matches_cell_pooled(self):
         """When each user contributes equally, user-macro == cell-pooled."""
         # 3 users, each with N=100 cells in channel 0 and SSE=100 (so per-user
@@ -79,7 +80,9 @@ class TestUserMacroContinuousE:
         cs = _make_cell_stats(n_users, n_u_ch, sse_u_ch, [CONTINUOUS_CH])
 
         boot_idx = np.array([[0, 1, 2]])  # one draw, no resampling
-        E = _per_method_cell_errors(cs, boot_idx, channel_stds=np.ones(N_CHANNELS), include_auc=False)
+        E = _per_method_cell_errors(
+            cs, boot_idx, channel_stds=np.ones(N_CHANNELS), include_auc=False
+        )
         # Expected: nanmean of [1.0, 1.0, 1.0] = 1.0.
         np.testing.assert_allclose(E[0, CONTINUOUS_CH], 1.0, rtol=1e-9)
 
@@ -100,7 +103,9 @@ class TestUserMacroContinuousE:
         cs = _make_cell_stats(n_users, n_u_ch, sse_u_ch, [CONTINUOUS_CH])
 
         boot_idx = np.array([[0, 1]])
-        E = _per_method_cell_errors(cs, boot_idx, channel_stds=np.ones(N_CHANNELS), include_auc=False)
+        E = _per_method_cell_errors(
+            cs, boot_idx, channel_stds=np.ones(N_CHANNELS), include_auc=False
+        )
         np.testing.assert_allclose(E[0, CONTINUOUS_CH], 5.05, rtol=1e-9)
 
     def test_resampled_users_count_with_multiplicity(self):
@@ -116,7 +121,9 @@ class TestUserMacroContinuousE:
 
         # Two draws: even balance, then user 0 picked twice.
         boot_idx = np.array([[0, 1], [0, 0]])
-        E = _per_method_cell_errors(cs, boot_idx, channel_stds=np.ones(N_CHANNELS), include_auc=False)
+        E = _per_method_cell_errors(
+            cs, boot_idx, channel_stds=np.ones(N_CHANNELS), include_auc=False
+        )
         np.testing.assert_allclose(E[0, CONTINUOUS_CH], 1.5, rtol=1e-9)  # mean(1.0, 2.0)
         np.testing.assert_allclose(E[1, CONTINUOUS_CH], 1.0, rtol=1e-9)  # mean(1.0, 1.0)
 
@@ -131,11 +138,15 @@ class TestUserMacroContinuousE:
         cs = _make_cell_stats(n_users, n_u_ch, sse_u_ch, [CONTINUOUS_CH])
 
         boot_idx = np.array([[0, 1, 2]])
-        E = _per_method_cell_errors(cs, boot_idx, channel_stds=np.ones(N_CHANNELS), include_auc=False)
+        E = _per_method_cell_errors(
+            cs, boot_idx, channel_stds=np.ones(N_CHANNELS), include_auc=False
+        )
         np.testing.assert_allclose(E[0, CONTINUOUS_CH], 1.0, rtol=1e-9)
 
 
 class TestUserMacroBinaryE:
+    """Binary-channel user-macro E (1 − AUC) and single-class user handling."""
+
     def test_per_user_auc_drops_single_class_users(self):
         """Users with only one class for a channel contribute NaN AUC."""
         from imputation_evaluation.evaluation.bootstrap_skill_rank import BinaryRows

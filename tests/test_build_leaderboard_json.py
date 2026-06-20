@@ -12,21 +12,18 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import pytest
-
 _SCRIPT_DIR = Path(__file__).resolve().parent.parent / "scripts" / "paper_results"
 if str(_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPT_DIR))
 
 import build_leaderboard_json as blj  # noqa: E402
 
-
 # csv_key -> (display_name, mtype). Insertion order is deliberately NOT
 # the descending-skill order, to exercise the auto-sort.
 META = {
-    "alpha":   ("Alpha", "Statistical"),
-    "beta":    ("Beta",  "Deep Learning"),
-    "gamma":   ("Gamma", "Self-Supervised"),
+    "alpha": ("Alpha", "Statistical"),
+    "beta": ("Beta", "Deep Learning"),
+    "gamma": ("Gamma", "Self-Supervised"),
 }
 
 
@@ -50,7 +47,7 @@ def test_build_section_sorts_by_skill_desc():
 
 
 def test_build_section_assigns_sectionRank_to_sorted_order():
-    """sectionRank is 1, 2, 3 in the *sorted* order, not the meta order."""
+    """SectionRank is 1, 2, 3 in the *sorted* order, not the meta order."""
     skill = {"alpha": 0.10, "beta": 0.80, "gamma": -0.20}
     rows = blj._build_section(
         META,
@@ -79,7 +76,7 @@ def test_build_section_preserves_display_name_and_mtype():
     )
     by_method = {r["method"]: r for r in rows}
     assert by_method["Alpha"]["mtype"] == "Statistical"
-    assert by_method["Beta"]["mtype"]  == "Deep Learning"
+    assert by_method["Beta"]["mtype"] == "Deep Learning"
     assert by_method["Gamma"]["mtype"] == "Self-Supervised"
 
 
@@ -89,15 +86,23 @@ def test_build_section_does_not_raise_on_reordering():
     # implementation would have raised SystemExit; the new one just sorts.
     skill = {"alpha": 0.99, "beta": 0.50, "gamma": 0.10}  # meta order == sorted
     rows_ok = blj._build_section(
-        META, skill=skill, fair={k: 0.0 for k in META},
-        rank={k: 1.0 for k in META}, subs=_empty_subs(), submitted_on="2026-06",
+        META,
+        skill=skill,
+        fair={k: 0.0 for k in META},
+        rank={k: 1.0 for k in META},
+        subs=_empty_subs(),
+        submitted_on="2026-06",
     )
     skill_inv = {"alpha": 0.10, "beta": 0.50, "gamma": 0.99}  # inverse order
     rows_inv = blj._build_section(
-        META, skill=skill_inv, fair={k: 0.0 for k in META},
-        rank={k: 1.0 for k in META}, subs=_empty_subs(), submitted_on="2026-06",
+        META,
+        skill=skill_inv,
+        fair={k: 0.0 for k in META},
+        rank={k: 1.0 for k in META},
+        subs=_empty_subs(),
+        submitted_on="2026-06",
     )
-    assert [r["method"] for r in rows_ok]  == ["Alpha", "Beta", "Gamma"]
+    assert [r["method"] for r in rows_ok] == ["Alpha", "Beta", "Gamma"]
     assert [r["method"] for r in rows_inv] == ["Gamma", "Beta", "Alpha"]
 
 
@@ -122,8 +127,9 @@ def test_load_overall_fairness_default(tmp_path: Path):
 
 
 def test_load_overall_picks_overall_for_skill(tmp_path: Path):
-    """Skill / rank CSVs use ``overall`` as the headline scope. The
-    OVERALL_SKILL_SCOPE / OVERALL_RANK_SCOPE constants make the choice
+    """Skill / rank CSVs use ``overall`` as the headline scope.
+
+    The OVERALL_SKILL_SCOPE / OVERALL_RANK_SCOPE constants make the choice
     explicit at the import surface.
     """
     csv_path = tmp_path / "skill_scores_bootstrap.csv"
@@ -139,6 +145,7 @@ def test_load_overall_picks_overall_for_skill(tmp_path: Path):
 
 def test_load_subgroups_reads_unified_cat_scopes(tmp_path: Path):
     """After the C3 rename, all 4 categories live under ``cat:*``.
+
     Per-channel binary scopes (the old ``cat:sleep`` / ``cat:workouts``
     that took the geomean over individual binary channels) were
     deleted in C2 — the unqualified label ``cat:sleep`` now means
@@ -156,25 +163,26 @@ def test_load_subgroups_reads_unified_cat_scopes(tmp_path: Path):
     subs = blj._load_subgroups(csv_path)
     assert subs == {
         "lsm2": {
-            "activity":   0.30,
+            "activity": 0.30,
             "physiology": 0.40,
-            "sleep":      0.50,
-            "workout":    0.60,
-            "semantic":   0.35,
+            "sleep": 0.50,
+            "workout": 0.60,
+            "semantic": 0.35,
         }
     }
 
 
 def test_subgroup_field_mapping_locked_in():
-    """Lock the canonical scope→field mapping so future edits to
-    ``SUBGROUP_FIELD`` show up as test failures.
+    """Lock the canonical scope→field mapping.
+
+    Future edits to ``SUBGROUP_FIELD`` show up as test failures.
     """
     assert blj.SUBGROUP_FIELD == {
-        "cat:activity":   "activity",
+        "cat:activity": "activity",
         "cat:physiology": "physiology",
-        "cat:sleep":      "sleep",
-        "cat:workouts":   "workout",
-        "semantic":       "semantic",
+        "cat:sleep": "sleep",
+        "cat:workouts": "workout",
+        "semantic": "semantic",
     }
 
 
@@ -182,37 +190,50 @@ def test_full_imputation_section_with_real_registry():
     """End-to-end on the real registry with synthetic skill scores."""
     skill = {
         # DAILY_META
-        "lsm2": 0.78, "linear": 0.27, "dlinear": 0.23, "temporal_mean": 0.08,
-        "locf": 0.0, "brits": -0.02, "timesnet": -0.12, "temporal_mode": -0.10,
-        "fedformer": -0.17, "mode": -0.22, "mean": -0.31,
+        "lsm2": 0.78,
+        "linear": 0.27,
+        "dlinear": 0.23,
+        "temporal_mean": 0.08,
+        "locf": 0.0,
+        "brits": -0.02,
+        "timesnet": -0.12,
+        "temporal_mode": -0.10,
+        "fedformer": -0.17,
+        "mode": -0.22,
+        "mean": -0.31,
         # PERSONALIZED_META
-        "lsm2_weekly_sparse": 0.81, "personalized_temporal_mean": 0.15,
-        "personalized_mean": -0.62, "dlinear_weekly": 0.11,
+        "lsm2_weekly_sparse": 0.81,
+        "personalized_temporal_mean": 0.15,
+        "personalized_mean": -0.62,
+        "dlinear_weekly": 0.11,
         "personalized_mode": -0.22,
     }
     zero = {k: 0.0 for k in skill}
-    one  = {k: 1.0 for k in skill}
+    one = {k: 1.0 for k in skill}
     out = blj._build_imputation(
-        skill=skill, fair=zero, rank=one, subs={}, submitted_on="2026-06",
+        skill=skill,
+        fair=zero,
+        rank=one,
+        subs={},
+        submitted_on="2026-06",
     )
     # Section headers preserved
     headers = [r["text"] for r in out if r.get("type") == "h1"]
     assert headers == [blj.DAILY_HEADER, blj.PERSONALIZED_HEADER]
     # Within each section, skill values are monotone non-increasing
-    methods = [r for r in out if r.get("type") == "method"]
     # Find the index of the second header to split sections
     header_idxs = [i for i, r in enumerate(out) if r.get("type") == "h1"]
-    daily_rows = [r for r in out[header_idxs[0]:header_idxs[1]] if r.get("type") == "method"]
-    pers_rows  = [r for r in out[header_idxs[1]:] if r.get("type") == "method"]
+    daily_rows = [r for r in out[header_idxs[0] : header_idxs[1]] if r.get("type") == "method"]
+    pers_rows = [r for r in out[header_idxs[1] :] if r.get("type") == "method"]
 
     def _skill_pct(row: dict) -> float:
         # _fmt_pct returns "+78.0" / "0.0" / "-12.4"
         return float(row["skill"])
 
     daily_vals = [_skill_pct(r) for r in daily_rows]
-    pers_vals  = [_skill_pct(r) for r in pers_rows]
+    pers_vals = [_skill_pct(r) for r in pers_rows]
     assert daily_vals == sorted(daily_vals, reverse=True)
-    assert pers_vals  == sorted(pers_vals,  reverse=True)
+    assert pers_vals == sorted(pers_vals, reverse=True)
     # Specifically: timesnet should now follow temporal_mode (the swap we
     # diagnosed when refreshing the leaderboard).
     daily_methods = [r["method"] for r in daily_rows]

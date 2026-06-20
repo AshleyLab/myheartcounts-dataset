@@ -7,7 +7,6 @@ reusable helpers (channel statistics, metadata access) — but the
 base class.
 
 Example:
-
     >>> import openmhc
     >>> from openmhc.imputers import MeanImputer
     >>> results = openmhc.evaluate_imputation(MeanImputer())
@@ -36,6 +35,7 @@ from openmhc.imputers._personalized_base import PersonalizedImputerBase
 from openmhc.imputers._release import Manifest, load_manifest, write_manifest
 from openmhc.imputers.linear import LinearImputer
 from openmhc.imputers.locf import LOCFImputer
+from openmhc.imputers.lsm2 import LSM2Imputer, LSM2WeeklySparseImputer
 from openmhc.imputers.mean import MeanImputer
 from openmhc.imputers.mode import ModeImputer
 from openmhc.imputers.personalized import (
@@ -43,7 +43,6 @@ from openmhc.imputers.personalized import (
     PersonalizedModeImputer,
     PersonalizedTemporalMeanImputer,
 )
-from openmhc.imputers.lsm2 import LSM2Imputer, LSM2WeeklySparseImputer
 from openmhc.imputers.pypots import (
     BRITSImputer,
     DLinearImputer,

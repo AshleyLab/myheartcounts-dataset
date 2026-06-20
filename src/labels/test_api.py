@@ -50,8 +50,12 @@ def _write_enrollment(path: Path) -> None:
     path.write_text(json.dumps(sample))
 
 
-_REAL_LABEL_TYPES = Path(__file__).resolve().parent.parent.parent / "data" / "labels" / "label_types.json"
-_REAL_ORDINAL_DICT = Path(__file__).resolve().parent.parent.parent / "data" / "labels" / "ordinal_dictionary.json"
+_REAL_LABEL_TYPES = (
+    Path(__file__).resolve().parent.parent.parent / "data" / "labels" / "label_types.json"
+)
+_REAL_ORDINAL_DICT = (
+    Path(__file__).resolve().parent.parent.parent / "data" / "labels" / "ordinal_dictionary.json"
+)
 
 
 def _load_api(tmp_path: Path):
@@ -864,8 +868,11 @@ def test_validity_multi_measurement_returns_nearest_valid(tmp_path: Path) -> Non
 
     # Query closest to Jan 15 (invalid). Nearest valid is Mar 20.
     result = api.get_labels(
-        "user-mixed", pd.Timestamp("2020-01-20"), "happiness",
-        enforce_type=False, return_valid_only=True,
+        "user-mixed",
+        pd.Timestamp("2020-01-20"),
+        "happiness",
+        enforce_type=False,
+        return_valid_only=True,
     )
     assert result.value == 8.0
     assert result.matched_timestamp == pd.Timestamp("2020-03-20")
@@ -879,8 +886,11 @@ def test_validity_multi_measurement_picks_closest_valid(tmp_path: Path) -> None:
     # Valid measurements: Mar 20 (value=8) and Sep 10 (value=9).
     # Query at Aug 1 is closer to Sep 10.
     result = api.get_labels(
-        "user-mixed", pd.Timestamp("2020-08-01"), "happiness",
-        enforce_type=False, return_valid_only=True,
+        "user-mixed",
+        pd.Timestamp("2020-08-01"),
+        "happiness",
+        enforce_type=False,
+        return_valid_only=True,
     )
     assert result.value == 9.0
     assert result.matched_timestamp == pd.Timestamp("2020-09-10")
@@ -892,11 +902,15 @@ def test_validity_no_file_degrades_gracefully(tmp_path: Path) -> None:
     enrollment_path = tmp_path / "enrollment_info.json"
     nonexistent_validity = tmp_path / "nonexistent.json"
 
-    labels_path.write_text(json.dumps({
-        "Diabetes": {
-            "user-123": {"timestamps": ["2020-06-01T00:00:00"], "values": [True]},
-        },
-    }))
+    labels_path.write_text(
+        json.dumps(
+            {
+                "Diabetes": {
+                    "user-123": {"timestamps": ["2020-06-01T00:00:00"], "values": [True]},
+                },
+            }
+        )
+    )
     enrollment_path.write_text(json.dumps({"user-123": {"birthdate": "1980-01-01"}}))
 
     api = _load_api_with_validity(labels_path, enrollment_path, nonexistent_validity)
@@ -931,11 +945,15 @@ def test_validity_mask_length_mismatch_ignored(tmp_path: Path) -> None:
     enrollment_path = tmp_path / "enrollment_info.json"
     validity_path = tmp_path / "label_validity.json"
 
-    labels_path.write_text(json.dumps({
-        "Diabetes": {
-            "user-123": {"timestamps": ["2020-06-01T00:00:00"], "values": [True]},
-        },
-    }))
+    labels_path.write_text(
+        json.dumps(
+            {
+                "Diabetes": {
+                    "user-123": {"timestamps": ["2020-06-01T00:00:00"], "values": [True]},
+                },
+            }
+        )
+    )
     enrollment_path.write_text(json.dumps({"user-123": {"birthdate": "1980-01-01"}}))
     # Wrong length mask: 2 booleans for 1 timestamp
     _write_validity(validity_path, {"Diabetes": {"user-123": [True, False]}})
@@ -951,7 +969,9 @@ def test_validity_mask_length_mismatch_ignored(tmp_path: Path) -> None:
 
 
 def _load_api_with_daily(
-    labels_path: Path, enrollment_path: Path, daily_path: Path,
+    labels_path: Path,
+    enrollment_path: Path,
+    daily_path: Path,
 ):
     os.environ["LABELS_DATA_PATH"] = str(labels_path)
     os.environ["ENROLLMENT_DATA_PATH"] = str(enrollment_path)
@@ -1031,8 +1051,11 @@ def test_windowed_median(tmp_path: Path) -> None:
 
     # ±2 days around March 3 → covers March 1-5 (5 values: 60,62,58,61,63)
     result = api.get_labels_windowed(
-        "user-daily", pd.Timestamp("2020-03-03"), "Watch_RestingHeartRate",
-        window_days=2, aggregation="median",
+        "user-daily",
+        pd.Timestamp("2020-03-03"),
+        "Watch_RestingHeartRate",
+        window_days=2,
+        aggregation="median",
     )
     assert result.value == 61.0
     assert result.n_points == 5
@@ -1045,8 +1068,11 @@ def test_windowed_mean(tmp_path: Path) -> None:
 
     # ±1 day around March 3 → covers March 2-4 (3 values: 62,58,61)
     result = api.get_labels_windowed(
-        "user-daily", pd.Timestamp("2020-03-03"), "Watch_RestingHeartRate",
-        window_days=1, aggregation="mean",
+        "user-daily",
+        pd.Timestamp("2020-03-03"),
+        "Watch_RestingHeartRate",
+        window_days=1,
+        aggregation="mean",
     )
     assert abs(result.value - 60.333333) < 0.01
     assert result.n_points == 3
@@ -1058,8 +1084,11 @@ def test_windowed_exact_day(tmp_path: Path) -> None:
     api = _load_api_with_daily(lp, ep, dp)
 
     result = api.get_labels_windowed(
-        "user-daily", pd.Timestamp("2020-03-03"), "Watch_RestingHeartRate",
-        window_days=0, aggregation="mean",
+        "user-daily",
+        pd.Timestamp("2020-03-03"),
+        "Watch_RestingHeartRate",
+        window_days=0,
+        aggregation="mean",
     )
     assert result.value == 58.0
     assert result.n_points == 1
@@ -1072,7 +1101,9 @@ def test_windowed_no_data_raises(tmp_path: Path) -> None:
 
     with pytest.raises(KeyError):
         api.get_labels_windowed(
-            "user-daily", pd.Timestamp("2021-01-01"), "Watch_RestingHeartRate",
+            "user-daily",
+            pd.Timestamp("2021-01-01"),
+            "Watch_RestingHeartRate",
             window_days=0,
         )
 
@@ -1083,8 +1114,11 @@ def test_windowed_happiness_from_daily(tmp_path: Path) -> None:
     api = _load_api_with_daily(lp, ep, dp)
 
     result = api.get_labels_windowed(
-        "user-daily", pd.Timestamp("2020-03-03"), "happiness",
-        window_days=1, aggregation="median",
+        "user-daily",
+        pd.Timestamp("2020-03-03"),
+        "happiness",
+        window_days=1,
+        aggregation="median",
     )
     # March 2-4: values 8.0, 7.0, 9.0 → median = 8.0
     assert result.value == 8.0
@@ -1097,25 +1131,32 @@ def test_windowed_falls_back_to_labels(tmp_path: Path) -> None:
     enrollment_path = tmp_path / "enrollment_info.json"
     nonexistent_daily = tmp_path / "nonexistent_daily.json"
 
-    labels_path.write_text(json.dumps({
-        "happiness": {
-            "user-123": {
-                "timestamps": [
-                    "2020-03-01T00:00:00",
-                    "2020-03-02T00:00:00",
-                    "2020-03-03T00:00:00",
-                ],
-                "values": [5.0, 7.0, 9.0],
-            },
-        },
-    }))
+    labels_path.write_text(
+        json.dumps(
+            {
+                "happiness": {
+                    "user-123": {
+                        "timestamps": [
+                            "2020-03-01T00:00:00",
+                            "2020-03-02T00:00:00",
+                            "2020-03-03T00:00:00",
+                        ],
+                        "values": [5.0, 7.0, 9.0],
+                    },
+                },
+            }
+        )
+    )
     enrollment_path.write_text(json.dumps({"user-123": {"birthdate": "1980-01-01"}}))
 
     api = _load_api_with_daily(labels_path, enrollment_path, nonexistent_daily)
 
     result = api.get_labels_windowed(
-        "user-123", pd.Timestamp("2020-03-02"), "happiness",
-        window_days=1, aggregation="mean",
+        "user-123",
+        pd.Timestamp("2020-03-02"),
+        "happiness",
+        window_days=1,
+        aggregation="mean",
     )
     assert result.value == 7.0
     assert result.n_points == 3
@@ -1128,8 +1169,11 @@ def test_windowed_invalid_aggregation(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="Unknown aggregation"):
         api.get_labels_windowed(
-            "user-daily", pd.Timestamp("2020-03-03"), "Watch_RestingHeartRate",
-            window_days=1, aggregation="invalid",
+            "user-daily",
+            pd.Timestamp("2020-03-03"),
+            "Watch_RestingHeartRate",
+            window_days=1,
+            aggregation="invalid",
         )
 
 
@@ -1176,6 +1220,7 @@ def test_target_names_and_context_names_partition(tmp_path: Path) -> None:
     os.environ["HEALTHKIT_DAILY_PATH"] = str(tmp_path / "nope.json")
     os.environ["CONTEXT_LABELS_PATH"] = str(tmp_path / "nope.json")
     import labels.api as api
+
     api = importlib.reload(api)
 
     assert set(api.TARGET_NAMES) | set(api.CONTEXT_NAMES) == set(api.LABEL_NAMES)
@@ -1194,17 +1239,25 @@ def test_context_labels_loaded_and_queryable(tmp_path: Path) -> None:
     lt_path.write_text(json.dumps(label_types))
 
     labels_path = tmp_path / "last_labels.json"
-    labels_path.write_text(json.dumps({
-        "Diabetes": {
-            "user-123": {"timestamps": ["2020-01-01T00:00:00"], "values": [True]},
-        },
-    }))
+    labels_path.write_text(
+        json.dumps(
+            {
+                "Diabetes": {
+                    "user-123": {"timestamps": ["2020-01-01T00:00:00"], "values": [True]},
+                },
+            }
+        )
+    )
     context_path = tmp_path / "context_labels.json"
-    context_path.write_text(json.dumps({
-        "field_smoking": {
-            "user-123": {"timestamps": ["2020-01-01T00:00:00"], "values": [False]},
-        },
-    }))
+    context_path.write_text(
+        json.dumps(
+            {
+                "field_smoking": {
+                    "user-123": {"timestamps": ["2020-01-01T00:00:00"], "values": [False]},
+                },
+            }
+        )
+    )
     enrollment_path = tmp_path / "enrollment_info.json"
     enrollment_path.write_text(json.dumps({"user-123": {"birthdate": "1980-01-01"}}))
 
@@ -1230,18 +1283,26 @@ def test_context_overlap_target_takes_precedence(tmp_path: Path) -> None:
 
     # Target says True at 2020-01-01
     labels_path = tmp_path / "last_labels.json"
-    labels_path.write_text(json.dumps({
-        "Diabetes": {
-            "user-123": {"timestamps": ["2020-01-01T00:00:00"], "values": [True]},
-        },
-    }))
+    labels_path.write_text(
+        json.dumps(
+            {
+                "Diabetes": {
+                    "user-123": {"timestamps": ["2020-01-01T00:00:00"], "values": [True]},
+                },
+            }
+        )
+    )
     # Context says False at 2020-01-01 (different survey)
     context_path = tmp_path / "context_labels.json"
-    context_path.write_text(json.dumps({
-        "Diabetes": {
-            "user-123": {"timestamps": ["2020-01-01T00:00:00"], "values": [False]},
-        },
-    }))
+    context_path.write_text(
+        json.dumps(
+            {
+                "Diabetes": {
+                    "user-123": {"timestamps": ["2020-01-01T00:00:00"], "values": [False]},
+                },
+            }
+        )
+    )
     enrollment_path = tmp_path / "enrollment_info.json"
     enrollment_path.write_text(json.dumps({"user-123": {"birthdate": "1980-01-01"}}))
 
@@ -1261,22 +1322,34 @@ def test_context_overlap_merges_new_users(tmp_path: Path) -> None:
     lt_path.write_text(json.dumps(label_types))
 
     labels_path = tmp_path / "last_labels.json"
-    labels_path.write_text(json.dumps({
-        "Diabetes": {
-            "user-123": {"timestamps": ["2020-01-01T00:00:00"], "values": [True]},
-        },
-    }))
+    labels_path.write_text(
+        json.dumps(
+            {
+                "Diabetes": {
+                    "user-123": {"timestamps": ["2020-01-01T00:00:00"], "values": [True]},
+                },
+            }
+        )
+    )
     context_path = tmp_path / "context_labels.json"
-    context_path.write_text(json.dumps({
-        "Diabetes": {
-            "user-456": {"timestamps": ["2020-06-01T00:00:00"], "values": [False]},
-        },
-    }))
+    context_path.write_text(
+        json.dumps(
+            {
+                "Diabetes": {
+                    "user-456": {"timestamps": ["2020-06-01T00:00:00"], "values": [False]},
+                },
+            }
+        )
+    )
     enrollment_path = tmp_path / "enrollment_info.json"
-    enrollment_path.write_text(json.dumps({
-        "user-123": {"birthdate": "1980-01-01"},
-        "user-456": {"birthdate": "1990-01-01"},
-    }))
+    enrollment_path.write_text(
+        json.dumps(
+            {
+                "user-123": {"birthdate": "1980-01-01"},
+                "user-456": {"birthdate": "1990-01-01"},
+            }
+        )
+    )
 
     api = _load_api_with_context(labels_path, enrollment_path, context_path, lt_path)
 
@@ -1294,11 +1367,15 @@ def test_no_context_file_works(tmp_path: Path) -> None:
     enrollment_path = tmp_path / "enrollment_info.json"
     nonexistent_ctx = tmp_path / "nonexistent_context.json"
 
-    labels_path.write_text(json.dumps({
-        "Diabetes": {
-            "user-123": {"timestamps": ["2020-06-01T00:00:00"], "values": [True]},
-        },
-    }))
+    labels_path.write_text(
+        json.dumps(
+            {
+                "Diabetes": {
+                    "user-123": {"timestamps": ["2020-06-01T00:00:00"], "values": [True]},
+                },
+            }
+        )
+    )
     enrollment_path.write_text(json.dumps({"user-123": {"birthdate": "1980-01-01"}}))
 
     api = _load_api_with_context(labels_path, enrollment_path, nonexistent_ctx)
@@ -1325,6 +1402,7 @@ def test_backward_compat_old_label_types_format(tmp_path: Path) -> None:
     os.environ["HEALTHKIT_DAILY_PATH"] = str(tmp_path / "nope.json")
     os.environ["CONTEXT_LABELS_PATH"] = str(tmp_path / "nope.json")
     import labels.api as api
+
     api = importlib.reload(api)
 
     assert api.LABEL_TYPES == {"Diabetes": "binary", "age": "continuous"}
@@ -1339,14 +1417,18 @@ def test_unknown_ordinal_string_raises_label_type_error(tmp_path: Path) -> None:
     """Unknown string in an ordinal/categorical column wraps KeyError as LabelTypeError."""
     labels_path = tmp_path / "last_labels.json"
     enrollment_path = tmp_path / "enrollment_info.json"
-    labels_path.write_text(json.dumps({
-        "BMI_categories": {
-            "user-123": {
-                "timestamps": ["2020-01-01T00:00:00"],
-                "values": ["__not_a_known_string__"],
-            },
-        },
-    }))
+    labels_path.write_text(
+        json.dumps(
+            {
+                "BMI_categories": {
+                    "user-123": {
+                        "timestamps": ["2020-01-01T00:00:00"],
+                        "values": ["__not_a_known_string__"],
+                    },
+                },
+            }
+        )
+    )
     enrollment_path.write_text(json.dumps({"user-123": {"birthdate": "2000-01-15"}}))
 
     api = _load_api_with_paths(labels_path, enrollment_path)
@@ -1424,6 +1506,7 @@ def test_enforce_type_multi_categorical_dispatches_to_tuple(tmp_path: Path) -> N
     os.environ["HEALTHKIT_DAILY_PATH"] = str(tmp_path / "nope.json")
     os.environ["CONTEXT_LABELS_PATH"] = str(tmp_path / "nope.json")
     import labels.api as api
+
     api = importlib.reload(api)
 
     assert api._enforce_type("field_race", [1, 3]) == (1, 3)
@@ -1451,6 +1534,7 @@ def test_multi_categorical_names_export_is_derived_from_label_types(tmp_path: Pa
     os.environ["HEALTHKIT_DAILY_PATH"] = str(tmp_path / "nope.json")
     os.environ["CONTEXT_LABELS_PATH"] = str(tmp_path / "nope.json")
     import labels.api as api
+
     api = importlib.reload(api)
 
     assert sorted(api.MULTI_CATEGORICAL_NAMES) == sorted(["field_race", "field_family_history"])
@@ -1462,12 +1546,19 @@ def test_multi_categorical_names_export_is_derived_from_label_types(tmp_path: Pa
 def _ord_dict_with_field_race(tmp_path: Path) -> Path:
     """Write an ordinal_dictionary.json with field_race int-keyed mappings."""
     path = tmp_path / "ordinal_dictionary.json"
-    path.write_text(json.dumps({
-        "field_race": {
-            "1": "White", "2": "Black", "3": "American Indian",
-            "4": "Alaska Native", "5": "Asian Indian",
-        },
-    }))
+    path.write_text(
+        json.dumps(
+            {
+                "field_race": {
+                    "1": "White",
+                    "2": "Black",
+                    "3": "American Indian",
+                    "4": "Alaska Native",
+                    "5": "Asian Indian",
+                },
+            }
+        )
+    )
     return path
 
 
@@ -1481,14 +1572,18 @@ def _setup_helpers_api(tmp_path: Path):
     lt_path.write_text(json.dumps(label_types))
     od_path = _ord_dict_with_field_race(tmp_path)
     labels_path = tmp_path / "last_labels.json"
-    labels_path.write_text(json.dumps({
-        "field_race": {
-            "user-123": {"timestamps": ["2020-01-01T00:00:00"], "values": [[1, 3]]},
-        },
-        "Diabetes": {
-            "user-123": {"timestamps": ["2020-01-01T00:00:00"], "values": [True]},
-        },
-    }))
+    labels_path.write_text(
+        json.dumps(
+            {
+                "field_race": {
+                    "user-123": {"timestamps": ["2020-01-01T00:00:00"], "values": [[1, 3]]},
+                },
+                "Diabetes": {
+                    "user-123": {"timestamps": ["2020-01-01T00:00:00"], "values": [True]},
+                },
+            }
+        )
+    )
     enrollment_path = tmp_path / "enrollment_info.json"
     enrollment_path.write_text(json.dumps({"user-123": {"birthdate": "2000-01-15"}}))
 
@@ -1500,6 +1595,7 @@ def _setup_helpers_api(tmp_path: Path):
     os.environ["HEALTHKIT_DAILY_PATH"] = str(tmp_path / "nope.json")
     os.environ["CONTEXT_LABELS_PATH"] = str(tmp_path / "nope.json")
     import labels.api as api
+
     return importlib.reload(api)
 
 
@@ -1520,12 +1616,14 @@ def test_get_labels_count_returns_number_selected(tmp_path: Path) -> None:
 def test_get_labels_contains_membership(tmp_path: Path) -> None:
     """T11: contains returns True iff option is in the selected tuple."""
     api = _setup_helpers_api(tmp_path)
-    assert api.get_labels_contains(
-        "user-123", pd.Timestamp("2020-01-01"), "field_race", option=1
-    ) is True
-    assert api.get_labels_contains(
-        "user-123", pd.Timestamp("2020-01-01"), "field_race", option=2
-    ) is False
+    assert (
+        api.get_labels_contains("user-123", pd.Timestamp("2020-01-01"), "field_race", option=1)
+        is True
+    )
+    assert (
+        api.get_labels_contains("user-123", pd.Timestamp("2020-01-01"), "field_race", option=2)
+        is False
+    )
 
 
 def test_helpers_reject_non_multi_categorical_label(tmp_path: Path) -> None:
@@ -1536,9 +1634,7 @@ def test_helpers_reject_non_multi_categorical_label(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="multi_categorical"):
         api.get_labels_count("user-123", pd.Timestamp("2020-01-01"), "Diabetes")
     with pytest.raises(ValueError, match="multi_categorical"):
-        api.get_labels_contains(
-            "user-123", pd.Timestamp("2020-01-01"), "Diabetes", option=1
-        )
+        api.get_labels_contains("user-123", pd.Timestamp("2020-01-01"), "Diabetes", option=1)
 
 
 def test_get_labels_windowed_rejects_multi_categorical(tmp_path: Path) -> None:
@@ -1546,8 +1642,11 @@ def test_get_labels_windowed_rejects_multi_categorical(tmp_path: Path) -> None:
     api = _setup_helpers_api(tmp_path)
     with pytest.raises(ValueError, match="multi_categorical"):
         api.get_labels_windowed(
-            "user-123", pd.Timestamp("2020-01-01"), "field_race",
-            window_days=7, aggregation="mean",
+            "user-123",
+            pd.Timestamp("2020-01-01"),
+            "field_race",
+            window_days=7,
+            aggregation="mean",
         )
 
 
@@ -1627,6 +1726,7 @@ def test_years_between_basic(tmp_path: Path) -> None:
 def test_vlm_path_exports_present() -> None:
     """LABEL_TYPES_PATH and ORDINAL_DICTIONARY_PATH are re-exported from labels package."""
     import labels
+
     assert hasattr(labels, "LABEL_TYPES_PATH")
     assert hasattr(labels, "ORDINAL_DICTIONARY_PATH")
 
@@ -1634,6 +1734,7 @@ def test_vlm_path_exports_present() -> None:
 def test_years_between_birth_year_export_present() -> None:
     """years_between_birth_year is re-exported from labels package."""
     import labels
+
     assert hasattr(labels, "years_between_birth_year")
 
 

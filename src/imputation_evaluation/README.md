@@ -339,19 +339,19 @@ mhc-impute-eval --multirun \
   evaluation.save_pairs=true
 
 # Phase 1: paired participant-level bootstrap → bootstrap_draws.parquet
-python scripts/paper_results/bootstrap_imputation_draws.py \
+python scripts/paper_results/imputation/bootstrap_imputation_draws.py \
   --method-dirs configs/paper/bootstrap_method_dirs.json \
   --output results/paper/bootstrap_draws.parquet \
   --n-boot 1000 --seed 42 --splits test
 
 # Phase 2: aggregate → 4 sidecar CSVs in results/paper/
-python scripts/paper_results/aggregate_imputation_paper_metrics.py \
+python scripts/paper_results/imputation/aggregate_imputation_paper_metrics.py \
   --draws results/paper/bootstrap_draws.parquet \
   --output-dir results/paper/
 ```
 
 Alternatively, the driver
-[`scripts/paper_results/run_paper_pipeline.py`](../../scripts/paper_results/run_paper_pipeline.py)
+[`scripts/paper_results/imputation/run_paper_pipeline.py`](../../scripts/paper_results/imputation/run_paper_pipeline.py)
 chains all three phases from a single YAML sweep spec
 ([`configs/paper/sweep_methods.yaml`](../../configs/paper/sweep_methods.yaml)).
 

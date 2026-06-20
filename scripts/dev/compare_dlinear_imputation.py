@@ -157,14 +157,24 @@ def _walk(pub: dict, priv: dict) -> tuple[int, int, float]:
 
 
 def main() -> int:
+    """Compare public vs. private imputation metrics and report parity.
+
+    Returns:
+        Process exit code: ``0`` if all metric values match within tolerance,
+        otherwise ``1``.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--public", type=Path, required=True, help="public results.json")
     parser.add_argument(
-        "--private", type=Path, required=True,
+        "--private",
+        type=Path,
+        required=True,
         help="private aggregated_metrics.json (or results.json if it carries inline metrics)",
     )
     parser.add_argument(
-        "--atol", type=float, default=DEFAULT_ATOL,
+        "--atol",
+        type=float,
+        default=DEFAULT_ATOL,
         help=f"abs tolerance (default {DEFAULT_ATOL})",
     )
     args = parser.parse_args()

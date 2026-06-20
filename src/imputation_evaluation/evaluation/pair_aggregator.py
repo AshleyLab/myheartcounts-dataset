@@ -452,6 +452,9 @@ def aggregate_pairs(
             global pool over all rows per channel; kept for the dev-tools
             comparison scripts and as a fallback when no manifest is
             available).
+        return_per_user: When ``True`` (and ``aggregation="user_macro"``),
+            also include a ``"per_user"`` entry mapping each channel key to
+            a ``{user_id: E_user}`` map of unfloored per-user errors.
 
     Returns:
         Metrics dict matching the format of
@@ -534,6 +537,8 @@ def aggregate_pairs_by_subgroup(
             e.g. ``{0: {"age_group": "30-39", "sex": "male"}, ...}``.
         manifest_path: As in :func:`aggregate_pairs`.
         aggregation: As in :func:`aggregate_pairs`.
+        return_per_user: As in :func:`aggregate_pairs`; forwarded to each
+            subgroup's metrics computation.
 
     Returns:
         ``{attr: {group_name: metrics_dict}}`` where ``metrics_dict``

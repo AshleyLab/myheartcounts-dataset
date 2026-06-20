@@ -30,7 +30,6 @@ from imputation_evaluation.evaluation.disparity_metrics import (
     disparity_higher_is_better,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helper-level: the metadata lookup must match the registry's truth.
 # ---------------------------------------------------------------------------
@@ -52,8 +51,9 @@ def test_disparity_higher_is_better_unknown_defaults_false():
 # ---------------------------------------------------------------------------
 
 
-def _fairness_adjusted(s_overall: float, group_scores: dict[str, float],
-                       disparity_name: str, lam: float) -> float:
+def _fairness_adjusted(
+    s_overall: float, group_scores: dict[str, float], disparity_name: str, lam: float
+) -> float:
     """Mirror of the apply-site logic in ``aggregate_skill_rank_fairness``."""
     fn = DISPARITY_FUNCTIONS[disparity_name].fn
     combine = FAIRNESS_COMBINE["linear_penalty"]
@@ -75,8 +75,7 @@ def test_worst_group_fairness_adjusted_increases_with_min_subgroup_score():
     low = _fairness_adjusted(s_overall, {"a": 0.1, "b": 0.5}, "worst_group", lam)
     high = _fairness_adjusted(s_overall, {"a": 0.4, "b": 0.5}, "worst_group", lam)
     assert high > low, (
-        f"worst_group fairness-adjusted should rise when min(S_g) rises; "
-        f"got low={low}, high={high}"
+        f"worst_group fairness-adjusted should rise when min(S_g) rises; got low={low}, high={high}"
     )
 
 
@@ -146,8 +145,9 @@ def _draws_with_subgroup_gap(low_subgroup_mean: float, *, seed: int) -> pd.DataF
     return pd.DataFrame(rows)
 
 
-def _fairness_adjusted_mean(tables: dict[str, pd.DataFrame], col: str,
-                            method: str = "cand") -> float:
+def _fairness_adjusted_mean(
+    tables: dict[str, pd.DataFrame], col: str, method: str = "cand"
+) -> float:
     summary = tables["fairness_summary"]
     sel = summary[summary["method"] == method]
     assert not sel.empty, "fairness_summary missing 'cand' method"
@@ -156,7 +156,9 @@ def _fairness_adjusted_mean(tables: dict[str, pd.DataFrame], col: str,
 
 @pytest.mark.filterwarnings("ignore::DeprecationWarning")
 def test_aggregate_fairness_adjusted_worst_group_rises_with_min_subgroup():
-    """End-to-end: improving the worst subgroup must raise
+    """End-to-end: improving the worst subgroup must raise the adjusted score.
+
+    Improving the worst subgroup must raise
     ``fairness_adjusted_worst_group`` in the aggregator output.
     """
     # Worse subgroup error → lower S_g; we want the *better* config (M closer

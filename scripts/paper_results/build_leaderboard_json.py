@@ -32,7 +32,6 @@ import sys
 from datetime import date
 from pathlib import Path
 
-
 # ---------------------------------------------------------------------------
 # Method registry — static metadata only (display name + category). Display
 # order in the JSON is computed at render time from the bootstrapped skill
@@ -41,25 +40,25 @@ from pathlib import Path
 
 # csv_key -> (display_name, mtype)
 DAILY_META: dict[str, tuple[str, str]] = {
-    "lsm2":          ("LSM-2 (daily)",   "Self-Supervised"),
-    "linear":        ("Linear",          "Statistical"),
-    "dlinear":       ("DLinear",         "Deep Learning"),
-    "temporal_mean": ("Temporal mean",   "Statistical"),
-    "locf":          ("LOCF (baseline)", "Statistical"),
-    "brits":         ("BRITS",           "Deep Learning"),
-    "timesnet":      ("TimesNet",        "Deep Learning"),
-    "temporal_mode": ("Temporal mode",   "Statistical"),
-    "fedformer":     ("FEDformer",       "Deep Learning"),
-    "mode":          ("Mode",            "Statistical"),
-    "mean":          ("Mean",            "Statistical"),
+    "lsm2": ("LSM-2 (daily)", "Self-Supervised"),
+    "linear": ("Linear", "Statistical"),
+    "dlinear": ("DLinear", "Deep Learning"),
+    "temporal_mean": ("Temporal mean", "Statistical"),
+    "locf": ("LOCF (baseline)", "Statistical"),
+    "brits": ("BRITS", "Deep Learning"),
+    "timesnet": ("TimesNet", "Deep Learning"),
+    "temporal_mode": ("Temporal mode", "Statistical"),
+    "fedformer": ("FEDformer", "Deep Learning"),
+    "mode": ("Mode", "Statistical"),
+    "mean": ("Mean", "Statistical"),
 }
 
 PERSONALIZED_META: dict[str, tuple[str, str]] = {
-    "lsm2_weekly_sparse":         ("LSM-2-Sparse (7-day)", "Self-Supervised"),
-    "personalized_temporal_mean": ("Pers. temp. mean",     "Statistical"),
-    "personalized_mean":          ("Pers. mean",           "Statistical"),
-    "dlinear_weekly":             ("DLinear (7-day)",      "Deep Learning"),
-    "personalized_mode":          ("Pers. mode",           "Statistical"),
+    "lsm2_weekly_sparse": ("LSM-2-Sparse (7-day)", "Self-Supervised"),
+    "personalized_temporal_mean": ("Pers. temp. mean", "Statistical"),
+    "personalized_mean": ("Pers. mean", "Statistical"),
+    "dlinear_weekly": ("DLinear (7-day)", "Deep Learning"),
+    "personalized_mode": ("Pers. mode", "Statistical"),
 }
 
 DAILY_HEADER = "Daily (single-day) methods"
@@ -77,11 +76,11 @@ SUBMITTER = "OpenMHC team"  # lowercase 't' — matches existing entries + schem
 # stay on per-channel ``cat:*`` rows because they only have 5 and 2
 # channels and already weight roughly fairly.
 SUBGROUP_FIELD: dict[str, str] = {
-    "cat:activity":   "activity",
+    "cat:activity": "activity",
     "cat:physiology": "physiology",
-    "cat:sleep":      "sleep",
-    "cat:workouts":   "workout",   # singular in JSON
-    "semantic":       "semantic",
+    "cat:sleep": "sleep",
+    "cat:workouts": "workout",  # singular in JSON
+    "semantic": "semantic",
 }
 
 # Headline ``skill`` / ``rank`` JSON columns read from the unified
@@ -131,8 +130,7 @@ def _load_overall(
             )
         if effective != column:
             print(
-                f"[load] {path.name}: column '{column}' missing, "
-                f"falling back to '{effective}'.",
+                f"[load] {path.name}: column '{column}' missing, falling back to '{effective}'.",
                 file=sys.stderr,
             )
         for r in reader:
@@ -205,24 +203,26 @@ def _build_section(
     for i, key in enumerate(ordered_keys, start=1):
         display, mtype = meta[key]
         sg = subs.get(key, {})
-        rows.append({
-            "type": "method",
-            "method": display,
-            "mtype": mtype,
-            "sectionRank": i,
-            "skill":      _fmt_pct(skill[key]),
-            "fair_skill": _fmt_pct(fair.get(key, float("nan"))),
-            "rank":       _fmt_rank(rank[key]),
-            "activity":   _fmt_pct(sg.get("activity", 0.0)),
-            "physiology": _fmt_pct(sg.get("physiology", 0.0)),
-            "sleep":      _fmt_pct(sg.get("sleep", 0.0)),
-            "workout":    _fmt_pct(sg.get("workout", 0.0)),
-            "semantic":   _fmt_pct(sg.get("semantic", 0.0)),
-            "submitter":  SUBMITTER,
-            "submitted_on": submitted_on,
-            "paper_url": "",
-            "code_url": "",
-        })
+        rows.append(
+            {
+                "type": "method",
+                "method": display,
+                "mtype": mtype,
+                "sectionRank": i,
+                "skill": _fmt_pct(skill[key]),
+                "fair_skill": _fmt_pct(fair.get(key, float("nan"))),
+                "rank": _fmt_rank(rank[key]),
+                "activity": _fmt_pct(sg.get("activity", 0.0)),
+                "physiology": _fmt_pct(sg.get("physiology", 0.0)),
+                "sleep": _fmt_pct(sg.get("sleep", 0.0)),
+                "workout": _fmt_pct(sg.get("workout", 0.0)),
+                "semantic": _fmt_pct(sg.get("semantic", 0.0)),
+                "submitter": SUBMITTER,
+                "submitted_on": submitted_on,
+                "paper_url": "",
+                "code_url": "",
+            }
+        )
     return rows
 
 
@@ -236,15 +236,29 @@ def _build_imputation(
 ) -> list[dict]:
     out: list[dict] = []
     out.append({"type": "h1", "text": DAILY_HEADER})
-    out.extend(_build_section(
-        DAILY_META, skill=skill, fair=fair, rank=rank, subs=subs,
-        submitted_on=submitted_on, section_label="daily",
-    ))
+    out.extend(
+        _build_section(
+            DAILY_META,
+            skill=skill,
+            fair=fair,
+            rank=rank,
+            subs=subs,
+            submitted_on=submitted_on,
+            section_label="daily",
+        )
+    )
     out.append({"type": "h1", "text": PERSONALIZED_HEADER})
-    out.extend(_build_section(
-        PERSONALIZED_META, skill=skill, fair=fair, rank=rank, subs=subs,
-        submitted_on=submitted_on, section_label="personalized",
-    ))
+    out.extend(
+        _build_section(
+            PERSONALIZED_META,
+            skill=skill,
+            fair=fair,
+            rank=rank,
+            subs=subs,
+            submitted_on=submitted_on,
+            section_label="personalized",
+        )
+    )
     return out
 
 
@@ -256,8 +270,17 @@ def _build_imputation(
 def _print_diff(old: list[dict], new: list[dict]) -> None:
     old_methods = {r["method"]: r for r in old if r.get("type") == "method"}
     new_methods = {r["method"]: r for r in new if r.get("type") == "method"}
-    fields = ["skill", "fair_skill", "rank", "activity", "physiology", "sleep", "workout", "semantic"]
-    print(f'{"method":<22} {"field":<12} {"old":>8}  {"new":>8}')
+    fields = [
+        "skill",
+        "fair_skill",
+        "rank",
+        "activity",
+        "physiology",
+        "sleep",
+        "workout",
+        "semantic",
+    ]
+    print(f"{'method':<22} {'field':<12} {'old':>8}  {'new':>8}")
     print("-" * 56)
     for m in {**old_methods, **new_methods}:
         o = old_methods.get(m, {})
@@ -274,23 +297,37 @@ def _print_diff(old: list[dict], new: list[dict]) -> None:
 
 
 def main() -> None:
+    """Merge paper bootstrap CSVs into the leaderboard JSON and write it out."""
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    p.add_argument("--current", required=True, type=Path,
-                   help="Path to the current leaderboard.json (canonical seed).")
-    p.add_argument("--paper-dir", required=True, type=Path,
-                   help="Directory containing the Phase-2 bootstrap CSVs.")
-    p.add_argument("--output", required=True, type=Path,
-                   help="Where to write the updated leaderboard.json.")
-    p.add_argument("--submitted-on", default=date.today().strftime("%Y-%m"),
-                   help="YYYY-MM stamp written to each row. Default: this month.")
+    p.add_argument(
+        "--current",
+        required=True,
+        type=Path,
+        help="Path to the current leaderboard.json (canonical seed).",
+    )
+    p.add_argument(
+        "--paper-dir",
+        required=True,
+        type=Path,
+        help="Directory containing the Phase-2 bootstrap CSVs.",
+    )
+    p.add_argument(
+        "--output", required=True, type=Path, help="Where to write the updated leaderboard.json."
+    )
+    p.add_argument(
+        "--submitted-on",
+        default=date.today().strftime("%Y-%m"),
+        help="YYYY-MM stamp written to each row. Default: this month.",
+    )
     args = p.parse_args()
 
     current = json.loads(args.current.read_text())
     paper_dir: Path = args.paper_dir
     skill = _load_overall(
-        paper_dir / "skill_scores_bootstrap.csv", scope=OVERALL_SKILL_SCOPE,
+        paper_dir / "skill_scores_bootstrap.csv",
+        scope=OVERALL_SKILL_SCOPE,
     )
-    fair  = _load_overall(
+    fair = _load_overall(
         paper_dir / "fairness_skill_score_bootstrap.csv",
         scope=OVERALL_FAIR_SCOPE,
         # Prefer the BCa point estimate (deterministic; unbiased) over the
@@ -299,17 +336,21 @@ def main() -> None:
         column="point",
         fallback_column="mean",
     )
-    rank  = _load_overall(
-        paper_dir / "avg_rankings_bootstrap.csv", scope=OVERALL_RANK_SCOPE,
+    rank = _load_overall(
+        paper_dir / "avg_rankings_bootstrap.csv",
+        scope=OVERALL_RANK_SCOPE,
     )
-    subs  = _load_subgroups(paper_dir / "skill_scores_bootstrap.csv")
+    subs = _load_subgroups(paper_dir / "skill_scores_bootstrap.csv")
 
     missing = [k for k in (*DAILY_META, *PERSONALIZED_META) if k not in skill]
     if missing:
         raise SystemExit(f"Missing methods in skill_scores CSV: {missing}")
 
     new_imputation = _build_imputation(
-        skill=skill, fair=fair, rank=rank, subs=subs,
+        skill=skill,
+        fair=fair,
+        rank=rank,
+        subs=subs,
         submitted_on=args.submitted_on,
     )
 
@@ -317,7 +358,7 @@ def main() -> None:
     updated["generated_at"] = date.today().isoformat()
     updated["imputation"] = new_imputation
 
-    print(f"Diff (imputation section only):")
+    print("Diff (imputation section only):")
     print()
     _print_diff(current.get("imputation", []), new_imputation)
     print()

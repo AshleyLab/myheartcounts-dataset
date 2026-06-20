@@ -1,6 +1,12 @@
 """Sub-trajectory generator for forecasting evaluation.
 
 Generates sub-trajectories with sliding index and valid data checking.
+
+.. deprecated::
+    ``SubTrajectoryGenerator`` is no longer used by the evaluation main path,
+    which has converged on the raw ``history_cf`` cache plus row-group manifest
+    (see ``data/cache_bundle.py`` and ``evaluation/evaluator.py``). It is kept
+    for reference only and is not wired into any active entrypoint.
 """
 
 from __future__ import annotations
@@ -19,8 +25,10 @@ from forecasting_evaluation.data.types import SubTrajectoryInput
 logger = logging.getLogger(__name__)
 
 SAMPLE_INDEX_REQUIRED_MSG = (
-    "Forecasting evaluation requires a precomputed sample index. "
-    "Please generate it first with scripts/precompute_forecasting_inputs.py."
+    "Forecasting evaluation requires a precomputed sample index. It ships in the "
+    "dataset bundle from openmhc.download_dataset(version=...) under "
+    "forecasting_sample_index/ (see docs/manual-dataset-setup.md to assemble a "
+    "root by hand)."
 )
 
 
@@ -125,7 +133,7 @@ class SubTrajectoryGenerator:
                 - static_covariates: user-level non-temporal covariates, optional
             user_id: User identifier used to resolve candidate day indices from
                 precomputed sample-index data.
-        
+
         Yields:
             SubTrajectoryInput objects containing:
                 - history and ground_truth in channel-first layout
@@ -188,5 +196,5 @@ class SubTrajectoryGenerator:
                 static_covariates=static_covariates,
                 ground_truth=ground_truth,
                 index_days=current_day,
-                prediction_hours=prediction_hours
+                prediction_hours=prediction_hours,
             )

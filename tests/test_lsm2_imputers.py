@@ -41,9 +41,7 @@ def _make_synthetic_batch(
     return data, mask
 
 
-def _make_target_mask(
-    observed_mask: np.ndarray, frac: float = 0.2, seed: int = 1
-) -> np.ndarray:
+def _make_target_mask(observed_mask: np.ndarray, frac: float = 0.2, seed: int = 1) -> np.ndarray:
     rng = np.random.default_rng(seed)
     target = (observed_mask > 0.5) & (rng.random(observed_mask.shape) < frac)
     return target.astype(np.float32)
@@ -147,6 +145,7 @@ def _save_lsm2_weekly_sparse_ckpt(tmp_path: Path, num_days: int = 2) -> Path:
 
 
 def test_lsm2_daily_round_trip(tmp_path):
+    """A daily LSM2Imputer loaded from a .ckpt imputes target cells and leaves non-targets untouched."""
     from openmhc.imputers import LSM2Imputer
 
     ckpt = _save_lsm2_daily_ckpt(tmp_path)
@@ -250,6 +249,7 @@ def test_lsm2_directory_path_resolution(tmp_path):
 
 
 def test_lsm2_missing_path_raises(tmp_path):
+    """A model_path that does not exist raises FileNotFoundError at construction."""
     from openmhc.imputers import LSM2Imputer
 
     with pytest.raises(FileNotFoundError):
@@ -257,6 +257,7 @@ def test_lsm2_missing_path_raises(tmp_path):
 
 
 def test_lsm2_weekly_sparse_round_trip(tmp_path):
+    """An LSM2WeeklySparseImputer round-trips a multi-day weekly batch, imputing only target cells."""
     from openmhc.imputers import LSM2WeeklySparseImputer
 
     num_days = 2
@@ -305,9 +306,7 @@ def test_lsm2_weekly_sparse_default_is_deterministic(tmp_path):
     # Sanity: synthetic checkpoint has a nonzero training-time ratio.
     from openmhc.models.lsm2.modules import WeeklySparseLSM2Module
 
-    saved_module = WeeklySparseLSM2Module.load_from_checkpoint(
-        str(ckpt), map_location="cpu"
-    )
+    saved_module = WeeklySparseLSM2Module.load_from_checkpoint(str(ckpt), map_location="cpu")
     assert saved_module.model.dropout_removal_ratio > 0.0
 
     def _build():
@@ -381,6 +380,7 @@ def _build_lsm2_release(tmp_path: Path) -> Path:
 
 
 def test_lsm2_from_release_round_trip(tmp_path):
+    """LSM2Imputer.from_release loads a manifest-described release and round-trips an impute() call."""
     from openmhc.imputers import LSM2Imputer
 
     release = _build_lsm2_release(tmp_path)
@@ -400,6 +400,7 @@ def test_lsm2_from_release_round_trip(tmp_path):
 
 
 def test_lsm2_from_release_kind_mismatch_raises(tmp_path):
+    """Loading an 'lsm2' release through the weekly-sparse wrapper raises ValueError on the kind mismatch."""
     from openmhc.imputers import LSM2WeeklySparseImputer
 
     release = _build_lsm2_release(tmp_path)
