@@ -41,6 +41,7 @@ _REPO_ROOT = Path(__file__).parent.parent.parent
 _MAX91D_MASKS_DIR = (
     _REPO_ROOT / "data" / "imputation" / "masks" / "sharable_users_seed42_2026_max91d"
 )
+_XS_MASKS_DIR = _REPO_ROOT / "data" / "imputation" / "masks" / "sharable_users_seed42_2026_xs"
 
 
 _SPLIT_FILENAMES: dict[str, str] = {
@@ -751,7 +752,25 @@ def evaluate_imputation(
                 "excluded by a sparse-checkout or .gitignore rule."
             )
         masking_cfg.masks_file = str(_MAX91D_MASKS_DIR)
-    # xs: masks_file stays None → runner generates masks on the fly
+    elif (
+        paths.version == "xs"
+        and seed == 42
+        and n_days == 1
+        and max_samples is None
+        and _XS_MASKS_DIR.exists()
+    ):
+        # XS ships precomputed masks too (mirrors `full`), but only for the
+        # canonical full-split config they were generated for: seed 42,
+        # single-day windows, all XS val+test samples. A scenario subset still
+        # loads fine (the cache holds all six). Other seed / n_days, or a
+        # max_samples-bounded run, fall through to on-the-fly generation below:
+        # the cache spans the full split, so its applicable indices would
+        # overrun a max_samples-limited dataset — and bounded generation is
+        # cheap anyway (it only masks the small subset). On-the-fly over the
+        # full split is the slow case (~20 min) this cache exists to avoid.
+        masking_cfg.masks_file = str(_XS_MASKS_DIR)
+    # else (xs with a non-canonical config, max_samples set, or cache absent):
+    # masks_file stays None → runner generates masks on the fly.
 
     data_cfg = DataConfig(
         daily_hf_dir=str(paths.daily_hf),
