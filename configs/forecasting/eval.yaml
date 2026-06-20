@@ -1,0 +1,31 @@
+# Root config for ``mhc-forecast-eval``.
+#
+# Compose: pick one preset per group. Override on the CLI, e.g.:
+#   mhc-forecast-eval model=seasonal_naive
+#   mhc-forecast-eval --multirun model=seasonal_naive,autoARIMA
+
+defaults:
+  - data: default
+  - model: seasonal_naive
+  - forecasting: default
+  - features: default
+  - evaluator: default
+  - output: default
+  - metrics: default
+  - _self_
+
+seed: 42
+experiment_name: openmhc_run
+debug_mode: false
+time_granularity: hourly
+
+hydra:
+  searchpath:
+    - pkg://eval_hydra.configs
+  run:
+    dir: ${output.results_dir}/${now:%Y%m%d_%H%M%S}_${model.type}
+  sweep:
+    dir: ${output.results_dir}/multirun/${now:%Y%m%d_%H%M%S}
+    subdir: ${model.type}__${hydra.job.num}
+  job:
+    chdir: false

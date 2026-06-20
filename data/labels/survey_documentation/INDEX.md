@@ -81,10 +81,7 @@ Each subdir's `summary.md` contains a one-line description and link for every fi
 
 | Variable | Type | Raw identifier | Source file | Line | Notes |
 |----------|------|----------------|-------------|------|-------|
-| field_Age_heartage | continuous | Age_heartage | CardioHealth/TasksAndSteps/HeartAgeControllers/APHHeartAgeTaskViewController.m | ~100+ | Age entered in Heart Age task |
 | field_BloodGlucose | continuous | BloodGlucose | CardioHealth/TasksAndSteps/HeartAgeControllers/HeartAgeRiskFactorCalculations/APHHeartAgeAndRiskFactors.m | ~68 | Blood glucose value |
-| field_CurrentAge | continuous | (from device) | CardioHealth/TasksAndSteps/HeartAgeControllers/APHHeartAgeTaskViewController.m | ~100+ | Current age from device/survey |
-| field_DiastolicBloodPressure | continuous | heartAgeDataDiastolicBloodPressure | CardioHealth/TasksAndSteps/HeartAgeControllers/HeartAgeRiskFactorCalculations/APHHeartAgeAndRiskFactors.m | ~67 | Diastolic BP |
 | field_GoSleepTime | continuous | GoSleepTime | (derived) | Unknown | Likely from device tracking, not in JSON |
 | field_HeightCentimeters | continuous | (HealthKit) | CardioHealth/Startup/APHAppDelegate.m | ~525 | Height in meters from HealthKit, converted to cm |
 | field_WakeUpTime | continuous | WakeUpTime | (derived) | Unknown | Likely from device tracking, not in JSON |

@@ -1,0 +1,13 @@
+# @package training
+epochs: 50
+batch_size: 64
+patience: 10
+optimizer_lr: 0.001
+device: cuda
+num_workers: 4
+clip_grad_norm: null          # set to e.g. 1.0 to enable gradient clipping
+# Standardize history with a train-fit channel StandardScaler (shipped in the
+# release bundle; the eval adapter inverse-transforms with it).
+whether_standardscaler: true
+# Train on the same padded-short-history distribution the evaluator feeds.
+include_short_history: true

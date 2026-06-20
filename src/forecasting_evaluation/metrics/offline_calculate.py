@@ -26,6 +26,7 @@ def _parse_named_paths(items: list[str]) -> dict[str, str]:
         parsed[key] = path
     return parsed
 
+
 def build_parser() -> argparse.ArgumentParser:
     """Build CLI parser."""
     parser = argparse.ArgumentParser(
@@ -57,6 +58,17 @@ def build_parser() -> argparse.ArgumentParser:
             "per run. Use None to process all users."
         ),
     )
+    parser.add_argument(
+        "--combine-channels",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Merge paired phone/watch step and distance channels (nan-mean) before "
+            "computing offline metrics. Default is per-task (channels kept separate, "
+            "scored like sleep/workout); pass --combine-channels for the legacy "
+            "signal-merged behaviour (appendix raw hour-group tables)."
+        ),
+    )
     return parser
 
 
@@ -76,6 +88,7 @@ def main() -> None:
         evaluation_result_paths=evaluation_result_paths,
         metrics_output_path=args.metrics_output_path,
         max_user=args.max_user,
+        combine_channels=args.combine_channels,
     )
     summary = calculator.run()
     compact_summary = {
@@ -89,6 +102,7 @@ def main() -> None:
                 "saved_rows": run_summary.get("saved_rows"),
                 "skipped_rows": run_summary.get("skipped_rows"),
                 "computed_user_count": run_summary.get("computed_user_count"),
+                "combine_channels": run_summary.get("combine_channels"),
                 "output_run_dir": run_summary.get("output_run_dir"),
             }
             for run_summary in summary.get("runs", [])

@@ -1,0 +1,3 @@
+# @package sensitivity
+enabled: true
+age_bins: [18, 30, 40, 50, 60]

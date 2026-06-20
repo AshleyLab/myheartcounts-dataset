@@ -1,0 +1,25 @@
+# @package training
+# Paper-checkpoint FEDformer training hyperparameters.
+#
+# Sourced from the W&B run that produced the published artifact
+# ``MHC_Dataset/mhc-pypots-fedformer/fedformer:v31``:
+#   run id:    ouqezdi7
+#   created:   2026-03-10
+#   url:       https://wandb.ai/MHC_Dataset/mhc-pypots-fedformer/runs/ouqezdi7
+#
+# These values were CLI overrides at training time on Stanford simurgh —
+# they do *not* match either snapshot of MHC-benchmark's
+# ``configs/pypots/fedformer.yaml``. Reproducing the paper bundle requires
+# using *exactly* these values together with the matching model arch in
+# ``configs/training/model/fedformer.yaml`` (d_model=512, n_heads=8,
+# d_ffn=128, modes=32, n_layers=2, moving_avg_window_size=25, dropout=0.1).
+#
+# Use with: mhc-impute-train model=fedformer training=fedformer_paper ...
+epochs: 50
+batch_size: 128
+patience: 10
+optimizer_lr: 0.002
+weight_decay: 0.0
+clip_grad_norm: null
+device: auto
+num_workers: 4

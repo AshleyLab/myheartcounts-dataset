@@ -122,4 +122,7 @@ if __name__ == "__main__":
     day_mask = generate_day_drop_mask(
         daily_hf_dir="/rds/general/user/lp925/home/code/MHC-benchmark/data/processed/daily_hf"
     )
-    save_day_drop_mask(day_mask, "/rds/general/user/lp925/home/code/MHC-benchmark/data/forecasting_sample_index/new_day_drop_mask.json")
+    save_day_drop_mask(
+        day_mask,
+        "/rds/general/user/lp925/home/code/MHC-benchmark/data/forecasting_sample_index/new_day_drop_mask.json",
+    )

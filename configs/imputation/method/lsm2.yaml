@@ -1,0 +1,17 @@
+# @package method
+# Recommended: ``release_dir`` points at a Lightning-checkpoint release
+# bundled with an ``openmhc_manifest.json``. ``from_release`` rebuilds the
+# model from the manifest's arch block.
+#
+# Run with:
+#   mhc-impute-eval method=lsm2 method.release_dir=/path/to/lsm2-release
+type: lsm2
+release_dir: ???
+device: auto
+inference_batch_size: 64
+# Inline fallback fields (only used when ``release_dir`` is unset):
+lsm2:
+  checkpoint_path: ""
+  device: auto
+  inference_batch_size: 64
+  normalization_prior_count: 1.0e12

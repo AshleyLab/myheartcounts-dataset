@@ -1,735 +1,539 @@
-# Imputation Evaluation Module
+# Imputation Evaluation (Track 2)
 
-This module evaluates how well different imputation methods reconstruct artificially masked sensor data across various masking scenarios. It operates on **minute-level daily data** where each sample is a single day `(19 channels × 1440 minutes)` from the daily HuggingFace dataset.
+This package covers the imputation track of the MyHeartCounts benchmark. It evaluates how well a method reconstructs artificially masked sensor data across six masking scenarios, on minute-level daily samples of shape `(19 channels × 1440 minutes)`.
 
-## Quick Start
+Most users should read **Part 1** and call `openmhc.evaluate_imputation` — they never need to import anything from `imputation_evaluation` directly. **Part 2** documents the library internals for developers hacking on the eval pipeline itself.
 
-### End-to-end pipeline
+---
 
-The fastest way to go from a method to paper-ready results is the pipeline script, which chains evaluation, aggregation, registration, and paper metric computation:
+## Part 1 — Using the public API (`openmhc`)
 
-```bash
-# Full pipeline for a single method
-python scripts/run_imputation_pipeline.py \
-    --config configs/imputation_eval/base.yaml \
-    --config configs/imputation_eval/methods/mae.yaml
+### Minimal example
 
-# Multiple methods end-to-end
-python scripts/run_imputation_pipeline.py \
-    --config configs/imputation_eval/base.yaml \
-    --methods mean locf temporal_mean
+```python
+import openmhc
+from openmhc.imputers import MeanImputer
 
-# With sensitivity analysis
-python scripts/run_imputation_pipeline.py \
-    --config configs/imputation_eval/base.yaml \
-    --methods mean locf \
-    --sensitivity
-
-# Re-run aggregation + paper metrics on existing results (skip eval)
-python scripts/run_imputation_pipeline.py \
-    --skip-eval \
-    --experiment-dir results/imputation_eval/my_experiment/ \
-    --sensitivity
-
-# Dry run: print commands without executing
-python scripts/run_imputation_pipeline.py \
-    --config configs/imputation_eval/base.yaml \
-    --methods mean \
-    --dry-run
+imputer = MeanImputer()                       # fits itself on the train split in __init__
+results = openmhc.evaluate_imputation(
+    imputer,
+    masking_scenarios="all",                   # or a list of scenario names
+    seed=42,
+)
+print(results.summary())                       # one row per (scenario, split, channel_group)
+results.to_csv("imputation_results.csv")
 ```
 
-Pass extra arguments through to `run_imputation_eval.py` after `--`:
+`evaluate_imputation(imputer, masking_scenarios="all", data_dir=None, seed=42)` returns an [`ImputationResults`](../openmhc/_results.py) instance. Large benchmark payloads are resolved from `data_dir` first, then `MHC_DATA_DIR`. If neither is provided, the API raises instead of silently falling back to `~/.cache/openmhc/data`.
 
-```bash
-python scripts/run_imputation_pipeline.py \
-    --config configs/imputation_eval/base.yaml \
-    --config configs/imputation_eval/methods/mae.yaml \
-    -- --masking.mask_seed 99 --method.mae.device cpu
+### The `Imputer` protocol
+
+Any object with this method works (duck-typed, no base class required):
+
+```python
+def impute(
+    self,
+    data: np.ndarray,             # (N, 19, 1440) float32, NaN at all missing positions
+    observed_mask: np.ndarray,    # (N, 19, 1440), 1 = originally observed, 0 = naturally missing
+    target_mask: np.ndarray,      # (N, 19, 1440), 1 = positions to impute (subset of observed_mask)
+    *,
+    sample_indices: np.ndarray | None = None,   # (N,) split-local indices
+    user_ids: list[str] | None = None,
+    dates: list[str] | None = None,             # ISO "YYYY-MM-DD"
+) -> np.ndarray:                  # (N, 19, 1440) float32, imputed at target_mask == 1
 ```
 
-See `python scripts/run_imputation_pipeline.py --help` for all options.
+The optional keyword-only arguments are introspected from your signature ([adapter at `src/openmhc/_evaluate.py:615`](../openmhc/_evaluate.py)): three-arg implementations work unchanged, and personalized methods that declare `user_ids` / `dates` / `sample_indices` get them forwarded automatically. The harness never calls `fit` or any setup hook — do all setup in `__init__`.
 
-### Running evaluation only
+### Built-in reference imputers (`openmhc.imputers`)
 
-```bash
-# Run with default config (mean imputation)
-python scripts/run_imputation_eval.py \
-    --config configs/imputation_eval/base.yaml
+| Class | Module | Method |
+|---|---|---|
+| `MeanImputer` | `mean.py` | Per-channel global mean |
+| `ModeImputer` | `mode.py` | Per-channel global mode (rounded) |
+| `LinearImputer` | `linear.py` | Linear interpolation between observed anchors per sample/channel; NOCB/LOCF at boundaries |
+| `LOCFImputer` | `locf.py` | Last observation carried forward; back-fills the left edge |
+| `TemporalMeanImputer` | `temporal_mean.py` | Per-(channel, minute-of-day) mean — captures diurnal pattern |
+| `TemporalModeImputer` | `temporal_mode.py` | Per-(channel, minute-of-day) mode |
+| `PersonalizedMeanImputer` | `personalized.py` | Per-user per-channel mean, global fallback for unseen users |
+| `PersonalizedModeImputer` | `personalized.py` | Per-user per-channel mode, global fallback |
+| `PersonalizedTemporalMeanImputer` | `personalized.py` | Per-user diurnal pattern, global fallback |
+| `TorchImputer` | `torch_wrapper.py` | Generic wrapper for a pre-trained `torch.nn.Module` (normalization + device + sigmoid for binary channels) |
+| `BRITSImputer`, `TimesNetImputer`, `DLinearImputer`, `FEDformerImputer` | `pypots.py` | Wrappers around the published PyPOTS imputation models. Install `pip install 'openmhc[pypots]'`. See [`docs/neural-imputers.md`](../../docs/neural-imputers.md). |
+| `LSM2Imputer`, `LSM2WeeklySparseImputer` | `lsm2.py` | Wrappers around the in-house masked-autoencoder ViT for 1D wearables (daily / weekly / weekly-sparse). Install `pip install 'openmhc[lsm2]'`. See [`docs/neural-imputers.md`](../../docs/neural-imputers.md). |
+| `BaseImputer` | `_base.py` | Optional base class with channel-statistic helpers |
 
-# Quick test run with limited samples
-python scripts/run_imputation_eval.py \
-    --config configs/imputation_eval/base.yaml \
-    --config configs/imputation_eval/test.yaml
+### Masking scenarios
 
-# Parallel evaluation (4 workers for batch-level parallelism)
-python scripts/run_imputation_eval.py \
-    --config configs/imputation_eval/base.yaml \
-    --data.num_eval_workers 4
+`openmhc.list_masking_scenarios()` returns all 6 scenario names. They fall into two tiers:
 
-# With visualization enabled (generates plots for qualitative assessment)
-python scripts/run_imputation_eval.py \
-    --config configs/imputation_eval/base.yaml \
-    --visualization.enabled true \
-    --visualization.plots_per_scenario 5
+**Tier 1 — Structural (sensor data collection issues)**
 
-# With sensitivity analysis (demographic subgroup breakdown)
-python scripts/run_imputation_eval.py \
-    --config configs/imputation_eval/base.yaml \
-    --sensitivity.enabled true
+| Scenario | Description | Default config |
+|---|---|---|
+| `random_noise` | Non-overlapping random patches on individual channels. Simulates brief sensor noise or BT drops. | `patch_size=30`, `mask_ratio=0.5` |
+| `temporal_slice` | Contiguous time blocks across all channels. Simulates device downtime (showering, charging). | `mask_ratio=0.25`, `min_block=30`, `max_block=60` |
+| `signal_slice` | Drop entire channels for the day, either random channels or a whole device group (iPhone / Watch). | `mask_ratio=0.5`, groups `iphone=[0,1,2]`, `watch=[3,4,5,6]` |
 
-# Override settings via CLI
-python scripts/run_imputation_eval.py \
-    --config configs/imputation_eval/base.yaml \
-    --masking.mask_seed 123 \
-    --data.max_samples_per_split 500
-```
-
-## Module Structure
-
-```
-src/imputation_evaluation/
-├── config.py                       # Configuration dataclasses
-├── sensitivity.py                  # Demographic subgroup mapping (age, sex)
-├── data/
-│   ├── data_loader.py              # Load daily HF dataset, apply splits
-│   ├── mask_dataset.py             # PyTorch Dataset for parallel mask generation
-│   └── splits.py                   # User-level split utilities
-├── masking/
-│   ├── base.py                     # MaskGenerator protocol, MaskResult
-│   ├── random_noise.py             # Random patch masking
-│   ├── temporal_slice.py           # Contiguous time block masking
-│   ├── signal_slice.py             # Channel/device dropout
-│   ├── sleep_gap.py                # Mask during sleep periods
-│   ├── workout_gap.py              # Mask HR + AE during workouts
-│   └── intensity_failure.py        # Mask during high HR
-├── methods/
-│   ├── base.py                     # ImputationMethod protocol
-│   ├── mean_imputation.py          # Per-channel global mean
-│   ├── linear_interpolation.py     # Per-channel linear interpolation
-│   ├── locf.py                     # Last Observation Carried Forward
-│   ├── mae_imputation.py           # MAE masked autoencoder
-│   └── pypots_imputation.py        # PyPOTS models (BRITS, SAITS, TimesNet, FEDformer, ...)
-├── evaluation/
-│   ├── evaluator.py                # Main orchestrator
-│   └── metrics.py                  # RMSE, MAE, KS, Wasserstein, Balanced Accuracy, ROC AUC
-├── visualization/
-│   ├── plotter.py                  # Visualization functions (method-agnostic)
-│   └── __init__.py
-└── io/
-    └── writer.py                   # Results output (JSON, YAML)
-```
-
-## Masking Scenarios
-
-The module provides 6 masking scenarios organized into two tiers:
-
-### Tier 1: Structural Masks
-
-These simulate common sensor data collection issues:
-
-| Scenario | Description | Config |
-|----------|-------------|--------|
-| `random_noise` | Random non-overlapping patches of `patch_size` contiguous minutes on individual channels. Patches are placed greedily in random order until `mask_ratio` is reached. Simulates brief sensor noise or Bluetooth drops. | `patch_size=10`, `mask_ratio=0.8` |
-| `temporal_slice` | Contiguous time blocks across ALL channels. Simulates device downtime (showering, charging). | `mask_ratio=0.5`, `min_block=30`, `max_block=60` |
-| `signal_slice` | Drop entire channels for the day. Mode A: random channels. Mode B: entire device group (iPhone/Watch). | `mask_ratio=0.5` |
-
-### Tier 2: Semantic Masks
-
-These test reconstruction during physiologically meaningful periods:
+**Tier 2 — Semantic (physiologically meaningful periods)**
 
 | Scenario | Description | Applicability |
-|----------|-------------|---------------|
-| `sleep_gap` | Mask all channels except sleep channels (7, 8) during detected sleep (asleep OR inbed > 0). | Only days with sleep data |
-| `workout_gap` | Mask HR + Active Energy (ch 5-6) during detected workouts. | Only days with workout data containing valid HR/AE |
-| `intensity_failure` | Mask HR + Active Energy when heart rate exceeds threshold (default 160 BPM). | Only days with high-intensity periods |
+|---|---|---|
+| `sleep_gap` | Mask all channels except the two sleep channels (7, 8) during detected sleep (asleep OR in-bed). | Days with sleep data |
+| `workout_gap` | Mask Watch HR + Active Energy (ch 5–6) during detected workouts. | Days with workout data containing valid HR/AE |
+| `intensity_failure` | Mask Watch HR + Active Energy when HR exceeds a threshold (default 160 BPM). | Days with high-intensity periods |
 
-## Channel Reference
+### Channels
 
-The daily data has 19 channels:
+Names come from `openmhc.SENSOR_CHANNELS`. The order matches column order in tensors.
 
-| Index | Channel | Type | Unit |
-|-------|---------|------|------|
-| 0 | iPhone Steps | Continuous | steps/min |
-| 1 | iPhone Distance | Continuous | m/min |
-| 2 | iPhone Flights Climbed | Continuous | count/min |
-| 3 | Watch Steps | Continuous | steps/min |
-| 4 | Watch Distance | Continuous | m/min |
-| 5 | Watch Heart Rate | Continuous | bpm |
-| 6 | Watch Active Energy | Continuous | cal/min |
-| 7 | Sleep: Asleep | Binary | 0/1 |
-| 8 | Sleep: In Bed | Binary | 0/1 |
-| 9-18 | Workout Types | Binary | 0/1 |
+| Idx | Channel | Type | Unit |
+|---|---|---|---|
+| 0 | `iphone_steps` | Continuous | steps/min |
+| 1 | `iphone_distance` | Continuous | m/min |
+| 2 | `iphone_flights` | Continuous | count/min |
+| 3 | `watch_steps` | Continuous | steps/min |
+| 4 | `watch_distance` | Continuous | m/min |
+| 5 | `watch_hr` | Continuous | bpm |
+| 6 | `watch_energy` | Continuous | cal/min |
+| 7 | `sleep_asleep` | Binary | 0 / 1 |
+| 8 | `sleep_inbed` | Binary | 0 / 1 |
+| 9–18 | `workout_*` (walking, cycling, running, other, mixed_cardio, strength, elliptical, hiit, functional, yoga) | Binary | 0 / 1 |
 
-## Metrics
+### Metrics
 
-### Continuous Channels (0-6)
-- **RMSE**: Root Mean Squared Error (global, per-channel)
-- **MAE**: Mean Absolute Error (global, per-channel)
-- **Mean Per-Sample RMSE**: Average of per-sample RMSE values.
-- **Mean Per-Sample MAE**: Average of per-sample MAE values.
-- **Mean Per-Sample KS Statistic**: Average of per-sample KS statistics comparing ground truth vs imputed distributions at masked positions. This replaces the global KS statistic to reduce memory usage.
-- **Mean Per-Sample Wasserstein Distance**: Average of per-sample 1-Wasserstein (Earth Mover's) distances between ground truth and imputed distributions at masked positions. Scale-sensitive (same units as channel). Lower is better.
-- **Mean Normalized RMSE**: Average of `(channel_rmse / channel_std_train)` across channels.
-- **Mean KS Statistic**: Macro-average of per-channel "Mean Per-Sample KS Statistic" values.
-- **Mean Wasserstein Distance**: Macro-average of per-channel mean per-sample Wasserstein distances across continuous channels.
+Computed in `evaluation/metrics.py`.
 
-### Binary Channels (7-18)
-- **Balanced Accuracy**: Per-channel and macro-average
-- **ROC AUC**: Per-channel and macro-average
+- **Continuous channels (0–6):** per-channel `rmse`, `mae`, `mse`, plus the normalized variants divided by training std (`normalized_rmse`, `normalized_mae`, `normalized_mse`). Aggregated as `mean_normalized_rmse` / `mean_normalized_mae` / `mean_normalized_mse` under the `"continuous"` group.
+- **Binary channels (7–18):** per-channel `balanced_accuracy` and `roc_auc`. Aggregated as `macro_balanced_accuracy` and `macro_roc_auc` under the `"binary"` group.
 
-## Configuration
+### Bootstrap (optional)
 
-### DataConfig
+For confidence intervals and standard errors, opt into a **participant-level cluster bootstrap** (`evaluation/bootstrap.py`). Resamples are taken over users, not rows — masked positions within a user are highly correlated, so a row-level bootstrap would produce artificially tight CIs.
 
-```yaml
-data:
-  daily_hf_dir: data/hf_daily      # Path to HF dataset
-  split_file: null                  # Optional: JSON file with user splits
-  train_ratio: 0.6                  # Train split ratio
-  val_ratio: 0.1                    # Validation split ratio
-  split_seed: 42                    # Seed for random splits
-  max_samples_per_split: null       # Limit samples per split (null = no limit)
+Implementation: per-user additive sufficient statistics for RMSE / MSE / MAE / balanced accuracy (O(|U|) per iteration); a cluster-weighted Mann-Whitney U trick for ROC AUC (non-decomposable). Default `n_boot=1000`, `ci_level=0.95`, `seed=42`. Output for each metric: `{point, bootstrap_mean, bootstrap_se, ci_lo, ci_hi, n_valid_boot}`.
 
-  # DataLoader workers (for data loading, mask generation, method fitting)
-  batch_size: 5000                  # Samples per batch
-  num_workers: 4                    # DataLoader worker processes
-  pin_memory: true                  # Pin memory for faster GPU transfer
+Python API:
 
-  # Evaluation parallelism (separate from DataLoader)
-  # Each worker processes ALL 6 scenarios for its batch (batch-level parallelism)
-  num_eval_workers: 1               # Parallel processes for batch eval (1 = sequential)
-  num_eval_dl_workers: null          # DataLoader workers for eval (null = use num_workers)
-
-  preprocessing:
-    zero_to_nan: true               # Convert HR=0 and dead AE to NaN
-  filters:
-    min_wear_fraction: 0.5          # Remove days with <50% wear-time
-    variance_filter_enabled: true   # Remove low-variance days
-    variance_thresholds: null       # Uses defaults from hf_config.py
+```python
+results = openmhc.evaluate_imputation(my_imputer, bootstrap=True)
+# Or override fields:
+results = openmhc.evaluate_imputation(
+    my_imputer,
+    bootstrap={"n_boot": 500, "ci_level": 0.9, "include_auc": False},
+)
+results.to_dataframe()  # gains sibling columns *_ci_lo, *_ci_hi, *_bootstrap_se
 ```
 
-### MaskingConfig
+When `bootstrap=True`, raw `(gt, pred)` pairs are written to a temporary directory that is cleaned up before `evaluate_imputation` returns. Disabled (`False`) is the default and preserves byte-identical results.
 
-```yaml
-masking:
-  mask_seed: 42                     # Seed for mask generation
-  masks_file: null                  # Optional: load pre-computed masks
-  random_noise:
-    enabled: true
-    patch_size: 10                  # Minutes per patch
-    mask_ratio: 0.8                 # Fraction of valid data to mask
-  temporal_slice:
-    enabled: true
-    mask_ratio: 0.5
-    min_block_size: 30              # Minimum block in minutes
-    max_block_size: 60              # Maximum block in minutes
-  signal_slice:
-    enabled: true
-    mask_ratio: 0.5
-    device_groups:
-      iphone: [0, 1, 2]
-      watch: [3, 4, 5, 6]
-  sleep_gap:
-    enabled: true
-    asleep_channel: 7
-    inbed_channel: 8
-  workout_gap:
-    enabled: true
-    mask_channels: [5, 6]                   # Only mask HR + Active Energy
-    workout_channels: [9, 10, 11, 12, 13, 14, 15, 16, 17, 18]
-  intensity_failure:
-    enabled: true
-    hr_channel: 5
-    hr_threshold: 160.0             # BPM threshold
-    hr_unit: auto                   # auto-detect Hz vs BPM
-    mask_channels: [5, 6]           # Only mask HR + Active Energy
-```
-
-### MethodConfig
-
-```yaml
-method:
-  type: mean                        # "mean", "mode", "linear", "locf", "mae", or "pypots"
-  decimal_precision: 1              # Rounding precision for mode computation
-
-  # MAE-specific (only used when type: mae)
-  mae:
-    checkpoint_path: path/to/mae.ckpt  # or "wandb:ENTITY/PROJECT/ARTIFACT:VERSION"
-    device: cuda
-    inference_batch_size: 128
-
-  # PyPOTS-specific (only used when type: pypots)
-  pypots:
-    model_path: models/pypots/brits  # Path to saved PyPOTS model directory
-    model_name: brits                # Model class: brits, saits, timemixer, timemixerpp, fits, dlinear, timesnet, fedformer, trmf
-    device: cuda
-    inference_batch_size: 64
-    # Architecture params (must match training config for the chosen model)
-    n_steps: 1440
-    n_features: 19
-    rnn_hidden_size: 128             # BRITS only
-    n_layers: 2                      # TimesNet, FEDformer
-    top_k: 5                         # TimesNet
-    d_model: 64                      # TimesNet, FEDformer
-    d_ffn: 64                        # TimesNet, FEDformer
-    n_kernels: 6                     # TimesNet
-    n_heads: 4                       # FEDformer
-    moving_avg_window_size: 25       # FEDformer
-    dropout: 0.1                     # TimesNet, FEDformer
-    apply_nonstationary_norm: false  # TimesNet
-    version: Fourier                 # FEDformer
-    modes: 32                        # FEDformer
-    mode_select: random              # FEDformer
-    trmf_lags: [1, 2, 3, 4, 5]      # TRMF lag indices
-    trmf_K: 10                       # TRMF rank
-    trmf_lambda_f: 0.1               # TRMF factor regularization
-    trmf_lambda_x: 0.1               # TRMF coefficient regularization
-    trmf_lambda_w: 0.1               # TRMF lag weight regularization
-    trmf_alpha: 0.01                 # TRMF temporal update rate
-    trmf_eta: 1.0                    # TRMF temporal regularization strength
-    trmf_max_iter: 1000              # TRMF max EM iterations
-```
-
-### EvalConfig
-
-```yaml
-evaluation:
-  include_ks: true                  # Compute KS statistic for continuous channels
-                                    # Set false to reduce memory (no continuous value storage)
-  include_wasserstein: true        # Compute per-sample Wasserstein distance for continuous channels
-```
-
-### OutputConfig
-
-```yaml
-output:
-  results_dir: results/imputation_eval
-  experiment_name: null             # Auto-generated if null
-  save_config: true
-```
-
-### VisualizationConfig
-
-```yaml
-visualization:
-  enabled: false                    # Set true to generate visualization plots
-  plots_per_scenario: 5             # Number of random samples per masking scenario
-  channels: null                    # Channels to plot (null = default 0-8: continuous + sleep)
-  figsize_per_channel: [15.0, 2.5]  # Figure size (width, height) per channel subplot
-  seed: null                        # Seed for sample selection (null = use main seed)
-  dpi: 150                          # DPI for saved figures
-  format: png                       # Output format: png, pdf, svg
-  split: test                       # Which split to visualize: "val" or "test"
-```
-
-### SensitivityConfig
-
-```yaml
-sensitivity:
-  enabled: false                    # Set true for demographic subgroup analysis
-  age_bins: [18, 30, 40, 50, 60]   # Age bin edges -> "18-29", "30-39", "40-49", "50-59", "60+"
-```
-
-When enabled, metrics are broken down by **age group** and **biological sex** alongside the overall metrics. This reveals whether imputation quality differs across demographic subgroups. Demographics are looked up via the Labels API (`src/labels/api.py`) using `user_id` and `date` from each sample. Samples with missing demographics are grouped as `"unknown"`.
-
-**Visualization Output**: When enabled, generates multi-channel time-series plots for randomly sampled days per scenario, showing:
-- **Observed data** (gray) — unmasked regions showing true observations
-- **Ground truth** (green) — true values in masked regions
-- **Imputed values** (blue dashed) — model predictions in masked regions
-- **Masked regions** (red shading) — highlights where imputation occurred
-
-This provides qualitative assessment of imputation quality beyond aggregate metrics. The visualization is method-agnostic and works with any `ImputationMethod` implementation.
-```
-
-## Output Files
-
-After running, results are saved to `{results_dir}/{experiment_name}/`:
-
-```
-results/imputation_eval/imputation_mean_20240115_120000/
-├── results.json          # Per-scenario metrics for val/test
-├── config.yaml           # Full configuration used
-├── masks/                # Persisted masks for reproducibility
-│   ├── val/
-│   │   ├── random_noise.npz
-│   │   ├── temporal_slice.npz
-│   │   └── ...
-│   └── test/
-│       ├── random_noise.npz
-│       └── ...
-└── plots/                # Visualization plots (if enabled)
-    ├── random_noise/
-    │   ├── sample_000123.png
-    │   ├── sample_000456.png
-    │   └── ...
-    ├── temporal_slice/
-    │   └── ...
-    └── ...
-```
-
-### results.json Structure
-
-```json
-{
-  "config": {
-    "method": "mean",
-    "seed": 42,
-    "mask_seed": 42
-  },
-  "scenarios": {
-    "random_noise": {
-      "val": {
-        "n_samples": 1234,
-        "continuous": {
-          "mean_normalized_rmse": 0.85,
-          "mean_ks_statistic": 0.12,
-          "n_channels": 7
-        },
-        "binary": {
-          "macro_balanced_accuracy": 0.65,
-          "macro_roc_auc": 0.72,
-          "n_channels": 12
-        },
-        "per_channel": {
-          "ch_0": {"rmse": 15.2, "mae": 12.1, "normalized_rmse": 0.82, "ks_statistic": 0.10, "n_masked": 50000},
-          "ch_7": {"balanced_accuracy": 0.68, "roc_auc": 0.75, "n_masked": 30000}
-        },
-        "subgroups": {
-          "age_group": {
-            "18-29": {"n_samples": 200, "continuous": {"mean_normalized_rmse": 0.83}, "binary": {...}, "per_channel": {...}},
-            "30-39": {"n_samples": 400, "continuous": {"mean_normalized_rmse": 0.86}, ...},
-            "60+":   {"n_samples": 100, ...},
-            "unknown": {"n_samples": 34, ...}
-          },
-          "sex": {
-            "male":    {"n_samples": 620, "continuous": {"mean_normalized_rmse": 0.84}, ...},
-            "female":  {"n_samples": 580, ...},
-            "unknown": {"n_samples": 34, ...}
-          }
-        }
-      },
-      "test": { ... }
-    },
-    "sleep_gap": { ... }
-  }
-}
-```
-
-> **Note**: The `"subgroups"` key is only present when `sensitivity.enabled: true`. Each subgroup contains the same metric structure as the overall results (continuous, binary, per_channel).
-```
-
-## Visualization
-
-The module provides optional visualization of imputation results to complement quantitative metrics with qualitative assessment. When enabled via `visualization.enabled: true`, the system generates time-series plots for randomly sampled days per masking scenario.
-
-### Plot Components
-
-Each visualization shows a multi-channel view of a single day with:
-
-1. **Observed Data (Gray)**: True sensor values in unmasked regions
-2. **Ground Truth (Green)**: True values in artificially masked regions (what we're trying to reconstruct)
-3. **Imputed Values (Blue Dashed)**: Model predictions for masked regions
-4. **Masked Regions (Red Shading)**: Highlights where imputation occurred
-
-### Usage Examples
+Hydra CLI:
 
 ```bash
-# Generate 5 plots per scenario on test split (default)
-python scripts/run_imputation_eval.py \
-    --config configs/imputation_eval/base.yaml \
-    --visualization.enabled true
-
-# Generate 10 plots per scenario on validation split
-python scripts/run_imputation_eval.py \
-    --config configs/imputation_eval/base.yaml \
-    --visualization.enabled true \
-    --visualization.plots_per_scenario 10 \
-    --visualization.split val
-
-# Visualize specific channels (HR, Active Energy, Sleep)
-python scripts/run_imputation_eval.py \
-    --config configs/imputation_eval/base.yaml \
-    --visualization.enabled true \
-    --visualization.channels "[5, 6, 7, 8]"
-
-# High-resolution PDF output
-python scripts/run_imputation_eval.py \
-    --config configs/imputation_eval/base.yaml \
-    --visualization.enabled true \
-    --visualization.format pdf \
-    --visualization.dpi 300
+mhc-impute-eval method=mean bootstrap=on
+# Override individual fields:
+mhc-impute-eval method=mean bootstrap=on bootstrap.n_boot=500 bootstrap.include_auc=false
 ```
 
-### Implementation Details
+Under the Hydra CLI, the runner forces `save_pairs=true` when `bootstrap.enabled=true`, writes the per-channel structured CI dict to `<output.results_dir>/bootstrap_metrics.json`, and merges sibling fields (`<metric>_ci_lo`, `<metric>_ci_hi`, `<metric>_bootstrap_se`, `<metric>_bootstrap_mean`, `<metric>_n_valid_boot`) into the existing `results.json`.
 
-- **Method-agnostic**: Works with any `ImputationMethod` implementation (mean, linear, neural, etc.)
-- **Random sampling**: Samples are selected randomly from applicable indices per scenario using configurable seed
-- **Per-scenario output**: Plots are organized into subdirectories by masking scenario
-- **Efficient**: Only loads data needed for visualization (doesn't affect evaluation memory usage)
-- **Reusable functions**: Core plotting functions (`plot_imputation_channel`, `plot_imputation_sample`) are available for custom analyses
+### Results object
 
-### Interpretation Tips
+`ImputationResults.scenarios` is `{scenario: {split: {group: {metric: value}}}}`. Useful methods:
 
-- **Close alignment** between green (ground truth) and blue dashed (imputed) indicates good reconstruction
-- **Temporal patterns**: Check if imputation preserves temporal structure (e.g., circadian rhythms, activity patterns)
-- **Boundary effects**: Look at imputation quality at edges of masked regions
-- **Scenario-specific behavior**: Different scenarios reveal different failure modes (e.g., long gaps vs. short patches)
+- `.summary()` — wide DataFrame, one row per `(scenario, split, channel_group)` with metrics as columns. Filters to the `continuous` / `binary` aggregate groups.
+- `.to_dataframe()` — long-format DataFrame including per-channel rows.
+- `.to_csv(path)` / `.to_json(path)` — dump full results.
+- `.to_submission_yaml(method_name=..., submitter_team=..., code_url=...)` — render a paste-ready leaderboard submission.
 
-## Mask Subsampling (Per-User Day Cap)
+### Custom imputers
 
-For ablation studies that vary the number of days per user, `scripts/subsample_masks.py` creates reduced mask directories from existing masks. The eval pipeline runs unchanged — it just points to the new mask directory.
+If you need access to the training data (to compute statistics, fit a model, etc.), the public helpers stream from the same DataLoader the eval harness uses:
 
-### How it works
+```python
+import openmhc
 
-1. Loads the daily HF dataset with the same filter chain used during mask generation (WearTimeFilter, LowChannelVarianceFilter)
-2. Resolves each split-local index to `(user_id, date)` via the HF dataset
-3. For each scenario's `.npz` file, groups applicable indices by user_id
-4. Per user: if they exceed `max_days_per_user`, subsamples with a deterministic per-user seed (`seed + md5(user_id)`)
-5. Writes new `.npz` files with the reduced applicable set
+for data, mask in openmhc.iter_train_data():
+    # data: (B, 19, 1440) float32, NaN at missing positions
+    # mask: (B, 19, 1440) float32, 1 = observed
+    ...
+
+# Or any split:
+for data, mask in openmhc.iter_split_data("val"):
+    ...
+
+# Lightweight metadata only (no tensors loaded):
+meta = openmhc.load_sample_metadata("test")  # [{"sample_idx": 0, "user_id": ..., "date": ...}, ...]
+```
+
+All of these accept `data_dir=` / `seed=` overrides; defaults match `evaluate_imputation`.
+
+---
+
+## Part 1.5 — Reproducible runs via `mhc-impute-eval`
+
+Reach for the CLI (instead of the Python API in Part 1) when you want:
+
+- Composable YAML configs and CLI overrides instead of in-code wiring.
+- A timestamped run directory with the resolved config and the loaded release manifest copied in.
+- W&B logging out of the box (`wandb=on`).
+- Hydra `--multirun` sweeps over methods / scenarios / data subsets.
+- SLURM dispatch on Sherlock via the `submitit` launcher.
+
+The CLI is declared in [`pyproject.toml`](../../pyproject.toml) as the
+`mhc-impute-eval` console script. Public-API users (`openmhc.evaluate_imputation`)
+never touch Hydra.
+
+### Configs
+
+Config presets live at `configs/imputation/` (repo root), composed via the
+`defaults:` list in [`configs/imputation/eval.yaml`](../../configs/imputation/eval.yaml):
+
+| Group | Presets | Picks |
+|---|---|---|
+| `data/` | `default`, `xs` | Data root, batch size, splits, multi-day window |
+| `masking/` | `all_six` (default), `sleep_gap_only`, `workout_gap_only`, `random_noise_only` | Which masking scenarios are enabled |
+| `method/` | `mean`, `mode`, `linear`, `locf`, `temporal_mean`, `temporal_mode`, `brits`, `timesnet`, `dlinear`, `fedformer`, `lsm2`, `lsm2_weekly_sparse` | Imputation method + arch / runtime kwargs |
+| `output/` | `default` | `results_dir`, optional experiment name |
+| `evaluation/` | `default` | `compute_metrics`, `save_pairs` |
+| `visualization/` | `off`, `on` | Visualization toggle (see Known gaps below) |
+| `sensitivity/` | `off`, `on` | Demographic subgroup metrics |
+| `bootstrap/` | `off`, `on` | Participant-level cluster bootstrap CIs (see Bootstrap section above) |
+| `wandb/` | `off`, `on` | W&B logging |
+
+The schema is the dataclass tree in [`config.py`](config.py) (`ImputationEvalConfig`); Hydra validates every override against it.
 
 ### Usage
 
 ```bash
-# Generate subsampled masks (cap at 30 days per user)
-python scripts/subsample_masks.py \
-    --masks_dir data/imputation/masks/sharable_users_seed42_2026/ \
-    --split_file data/splits/sharable_users_seed42_2026.json \
-    --daily_hf_dir data/processed/daily_hf \
-    --max_days_per_user 30 \
-    --seed 42 \
-    --output_dir data/imputation/masks/sharable_users_seed42_2026_max30days/
+# Reference imputer — fits on the train split inside its __init__
+mhc-impute-eval method=mean
 
-# Run eval unchanged, pointing to subsampled masks
-python scripts/run_imputation_eval.py \
-    --config configs/imputation_eval/base.yaml \
-    --config configs/imputation_eval/methods/mae.yaml \
-    --masking.masks_file data/imputation/masks/sharable_users_seed42_2026_max30days/
+# Paper checkpoint — manifest-bundled release
+mhc-impute-eval method=brits method.release_dir=path/to/openmhc-brits-paper/
+
+# Sweep across methods and masking scenarios
+mhc-impute-eval --multirun \
+  method=brits,timesnet,dlinear,fedformer \
+  method.release_dir=releases/${method.type} \
+  masking=all_six,sleep_gap_only
 ```
 
-### Output NPZ format
+Common overrides (anything on a dataclass is reachable via dotted keys):
 
-Output files are backward compatible with `ScenarioMasks.load()`, which only reads the three standard keys. Two metadata arrays are added for traceability:
+| Override | Effect |
+|---|---|
+| `data=xs` | Use the small dev subset (downloadable via `openmhc.download_dataset(version="xs")`) |
+| `method.device=cuda:0` | Inference device for neural imputers |
+| `method.inference_batch_size=128` | Inference batch size for neural imputers |
+| `masking=sleep_gap_only` | Restrict to one scenario (faster smoke tests) |
+| `wandb=on wandb.tags='[smoke]'` | Log this run to W&B |
+| `seed=7` | Override the top-level RNG seed |
 
-| Key | Description | Used by pipeline |
-|-----|-------------|-----------------|
-| `indices` | Global sample indices (standard) | Yes |
-| `masks_packed` | Bit-packed masks, uint8 (standard) | Yes |
-| `shape` | `(N_applicable, C, T)` (standard) | Yes |
-| `user_ids` | Per-sample user_id strings | No (metadata) |
-| `dates` | Per-sample date strings | No (metadata) |
+### Paper-checkpoint manifests
 
-```python
-# Inspect a subsampled NPZ
-d = np.load("output_masks/val/random_noise.npz", allow_pickle=True)
-print(list(d.keys()))       # ['indices', 'masks_packed', 'shape', 'user_ids', 'dates']
-print(d["shape"])           # [N_kept, 19, 1440]
-print(d["user_ids"][:3])    # ['user_001', 'user_001', 'user_002']
-print(d["dates"][:3])       # ['2024-03-01', '2024-03-02', '2024-03-05']
-```
+For neural methods (`brits`, `timesnet`, `dlinear`, `fedformer`, `lsm2`,
+`lsm2_weekly_sparse`), the recommended path is `method.release_dir=<dir>`. The
+release dir contains an `openmhc_manifest.json` plus the checkpoint and
+optional `normalization_stats.json`; the CLI reads the manifest, validates
+that `kind` matches the requested method, and reconstructs the model via
+`cls.from_release(...)`. The manifest is then copied into the run dir so every
+result is traceable to its exact checkpoint + arch. See
+[`docs/neural-imputers.md`](../../docs/neural-imputers.md) for the bundle
+schema and the `tools/build_manifest.py` packager.
 
-### Key properties
+If you don't have a manifest (e.g. a bare PyPOTS file from your own training
+run), the inline-arch fallback on each method YAML is consulted instead — see
+the comments at the top of [`configs/imputation/method/brits.yaml`](../../configs/imputation/method/brits.yaml)
+and [`configs/imputation/method/lsm2.yaml`](../../configs/imputation/method/lsm2.yaml).
+Arch fields must match the trained model or PyPOTS's `load()` raises a
+size-mismatch error.
 
-- **Per-scenario independent**: each scenario's applicable set is subsampled separately, preserving evaluation power for rare scenarios (e.g., `intensity_failure`)
-- **Deterministic**: uses `hashlib.md5` for per-user seeding (stable across Python sessions, unlike `hash()`)
-- **No pipeline changes needed**: extra NPZ keys are ignored by `np.load()` / `ScenarioMasks.load()`
-
-### Post-hoc ablation (alternative)
-
-`scripts/ablation_days_per_user.py` provides a post-hoc alternative that operates on saved Parquet pairs from a completed eval run. It recomputes metrics at various day caps with bootstrap CIs, without re-running the pipeline. Use this for quick exploratory analysis; use mask subsampling for definitive results.
-
-## Reproducibility
-
-Masks are deterministically generated using `np.random.default_rng(seed)` and **always persisted** to disk. This ensures:
-
-1. **Same masks across runs**: Running with the same config produces identical masks
-2. **Fair method comparison**: Different imputation methods can be evaluated on identical masks by setting `masking.masks_file` to a previous run's masks directory
+### SLURM (Sherlock)
 
 ```bash
-# First run: generates and saves masks (with parallel evaluation)
-python scripts/run_imputation_eval.py \
-    --config default.yaml \
-    --data.num_eval_workers 4
-
-# Second run with different method: reuses exact same masks
-python scripts/run_imputation_eval.py \
-    --config default.yaml \
-    --method.type mode \
-    --data.num_eval_workers 4 \
-    --masking.masks_file results/imputation_eval/imputation_mean_20240115/masks/
+mhc-impute-eval --multirun hydra/launcher=sherlock_submitit \
+  method=brits,timesnet,dlinear,fedformer method.release_dir=releases/${method.type}
 ```
 
-## Imputation Methods
+The `sherlock_submitit` launcher YAML lives in the shared `eval_hydra` package
+and is picked up via `hydra.searchpath: [pkg://eval_hydra.configs]` in
+`eval.yaml`. Override partition / GPU count on the CLI as usual
+(`hydra.launcher.partition=gpu hydra.launcher.gres=gpu:1`).
 
-### Mean Imputation (`type: mean`)
-Fills each artificially masked position with the global per-channel mean computed from training data. Ignores temporal structure entirely.
+### Output layout
 
-### Mode Imputation (`type: mode`)
-Fills each artificially masked position with the per-channel mode (most frequent value after rounding) from training data. Suited for binary/categorical channels.
+Single run:
 
-### Linear Interpolation (`type: linear`)
-For each sample and channel, linearly interpolates between known (unmasked) observations along the time axis. Uses `np.interp`, which naturally handles boundaries:
-- **Left boundary** (before first known observation): NOCB — fills with the first known value.
-- **Right boundary** (after last known observation): LOCF — fills with the last known value.
-- **Fallback**: if a channel has zero known observations in a sample, fills with the global channel mean from training data.
-
-This method leverages temporal ordering and generally outperforms global-statistic baselines on scenarios with temporal structure (e.g., `temporal_slice`, `random_noise`).
-
-### LOCF Imputation (`type: locf`)
-Last Observation Carried Forward. For each sample and channel, carries the most recent known value forward to fill masked positions:
-- **Forward fill**: each masked position is filled with the last known value before it.
-- **Left boundary** (before first known observation): NOCB — back-fills with the first known value.
-- **Fallback**: if a channel has zero known observations in a sample, fills with the global channel mean from training data.
-
-LOCF is a simple temporal baseline that preserves level but not trend. It performs well when values change infrequently (e.g., binary channels, step-like signals).
-
-### MAE Imputation (`type: mae`)
-Uses a pre-trained Masked Autoencoder to reconstruct masked positions via encoder-decoder inference. Requires a trained MAE checkpoint (`.ckpt`). Applies instance normalization matching the training preprocessing, runs inference in batches on GPU, and denormalizes predictions. See `configs/imputation_eval/methods/mae.yaml`.
-
-The `checkpoint_path` accepts both local paths and W&B artifact references. Artifact references are automatically downloaded and cached to `~/.cache/openmhc/artifacts/`:
-
-```yaml
-method:
-  type: mae
-  mae:
-    # Local path
-    checkpoint_path: results/mae/mhc-mae-ssl/1tms4zet/checkpoints/best.ckpt
-
-    # Or W&B artifact reference (auto-downloaded + cached)
-    checkpoint_path: "wandb:MHC_Dataset/mhc-mae-ssl/mae:latest"
+```
+${output.results_dir}/<YYYYMMDD_HHMMSS>_<method.type>/
+├── results.json              # the run's metrics, JSON-serialized
+├── .hydra/                   # resolved config + overrides
+└── openmhc_manifest.json     # copied if method.release_dir was used
 ```
 
-Version aliases: `:latest` (most recent), `:v0`/`:v1`/... (specific version), or custom aliases set in the W&B UI.
+Multirun: subdirs under `${output.results_dir}/multirun/<ts>/<method.type>__<job_num>/`.
 
-You can also override via CLI without editing the config:
+### Adding a new method to the CLI
+
+Three edits:
+
+1. **[`src/imputation_evaluation/config.py`](config.py)** — add your method name to the `MethodConfig.type` `Literal[...]`. If it needs hyperparameters, define a small `@dataclass MyMethodConfig` and add a field on `MethodConfig` (mirror `LSM2MethodConfig` / `PyPOTSMethodConfig`).
+2. **[`src/imputation_evaluation/hydra/registry.py`](hydra/registry.py)** — register the class in `_REFERENCE_CLASSES` (no checkpoint) or `_PAPER_CHECKPOINT_CLASSES` (uses `ReleaseLoadableMixin.from_release`). For an exotic builder, write a small function that returns `(_ImputerMethodAdapter(imputer), manifest_or_None)`.
+3. **`configs/imputation/method/my_method.yaml`**:
+
+   ```yaml
+   # @package method
+   type: my_method
+   # any new fields you added to MethodConfig
+   ```
+
+Run with `mhc-impute-eval method=my_method`. The public-API path
+(`openmhc.evaluate_imputation(MyImputer())`) keeps working in parallel — the
+imputer class itself does not need to know about Hydra.
+
+---
+
+## Part 1.6 — Paper pipeline (optional): cross-method skill scores, average ranks, bootstrap CIs
+
+To reproduce the paper's headline table (skill score vs. LOCF, average rank,
+95 % bootstrap CIs, plus optional demographic-subgroup fairness summaries) run
+the three-phase pipeline below. It is fully optional and lives entirely in this
+repo — no external dependencies on the private MHC-benchmark scripts.
+
+The full imputation splits (version `full`, `sharable_users_seed42_2026.json`,
+post-QA, pre-scenario-applicability) are **3,542 / 622 / 1,777 users** and
+**666,175 / 122,107 / 348,580 daily samples** for train / val / test — use
+these numbers as a sanity check on the Phase 0 sweep (each method's `pairs/`
+tree must enumerate the same test users; scenario-level counts will be lower
+where applicability filters bite, e.g. `sleep_gap` only applies to days with
+sleep data). Reproduce them from a fresh checkout with
+`openmhc.load_sample_metadata(split, version="full")`.
+
+**Estimand (matches Track 3 forecasting, commit `79c8628`).** Skill score
+is the paired user-bootstrap form:
+
+```
+skill = 1 − exp( mean_tasks( log( clip( geomean_users(e^M_u / e^B_u), 0.01, 100 ) ) ) )
+```
+
+with per-user error `e_u = sae_u / n_u` (MAE) for continuous channels and
+`e_u = max(1 − AUC_u, 0.005)` (ε-floored 1 − AUC) for binary channels.
+Continuous `e_u` is unfloored — the floor only applies to binary so a
+perfect-AUC user contributes a finite paired ratio instead of being
+dropped by the `baseline > 0` filter. Baseline = LOCF on the same cell.
+The paper-pipeline point estimate
+(`scripts/paper_results/compute_imputation_paper_metrics.py`, which calls
+`evaluation/pair_aggregator.py::aggregate_pairs(..., aggregation="user_macro")`)
+matches the n_boot=1 bootstrap identity-draw point by construction.
+The live `mhc-impute-eval` CLI's `results.json` is still cell-micro
+via the streaming `MetricAccumulator`; that path doesn't feed the
+leaderboard — maintainers re-derive skill from the absolute per-channel
+MAE / AUC values pasted in the submission, running the same reducer on
+their side.
 
 ```bash
-python scripts/run_imputation_eval.py \
-    --config configs/imputation_eval/base.yaml \
-    --config configs/imputation_eval/methods/mae.yaml \
-    --method.mae.checkpoint_path "wandb:MHC_Dataset/mhc-mae-ssl/mae:latest"
+# Phase 0: sweep all 12 methods (each writes a pairs/ subdir)
+mhc-impute-eval --multirun \
+  method=mean,mode,locf,linear,temporal_mean,temporal_mode,lsm2,lsm2_weekly_sparse,brits,timesnet,dlinear,fedformer \
+  evaluation.save_pairs=true
+
+# Phase 1: paired participant-level bootstrap → bootstrap_draws.parquet
+python scripts/paper_results/imputation/bootstrap_imputation_draws.py \
+  --method-dirs configs/paper/bootstrap_method_dirs.json \
+  --output results/paper/bootstrap_draws.parquet \
+  --n-boot 1000 --seed 42 --splits test
+
+# Phase 2: aggregate → 4 sidecar CSVs in results/paper/
+python scripts/paper_results/imputation/aggregate_imputation_paper_metrics.py \
+  --draws results/paper/bootstrap_draws.parquet \
+  --output-dir results/paper/
 ```
 
-See [docs/wandb_artifacts.md](../../docs/wandb_artifacts.md) for the full artifact workflow (uploading, versioning, aliases).
+Alternatively, the driver
+[`scripts/paper_results/imputation/run_paper_pipeline.py`](../../scripts/paper_results/imputation/run_paper_pipeline.py)
+chains all three phases from a single YAML sweep spec
+([`configs/paper/sweep_methods.yaml`](../../configs/paper/sweep_methods.yaml)).
 
-### PyPOTS Imputation (`type: pypots`)
-Uses pre-trained PyPOTS models for imputation. Requires a model directory saved by PyPOTS during training (see `scripts/train_pypots.py`). The adapter handles the transpose between our channels-first format `(N, C, T)` and PyPOTS time-first format `(N, T, C)`. PyPOTS manages its own internal batching during inference.
+### Method-dirs manifest
 
-Supported models: **BRITS**, **SAITS**, **TimeMixer**, **TimeMixerPP**, **FITS**, **DLinear**, **TimesNet**, **FEDformer**, **TRMF** (CPU-only).
+Phase 1 reads a JSON manifest mapping `{method: pairs_dir}`. The driver emits
+it automatically; if you skip the driver, write it yourself:
 
-**Training workflow:**
-1. Install: `pip install -e .[pypots]`
-2. Train: `python scripts/train_pypots.py --config configs/pypots/<model>.yaml`
-3. Evaluate: `python scripts/run_imputation_eval.py --config configs/imputation_eval/pypots_<model>.yaml`
+```json
+{
+  "locf":  "/abs/path/to/run_dir/pairs",
+  "mean":  "/abs/path/to/run_dir/pairs",
+  "brits": "/abs/path/to/run_dir/pairs"
+}
+```
 
-Available training configs: `brits.yaml`, `timemixer.yaml`, `timesnet.yaml`, `fedformer.yaml`, `trmf.yaml`.
-Available eval configs: `pypots_brits.yaml`, `pypots_timesnet.yaml`, `pypots_fedformer.yaml`, `pypots_trmf.yaml`.
+Each `pairs/` directory must contain `manifest_<split>.parquet`,
+`channel_stds.npy` and a per-scenario tree `<scenario>/<split>/pairs_ch{NN}.parquet`
+— exactly what [`pair_writer.py`](evaluation/pair_writer.py) writes when
+`evaluation.save_pairs=true`.
 
-The training script exports data to H5 files (cached), then trains via PyPOTS's own training loop. Data exports reuse `ImputationDataLoader` to guarantee identical QA filters and user-level splits. See `src/pypots_training/` for the training package and `configs/pypots/GPU_MEMORY.md` for batch size guidance.
+### Outputs (in `--output-dir`)
 
-## Adding New Imputation Methods
+| CSV | Columns |
+|---|---|
+| `skill_scores_bootstrap.csv` | `method, scope, split, n_tasks, mean, se, ci_lo, ci_hi, n_boot` |
+| `avg_rankings_bootstrap.csv` | same shape (mean of avg-rank) |
+| `fairness_skill_score_bootstrap.csv` | `method, scope, split, n_tasks, mean, se, ci_lo, ci_hi, n_boot` — disparity-ratio Fairness Skill Score (leaderboard's `fair_skill_score`); `scope` ∈ {`age_group`, `sex`, `overall`} |
 
-1. Create a new file in `methods/` (e.g., `methods/neural_imputation.py`)
-2. Implement the `ImputationMethod` protocol:
+The leaderboard's Fairness Skill Score is the disparity-ratio formulation
+`1 − GeoMean_r(clip(D_j^{(G)} / D_b^{(G)}, 0.01, 100))` produced by
+[`scripts/paper_results/aggregate_fairness_skill_score.py`](../../scripts/paper_results/aggregate_fairness_skill_score.py)
+(macro-averaged across age, sex; baseline = LOCF). The engine lives in
+[`evaluation/bootstrap_skill_rank.py`](evaluation/bootstrap_skill_rank.py)
+(per-draw error reconstruction + phase-2 aggregator) with the deterministic
+point-flow definitions in
+[`evaluation/paper_metrics_core.py`](evaluation/paper_metrics_core.py).
+
+**Deprecated — `S − λ·D` fairness-adjusted skill score.** The earlier
+`fairness_subgroup_scores_bootstrap.csv` and `fairness_summary_bootstrap.csv`
+outputs implemented an `S_overall − λ · disparity(S_g)` formulation with
+pluggable disparities (`max_minus_min`, `worst_group`, `std`,
+`relative_drop`) from
+[`evaluation/disparity_metrics.py`](evaluation/disparity_metrics.py). They
+are **no longer emitted by default** by `aggregate_imputation_paper_metrics.py`
+— pass `--write-deprecated-fairness` if you still need them. The underlying
+`aggregate_skill_rank_fairness` function emits a `DeprecationWarning` when
+called. Use the disparity-ratio Fairness Skill Score above for new work.
+
+---
+
+## Part 2 — Library internals (`imputation_evaluation/`)
+
+This package is the engine `openmhc.evaluate_imputation` calls. The public surface (the `Imputer` protocol, results object, dataset-path resolution) lives in `openmhc/`; this package contains the masking, evaluation, and I/O machinery.
+
+### Layout (current truth)
+
+```
+src/imputation_evaluation/
+├── __init__.py
+├── config.py                  # All dataclasses (see "Configuration" below)
+├── runner.py                  # run_eval() — library entry point
+├── sensitivity.py             # Age/sex subgroup mapping
+├── data/
+│   ├── data_loader.py         # ImputationDataLoader (HF + splits + QA filters)
+│   ├── mask_dataset.py        # PyTorch Dataset for parallel mask generation
+│   └── splits.py              # User-level split utilities
+├── masking/
+│   ├── base.py, generator.py  # MaskGenerator protocol, MaskCacheGenerator
+│   ├── random_noise.py, temporal_slice.py, signal_slice.py
+│   ├── sleep_gap.py, workout_gap.py, intensity_failure.py
+│   └── __init__.py            # create_mask_generators(...) registry
+├── evaluation/
+│   ├── evaluator.py           # ImputationEvaluator (main orchestrator)
+│   ├── metrics.py             # compute_scenario_metrics, compute_per_sample_metrics
+│   ├── pair_aggregator.py     # Re-aggregate metrics from saved (gt, pred) pairs
+│   └── pair_writer.py         # Persist raw pairs to Parquet for offline analysis
+└── io/
+    ├── writer.py              # results.json / config.yaml writer
+    └── wandb_logger.py        # Optional W&B logging
+```
+
+The package does **not** contain `methods/` or `visualization/` within `src/imputation_evaluation/`. Hydra config YAMLs live at `configs/imputation/` (repo root); see Part 1.5. The `ImputationMethod` interface that `run_eval` expects is satisfied by the `_ImputerMethodAdapter` at [`src/openmhc/_evaluate.py:586`](../openmhc/_evaluate.py), which bridges from the public `openmhc.Imputer` protocol.
+
+### Library entry point
 
 ```python
-from torch.utils.data import DataLoader
-
-class NeuralImputation:
-    @property
-    def name(self) -> str:
-        return "neural"
-
-    @property
-    def channel_stds(self) -> np.ndarray | None:
-        return self._channel_stds
-
-    def fit(self, train_loader: DataLoader) -> None:
-        # Iterate over DataLoader batches
-        for batch_idx, (data, masks) in enumerate(train_loader):
-            # data: (B, 19, 1440) tensor
-            # masks: (B, 19, 1440) tensor, 1=valid
-            data = data.numpy()
-            masks = masks.numpy()
-            # ... accumulate statistics or train model ...
-
-    def impute(
-        self,
-        data: np.ndarray,
-        original_masks: np.ndarray,
-        artificial_masks: np.ndarray,
-    ) -> np.ndarray:
-        # data: (N, 19, 1440) with NaN at artificial_mask==1 positions
-        # Returns: (N, 19, 1440) with imputed values
-        ...
+from imputation_evaluation.runner import run_eval
+results: dict = run_eval(cfg, method=adapter, subgroup_mappings=None)
 ```
 
-3. Register in `methods/__init__.py`:
+`run_eval(config, method, *, subgroup_mappings=None)` ([`runner.py`](runner.py)) does everything `evaluate_imputation` does minus the W&B / disk-writer / visualization side effects:
+
+1. Loads splits via `ImputationDataLoader`.
+2. Builds the enabled mask generators via `create_mask_generators(config.masking)`.
+3. Generates and caches masks with `MaskCacheGenerator`.
+4. Calls `method.fit(train_loader)` (the adapter uses this to accumulate channel stds; user `Imputer`s never see it).
+5. Builds eval-only DataLoaders restricted to indices that have at least one applicable mask.
+6. Runs `ImputationEvaluator` for val + test, returns a dict.
+
+`method` must satisfy the (internal) `ImputationMethod` interface: `name`, `channel_stds`, `fit(train_loader)`, `impute(data, original_masks, artificial_masks, **kwargs)`. If you're calling `run_eval` from Python with a user `Imputer`, instantiate `_ImputerMethodAdapter` from `openmhc._evaluate` and pass it through.
+
+### Configuration (`config.py`)
+
+All settings live on one root dataclass:
 
 ```python
-def create_imputation_method(config: MethodConfig) -> ImputationMethod:
-    if config.type == "mean":
-        return MeanImputation()
-    elif config.type == "neural":
-        return NeuralImputation(config.neural)  # Add config fields as needed
-    else:
-        raise ValueError(f"Unknown method: {config.type}")
+@dataclass
+class ImputationEvalConfig:
+    seed: int = 42
+    data: DataConfig            # daily_hf_dir, splits, batch_size, num_workers, n_days, filters, preprocessing
+    masking: MaskingConfig      # mask_seed + per-scenario sub-configs (RandomNoiseConfig, …)
+    method: MethodConfig        # type + nested MAE/PyPOTS configs (see Known gaps)
+    output: OutputConfig        # results_dir, experiment_name
+    evaluation: EvalConfig      # compute_metrics, save_pairs
+    visualization: VisualizationConfig   # see Known gaps — currently no consumer
+    sensitivity: SensitivityConfig       # demographic subgroup analysis (age + sex)
+    wandb: WandbConfig          # optional W&B logging
 ```
 
-4. Update `config.py` with any new config fields
-5. Add YAML config in `configs/imputation_eval/`
+Notable fields a dev would tune:
 
-## Adding New Masking Scenarios
+- `data.daily_hf_dir`, `data.split_file` — point at the dataset and the user-level split JSON.
+- `data.max_samples_per_split` — fast smoke runs.
+- `data.num_workers`, `data.num_eval_workers`, `data.num_eval_dl_workers` — see "Performance" below.
+- `data.n_days` — multi-day context window (1–7). Defaults to 1. When
+  `n_days > 1`, the loader groups each user's days chronologically into
+  non-overlapping `n_days`-day windows (left-padded with NaN-filled day
+  slots when a user's final group is incomplete), and the imputer
+  receives tensors of shape `(B, 19, n_days * 1440)` instead of
+  `(B, 19, 1440)`. The evaluator also forwards a `day_offsets` kwarg
+  (per-window int64 array of calendar-day deltas from the first
+  non-padded day, with `-1` for padded slots) to any imputer that
+  declares it in its `impute()` signature — used by calendar-aware
+  models like `LSM2WeeklySparseImputer` (RoPE day embeddings). Imputers
+  that don't declare `day_offsets` are silently skipped (see the
+  inspector at `src/openmhc/_evaluate.py:843`), so daily models are
+  unaffected.
+- `masking.mask_seed` — controls the RNG used by every scenario.
+- `masking.masks_file` — load pre-computed masks from `.npz` instead of regenerating, for like-for-like comparison across methods.
+- `sensitivity.enabled` / `sensitivity.age_bins` — emit per-subgroup metrics. Demographics are looked up via [`src/labels/api.py`](../labels/api.py); samples with missing demographics group under `"unknown"`.
 
-1. Create a new file in `masking/` implementing the `MaskGenerator` protocol:
+Per-scenario knobs are on the matching sub-config in `MaskingConfig` (`random_noise.patch_size`, `temporal_slice.min_block_size`, `intensity_failure.hr_threshold`, etc.) — see the defaults table in Part 1.
 
-```python
-from .base import MaskResult
+### Adding a masking scenario
 
-class MyNewMask:
-    @property
-    def name(self) -> str:
-        return "my_new_mask"
+1. Create a file in `masking/` implementing the protocol from `masking/base.py`:
 
-    def generate(
-        self,
-        data: np.ndarray,           # (19, 1440)
-        original_mask: np.ndarray,  # (19, 1440), 1=valid
-        rng: np.random.Generator,
-    ) -> MaskResult:
-        # INVARIANT: artificial_mask can only be 1 where original_mask is 1
-        artificial_mask = np.zeros_like(original_mask)
-        # ... your masking logic ...
-        applicable = True  # Set False if scenario doesn't apply
-        return MaskResult(artificial_mask=artificial_mask, applicable=applicable)
-```
+   ```python
+   from .base import MaskResult
 
-2. Add config dataclass in `config.py`
-3. Register in `masking/__init__.py`
+   class MyNewMask:
+       @property
+       def name(self) -> str:
+           return "my_new_mask"
 
-## Performance & Memory
+       def generate(self, data, original_mask, rng):
+           # data: (19, 1440); original_mask: (19, 1440) with 1=valid
+           artificial_mask = np.zeros_like(original_mask)
+           # ... fill in your logic ...
+           # INVARIANT: artificial_mask can only be 1 where original_mask is 1.
+           return MaskResult(artificial_mask=artificial_mask, applicable=True)
+   ```
 
-The module balances memory efficiency with speed:
+2. Add a config dataclass in `config.py` and a field on `MaskingConfig`.
+3. Register the constructor in `masking/__init__.py:create_mask_generators`.
+4. Add the scenario name to `openmhc._constants.MASKING_SCENARIOS` and toggle it in `openmhc._evaluate.evaluate_imputation` so it's reachable from the public API.
 
-- **PyTorch DataLoader**: Multi-worker data loading with memory-mapped HuggingFace datasets. Only accessed samples are loaded into RAM.
-- **Configurable parallelism**: Adjust `num_workers`, `pin_memory`, and `prefetch_factor` via config for optimal performance on your hardware.
-- **`num_workers`**: DataLoader worker processes for data loading, mask generation, and imputation method fitting. Standard PyTorch DataLoader parallelism.
-- **`num_eval_workers`**: Parallel processes for batch-level evaluation using ProcessPoolExecutor. Each worker processes ALL 6 scenarios for its assigned batch independently. Batches are streamed to workers as they're loaded (not collected upfront), so memory scales with `num_eval_workers × batch_size` rather than total dataset size.
-- **`num_eval_dl_workers`**: DataLoader workers for eval splits, independent of `num_workers`. Defaults to `num_workers` when null. Allows data prefetching to run concurrently with parallel evaluation.
-- **Selective mask unpacking**: Masks are stored bit-packed (32x compression). During evaluation, only the masks needed for the current batch are unpacked, avoiding full-array decompression in each worker process.
-- **Batch-by-batch evaluation**: Each batch is loaded once and evaluated for ALL masking scenarios before moving to the next batch. This minimizes data loading overhead.
-- **Vectorized mask generation**: Structural mask generators (random_noise, temporal_slice, signal_slice) use vectorized numpy operations instead of Python loops.
-- **Incremental statistics**: Training statistics are computed incrementally across batches without loading all data into memory.
-- **Precision**: Input data is loaded as float32. Continuous metric accumulators use float64 for numerical stability when summing across large sample counts. Binary channel storage uses int8 for ground truth (0/1) and float16 for predictions.
-- **`max_samples_per_split`**: Set this to a small value (e.g., 1000-10000) for quick test runs during development. See `configs/imputation_eval/test.yaml`.
+### Performance & memory
 
-## Dependencies
+- **Bit-packed masks (32× compression).** Stored once per scenario; only the slice needed for the current batch is unpacked inside each worker (see `data/mask_dataset.py`).
+- **Batch-by-batch eval.** Each batch is loaded once and run through all enabled scenarios before the next batch loads — minimizes DataLoader overhead.
+- **`num_workers`** — DataLoader prefetching for data loading, mask generation, and `method.fit`.
+- **`num_eval_workers`** — `ProcessPoolExecutor` for batch-level eval parallelism. Each worker handles all scenarios for its batch; memory scales with `num_eval_workers × batch_size`, not dataset size.
+- **`num_eval_dl_workers`** — DataLoader workers used during eval; decouples from `num_workers` so prefetching can overlap with parallel evaluation.
+- **Incremental statistics.** `_ImputerMethodAdapter.fit` accumulates per-channel stds in a single pass, never materializing the full train tensor.
+- **Precision.** float32 inputs; continuous accumulators use float64 for stability; binary storage uses int8 (gt) + float16 (pred).
 
-- `numpy`: Array operations
-- `datasets`: HuggingFace dataset loading (memory-mapped)
-- `torch`: PyTorch DataLoader, Dataset, and ZeroToNaNTransform preprocessing
-- `sklearn`: Balanced accuracy, ROC AUC metrics
-- `matplotlib`: Visualization plots (optional, only needed if `visualization.enabled: true`)
-- `jsonargparse`: CLI argument parsing
-- `pyyaml`: Config serialization
-- `h5py`: H5 export for PyPOTS training
-- `pypots`: PyPOTS imputation models (optional, install via `pip install -e .[pypots]`)
+### Known gaps
+
+These are real issues in the published code; documenting honestly rather than papering over.
+
+- **`VisualizationConfig` is dead code.** It's defined in `config.py:236` and accepted by `run_eval`, but the `visualization/` package that would consume it was not published. Setting `visualization.enabled = True` has no effect today. Plot your own results from the saved Parquet pairs (`pair_writer.py`) if you need qualitative inspection.
+- **`MethodConfig.type` literal includes `"lsm2"`, `"lsm2_weekly_sparse"`, and `"pypots"`** (LSM2 was formerly called MAE in the private companion repo). The matching imputer wrappers ship in `openmhc.imputers` (`LSM2Imputer`, `LSM2WeeklySparseImputer`, `BRITSImputer` / `TimesNetImputer` / `DLinearImputer` / `FEDformerImputer`). For other neural imputers, use `openmhc.imputers.TorchImputer` with your own `torch.nn.Module`.
+- **Dangling type-only imports.** `runner.py:31` and `evaluation/evaluator.py:32` reference `imputation_evaluation.methods.base.ImputationMethod` under `TYPE_CHECKING`. The module doesn't exist; nothing breaks at runtime, but static type-checkers will complain. A future cleanup should either restore the protocol module or replace it with a `typing.Protocol` defined locally.

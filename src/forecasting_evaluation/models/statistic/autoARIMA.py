@@ -12,45 +12,44 @@ try:
 except ImportError:  # pragma: no cover - optional dependency in some envs
     ConvergenceWarning = Warning
 
-from forecasting_evaluation.data.types import SubTrajectoryInput
 from forecasting_evaluation.models.base import BasePredictionModel
 
 
 class AutoARIMAModel(BasePredictionModel):
     """AutoARIMA forecasting model using sktime.
-    
+
     This model automatically searches for the best ARIMA parameters
     using information criteria (AIC/BIC). It fits a separate model
     for each feature in multivariate time series.
 
     Note: This model refits from scratch on each predict call.
     """
-    
+
     def __init__(
-            self, 
-            seed: int = 42,
-            start_p: int = 2,
-            start_q: int = 2,
-            max_p: int = 5,
-            max_q: int = 5,
-            seasonal: bool = True,
-            start_P: int = 1,
-            start_Q: int = 1,
-            max_P: int = 2,
-            max_Q: int = 2,
-            max_d: int = 2,
-            max_D: int = 1,
-            information_criterion: str = "aic",
-            suppress_warnings: bool = True,
-            trace: bool = False,
-            error_action: str = "ignore",
-            stepwise: bool = False,
-            n_jobs: int = -1,
-            max_history_length: int | None = 24 * 14,  # Limit to recent 336 hours (14 days)
-            quantile_levels: tuple[float, ...] = (0.1, 0.5, 0.9),
-        ):
+        self,
+        seed: int = 42,
+        start_p: int = 2,
+        start_q: int = 2,
+        max_p: int = 5,
+        max_q: int = 5,
+        seasonal: bool = True,
+        start_P: int = 1,
+        start_Q: int = 1,
+        max_P: int = 2,
+        max_Q: int = 2,
+        max_d: int = 2,
+        max_D: int = 1,
+        information_criterion: str = "aic",
+        suppress_warnings: bool = True,
+        trace: bool = False,
+        error_action: str = "ignore",
+        stepwise: bool = False,
+        n_jobs: int = -1,
+        max_history_length: int | None = 24 * 14,  # Limit to recent 336 hours (14 days)
+        quantile_levels: tuple[float, ...] = (0.1, 0.5, 0.9),
+    ):
         """Initialize AutoARIMA model.
-        
+
         Args:
             seed: Random seed for reproducibility.
             start_p: Starting value of p in stepwise procedure.
@@ -96,7 +95,7 @@ class AutoARIMAModel(BasePredictionModel):
         self.n_jobs = n_jobs
         self.max_history_length = max_history_length
         self.quantile_levels = self._validate_quantile_levels(quantile_levels)
-        
+
         # Set random seeds
         np.random.seed(seed)
         random.seed(seed)
@@ -104,23 +103,26 @@ class AutoARIMAModel(BasePredictionModel):
         self.reset()
 
     def predict(
-            self,
-            inputs: SubTrajectoryInput,
-        ) -> tuple[np.ndarray | None, np.ndarray | None]:
+        self,
+        history: np.ndarray,
+        horizon: int,
+    ) -> tuple[np.ndarray | None, np.ndarray | None]:
         """Predict future values using AutoARIMA.
 
         Fits a new model on all available historical data for each prediction.
 
         Args:
-            inputs: Typed forecasting sub-trajectory input.
+            history: Full-prefix history of shape (n_features, history_length),
+                may contain NaN.
+            horizon: Number of future hours to forecast.
 
         Returns:
             Tuple containing (point_result, quantiles_result):
             - point_result: (n_features, prediction_length) array of point predictions.
             - quantiles_result: (n_features, prediction_length, n_quantiles) quantile forecasts.
         """
-        target = inputs.history
-        prediction_length = inputs.prediction_hours
+        target = history
+        prediction_length = horizon
 
         n_features, _ = target.shape
         n_quantiles = 0 if self.quantile_levels is None else len(self.quantile_levels)
@@ -136,7 +138,7 @@ class AutoARIMAModel(BasePredictionModel):
 
             # Truncate to most recent data if max_history_length is specified
             if self.max_history_length is not None and len(y) > self.max_history_length:
-                y = y[-self.max_history_length:]
+                y = y[-self.max_history_length :]
 
             # Skip if all values are zero or constant
             if np.all(y == 0) or np.std(y) < 1e-10:
@@ -172,7 +174,9 @@ class AutoARIMAModel(BasePredictionModel):
         return point_result, quantiles_result
 
     @staticmethod
-    def _validate_quantile_levels(quantile_levels: tuple[float, ...] | list[float] | np.ndarray) -> np.ndarray:
+    def _validate_quantile_levels(
+        quantile_levels: tuple[float, ...] | list[float] | np.ndarray,
+    ) -> np.ndarray:
         """Validate and normalize configured quantile levels."""
         quantile_array = np.asarray(quantile_levels, dtype=float)
         if quantile_array.ndim != 1 or quantile_array.size == 0:
@@ -230,15 +234,13 @@ class AutoARIMAModel(BasePredictionModel):
             trace=self.trace,
             error_action=self.error_action,
             random_state=self.seed,
-            n_jobs=self.n_jobs
+            n_jobs=self.n_jobs,
         )
 
         # Suppress pmdarima constant series warning
         with warnings.catch_warnings():
             warnings.filterwarnings(
-                "ignore",
-                message=".*completely constant.*",
-                category=UserWarning
+                "ignore", message=".*completely constant.*", category=UserWarning
             )
             warnings.filterwarnings(
                 "ignore",

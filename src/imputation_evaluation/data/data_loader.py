@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 import datasets as hf_ds
 import numpy as np
 import torch
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader, Dataset, Sampler
 
 from data.filters.daily_filters import (
     Filter,
@@ -28,7 +28,7 @@ from data.filters.daily_filters import (
 from data.processing.hf_config import DEFAULT_VARIANCE_THRESHOLDS
 from data.transforms.nan_transforms import ZeroToNaNTransform
 
-from .splits import load_split_file, random_split_users
+from .splits import load_split_file
 
 if TYPE_CHECKING:
     from imputation_evaluation.config import DataConfig
@@ -294,6 +294,94 @@ class LoadedData:
     window_day_offsets: dict[str, list[list[int]]] | None = None
 
 
+class UserGroupedBatchSampler(Sampler[list[int]]):
+    """Yields batches of dataset positions, grouped by user.
+
+    Each emitted batch contains complete contiguous runs of a single
+    user's dataset positions, packed up to ``batch_size`` samples.
+    Multiple complete users may share one batch as long as their
+    combined sample count is ``<= batch_size``. A single user with more
+    samples than ``batch_size`` spans multiple contiguous batches.
+
+    Designed for the personalized-imputer lazy state pattern: when the
+    imputer holds at most one user's per-sample contributions at a
+    time, user-grouped batches keep the imputer's cache warm
+    throughout each user's batches without per-batch evict-and-reload
+    thrashing.
+    """
+
+    def __init__(
+        self,
+        position_to_user: list[str],
+        batch_size: int,
+    ) -> None:
+        """Build the batch list from a flat position → user_id list.
+
+        Args:
+            position_to_user: Dataset position ``i`` belongs to user
+                ``position_to_user[i]``. Must be length ``len(dataset)``.
+            batch_size: Maximum samples per batch.
+        """
+        # Group dataset positions by user_id, preserving each user's
+        # original dataset order (so deterministic ordering is preserved
+        # within a user).
+        user_to_positions: dict[str, list[int]] = defaultdict(list)
+        for pos, uid in enumerate(position_to_user):
+            user_to_positions[uid].append(pos)
+
+        batches: list[list[int]] = []
+        current: list[int] = []
+        for positions in user_to_positions.values():
+            if len(positions) > batch_size:
+                # User larger than batch_size: flush current, then chunk
+                # the user's positions into back-to-back batches.
+                if current:
+                    batches.append(current)
+                    current = []
+                for i in range(0, len(positions), batch_size):
+                    batches.append(positions[i : i + batch_size])
+                continue
+            if current and len(current) + len(positions) > batch_size:
+                batches.append(current)
+                current = []
+            current.extend(positions)
+        if current:
+            batches.append(current)
+
+        self._batches = batches
+
+    def __iter__(self):
+        """Yield each precomputed batch as a list of dataset positions."""
+        return iter(self._batches)
+
+    def __len__(self) -> int:
+        """Return the number of batches."""
+        return len(self._batches)
+
+
+def _build_position_to_user(
+    dataset: Dataset,
+    split_local_to_hf: list[int],
+    hf_user_ids: list[str],
+) -> list[str]:
+    """Resolve each dataset position to its user_id.
+
+    Handles both plain ``ImputationDataset`` (positions == split-local
+    indices) and ``SubsetWithOriginalIndices`` (positions are subset
+    positions; subset map gives split-local).
+    """
+    if isinstance(dataset, SubsetWithOriginalIndices):
+        split_locals = dataset._subset_indices
+    elif isinstance(dataset, MultiDayImputationDataset):
+        # For multi-day windows, group by the user of the window's first
+        # real day. Multi-day support is a TODO under user-grouped batches;
+        # keep the same semantics until weekly imputers need this.
+        split_locals = [next((d for d in win if d != -1), 0) for win in dataset._windows]
+    else:
+        split_locals = list(range(len(dataset)))
+    return [hf_user_ids[split_local_to_hf[sl]] for sl in split_locals]
+
+
 class ImputationDataLoader:
     """Load and split daily HF dataset for imputation evaluation.
 
@@ -357,18 +445,20 @@ class ImputationDataLoader:
         all_users = list(np.unique(user_ids_arr))
         logger.info(f"Found {len(all_users)} unique users")
 
-        if self.config.split_file:
-            splits = load_split_file(Path(self.config.split_file))
-        else:
-            splits = random_split_users(
-                all_users,
-                self.config.train_ratio,
-                self.config.val_ratio,
-                self.config.split_seed,
+        if not self.config.split_file:
+            raise ValueError(
+                "DataConfig.split_file is required. The random-split fallback "
+                "has been removed because it produced different user splits per "
+                "run, silently breaking cross-pipeline comparisons. Point "
+                "split_file at the canonical sharable_users_seed42_2026 split "
+                "for your dataset version."
             )
+        splits = load_split_file(Path(self.config.split_file))
 
         train_indices = np.where(np.isin(user_ids_arr, np.array(list(splits["train"]))))[0].tolist()
-        val_indices = np.where(np.isin(user_ids_arr, np.array(list(splits["validation"]))))[0].tolist()
+        val_indices = np.where(np.isin(user_ids_arr, np.array(list(splits["validation"]))))[
+            0
+        ].tolist()
         test_indices = np.where(np.isin(user_ids_arr, np.array(list(splits["test"]))))[0].tolist()
 
         if self.config.max_samples_per_split:
@@ -424,39 +514,34 @@ class ImputationDataLoader:
         logger.info(f"Found {len(all_users)} unique users")
 
         # Create or load splits
-        if self.config.split_file:
-            split_path = Path(self.config.split_file)
-            logger.info(f"Loading user splits from {split_path}")
-            splits = load_split_file(split_path)
-            # Validate split ratios match config to catch silent mismatches
-            total = sum(len(v) for v in splits.values())
-            if total > 0:
-                actual_train = len(splits.get("train", set())) / total
-                actual_val = len(splits.get("validation", set())) / total
-                if abs(actual_train - self.config.train_ratio) > 0.05:
-                    raise ValueError(
-                        f"Split file train ratio ({actual_train:.2f}) differs from configured "
-                        f"train_ratio ({self.config.train_ratio}). Update the config or use a "
-                        f"different split file to ensure consistency across pipelines."
-                    )
-                if abs(actual_val - self.config.val_ratio) > 0.05:
-                    raise ValueError(
-                        f"Split file val ratio ({actual_val:.2f}) differs from configured "
-                        f"val_ratio ({self.config.val_ratio}). Update the config or use a "
-                        f"different split file to ensure consistency across pipelines."
-                    )
-        else:
-            logger.warning(
-                "No split_file provided — generating random split with "
-                f"train_ratio={self.config.train_ratio}, val_ratio={self.config.val_ratio}. "
-                "For reproducibility across pipelines, use a shared split file."
+        if not self.config.split_file:
+            raise ValueError(
+                "DataConfig.split_file is required. The random-split fallback "
+                "has been removed because it produced different user splits per "
+                "run, silently breaking cross-pipeline comparisons. Point "
+                "split_file at the canonical sharable_users_seed42_2026 split "
+                "for your dataset version."
             )
-            splits = random_split_users(
-                all_users,
-                self.config.train_ratio,
-                self.config.val_ratio,
-                self.config.split_seed,
-            )
+        split_path = Path(self.config.split_file)
+        logger.info(f"Loading user splits from {split_path}")
+        splits = load_split_file(split_path)
+        # Validate split ratios match config to catch silent mismatches
+        total = sum(len(v) for v in splits.values())
+        if total > 0:
+            actual_train = len(splits.get("train", set())) / total
+            actual_val = len(splits.get("validation", set())) / total
+            if abs(actual_train - self.config.train_ratio) > 0.05:
+                raise ValueError(
+                    f"Split file train ratio ({actual_train:.2f}) differs from configured "
+                    f"train_ratio ({self.config.train_ratio}). Update the config or use a "
+                    f"different split file to ensure consistency across pipelines."
+                )
+            if abs(actual_val - self.config.val_ratio) > 0.05:
+                raise ValueError(
+                    f"Split file val ratio ({actual_val:.2f}) differs from configured "
+                    f"val_ratio ({self.config.val_ratio}). Update the config or use a "
+                    f"different split file to ensure consistency across pipelines."
+                )
 
         # Build index mapping using vectorized numpy operations
         logger.info("Building sample indices per split...")
@@ -520,15 +605,27 @@ class ImputationDataLoader:
             )
 
             train_dataset = MultiDayImputationDataset(
-                ds, train_indices, train_windows, self._zero_to_nan_transform, n_days,
+                ds,
+                train_indices,
+                train_windows,
+                self._zero_to_nan_transform,
+                n_days,
                 day_offsets=train_offsets,
             )
             val_dataset = MultiDayImputationDataset(
-                ds, val_indices, val_windows, self._zero_to_nan_transform, n_days,
+                ds,
+                val_indices,
+                val_windows,
+                self._zero_to_nan_transform,
+                n_days,
                 day_offsets=val_offsets,
             )
             test_dataset = MultiDayImputationDataset(
-                ds, test_indices, test_windows, self._zero_to_nan_transform, n_days,
+                ds,
+                test_indices,
+                test_windows,
+                self._zero_to_nan_transform,
+                n_days,
                 day_offsets=test_offsets,
             )
         else:
@@ -605,6 +702,7 @@ class ImputationDataLoader:
         window_descriptors: dict[str, list[list[int]]] | None = None,
         window_day_offsets: dict[str, list[list[int]]] | None = None,
         applicable_indices: dict[str, set[int]] | None = None,
+        user_grouped_batches: bool = False,
     ) -> tuple[DataLoader, DataLoader]:
         """Create val/test DataLoaders for evaluation.
 
@@ -621,6 +719,12 @@ class ImputationDataLoader:
             applicable_indices: Optional dict mapping split name to set of split-local
                 indices that have at least one mask. When provided, wraps datasets in
                 SubsetWithOriginalIndices to skip unmasked samples.
+            user_grouped_batches: If True, wrap val/test loaders in a
+                ``UserGroupedBatchSampler`` so each batch's samples come
+                from one user (or a small packing of complete users).
+                Required by personalized imputers' lazy per-user state
+                to avoid thrashing. Defaults to False (today's HF-order
+                batches).
 
         Returns:
             Tuple of (val_loader, test_loader).
@@ -661,7 +765,9 @@ class ImputationDataLoader:
                 if n_days > 1 and window_descriptors is not None:
                     # Convert daily indices to window indices: include a window if
                     # any of its constituent days has a mask.
-                    daily_set = daily_indices if isinstance(daily_indices, set) else set(daily_indices)
+                    daily_set = (
+                        daily_indices if isinstance(daily_indices, set) else set(daily_indices)
+                    )
                     window_indices = []
                     for w_idx, window_desc in enumerate(window_descriptors[split_name]):
                         if any(d in daily_set for d in window_desc if d != -1):
@@ -678,31 +784,67 @@ class ImputationDataLoader:
         persistent = num_workers > 0
         prefetch = 2 if num_workers > 0 else None
 
-        val_loader = DataLoader(
-            val_dataset,
-            batch_size=batch_size,
-            shuffle=False,
-            num_workers=num_workers,
-            pin_memory=pin_memory,
-            persistent_workers=persistent,
-            prefetch_factor=prefetch,
-            drop_last=False,
-        )
+        if user_grouped_batches:
+            # Pre-extract the user_id column once for both samplers.
+            hf_user_ids = list(hf_dataset["user_id"])
+            val_sampler = UserGroupedBatchSampler(
+                _build_position_to_user(val_dataset, val_indices, hf_user_ids),
+                batch_size,
+            )
+            test_sampler = UserGroupedBatchSampler(
+                _build_position_to_user(test_dataset, test_indices, hf_user_ids),
+                batch_size,
+            )
+            val_loader = DataLoader(
+                val_dataset,
+                batch_sampler=val_sampler,
+                num_workers=num_workers,
+                pin_memory=pin_memory,
+                persistent_workers=persistent,
+                prefetch_factor=prefetch,
+            )
+            test_loader = DataLoader(
+                test_dataset,
+                batch_sampler=test_sampler,
+                num_workers=num_workers,
+                pin_memory=pin_memory,
+                persistent_workers=persistent,
+                prefetch_factor=prefetch,
+            )
+            logger.info(
+                "Created user-grouped eval DataLoaders: "
+                "val=%d batches, test=%d batches (batch_size_cap=%d, num_workers=%d)",
+                len(val_sampler),
+                len(test_sampler),
+                batch_size,
+                num_workers,
+            )
+        else:
+            val_loader = DataLoader(
+                val_dataset,
+                batch_size=batch_size,
+                shuffle=False,
+                num_workers=num_workers,
+                pin_memory=pin_memory,
+                persistent_workers=persistent,
+                prefetch_factor=prefetch,
+                drop_last=False,
+            )
 
-        test_loader = DataLoader(
-            test_dataset,
-            batch_size=batch_size,
-            shuffle=False,
-            num_workers=num_workers,
-            pin_memory=pin_memory,
-            persistent_workers=persistent,
-            prefetch_factor=prefetch,
-            drop_last=False,
-        )
+            test_loader = DataLoader(
+                test_dataset,
+                batch_size=batch_size,
+                shuffle=False,
+                num_workers=num_workers,
+                pin_memory=pin_memory,
+                persistent_workers=persistent,
+                prefetch_factor=prefetch,
+                drop_last=False,
+            )
 
-        logger.info(
-            f"Created eval DataLoaders with batch_size={batch_size}, "
-            f"num_workers={num_workers}, pin_memory={pin_memory}"
-        )
+            logger.info(
+                f"Created eval DataLoaders with batch_size={batch_size}, "
+                f"num_workers={num_workers}, pin_memory={pin_memory}"
+            )
 
         return val_loader, test_loader

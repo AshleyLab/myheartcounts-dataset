@@ -97,9 +97,7 @@ class IndexedWeekDataset:
         self._n_hours = window_size * HOURS_PER_DAY  # e.g. 168 for 7-day
 
         # Pre-convert row_indices to a list of lists for fast access
-        self._row_indices_list: list[list[int | None]] = list(
-            self.window_index["row_indices"]
-        )
+        self._row_indices_list: list[list[int | None]] = list(self.window_index["row_indices"])
 
         logger.info(
             "IndexedWeekDataset: %d windows, %d daily rows, window_size=%d",
@@ -173,8 +171,7 @@ class IndexedWeekDataset:
             return self.window_index["user_id"].tolist()
         if col in ("week_start", "window_start"):
             return [
-                self._normalise_week_start(ws)
-                for ws in self.window_index["window_start"].tolist()
+                self._normalise_week_start(ws) for ws in self.window_index["window_start"].tolist()
             ]
         if col == "n_data_days":
             return self.window_index["n_data_days"].tolist()
@@ -316,9 +313,7 @@ class IndexedWeekDataset:
             window_size=self.window_size,
         )
 
-    def filter_by_min_valid_days(
-        self, min_valid_days: int
-    ) -> IndexedWeekDataset:
+    def filter_by_min_valid_days(self, min_valid_days: int) -> IndexedWeekDataset:
         """Filter windows that don't meet the minimum data-days threshold.
 
         Uses the pre-computed ``n_data_days`` from the window index rather than

@@ -167,40 +167,20 @@
     "type": "continuous",
     "target": false
   },
-  "field_DiastolicBloodPressure": {
-    "type": "continuous",
-    "target": false
-  },
   "field_smokingHistory": {
     "type": "binary",
-    "target": false
-  },
-  "field_Gender": {
-    "type": "categorical",
     "target": false
   },
   "field_Ethnicity_heartage": {
     "type": "categorical",
     "target": false
   },
-  "field_Age_heartage": {
-    "type": "continuous",
-    "target": false
-  },
   "field_family_history": {
-    "type": "categorical",
-    "target": false
-  },
-  "field_heart_disease": {
-    "type": "categorical",
+    "type": "multi_categorical",
     "target": false
   },
   "field_medications_to_treat": {
-    "type": "categorical",
-    "target": false
-  },
-  "field_vascular": {
-    "type": "categorical",
+    "type": "multi_categorical",
     "target": false
   },
   "field_ethnicity": {
@@ -208,7 +188,7 @@
     "target": false
   },
   "field_race": {
-    "type": "categorical",
+    "type": "multi_categorical",
     "target": false
   },
   "field_education": {
@@ -229,10 +209,6 @@
   },
   "field_riskfactors4": {
     "type": "ordinal",
-    "target": false
-  },
-  "field_zip": {
-    "type": "categorical",
     "target": false
   },
   "field_country": {
@@ -260,11 +236,7 @@
     "target": false
   },
   "field_sleep_diagnosis2": {
-    "type": "categorical",
-    "target": false
-  },
-  "field_CurrentAge": {
-    "type": "continuous",
+    "type": "multi_categorical",
     "target": false
   },
   "field_GoSleepTime": {
@@ -279,12 +251,8 @@
     "type": "continuous",
     "target": false
   },
-  "field_BloodType": {
-    "type": "categorical",
-    "target": false
-  },
   "field_FitzpatrickSkinType": {
-    "type": "categorical",
+    "type": "ordinal",
     "target": false
   },
   "field_fish": {
@@ -300,7 +268,7 @@
     "target": false
   },
   "field_sodium": {
-    "type": "ordinal",
+    "type": "multi_categorical",
     "target": false
   },
   "field_sugar_drinks": {
@@ -367,10 +335,6 @@
     "type": "ordinal",
     "target": false
   },
-  "field_pastSmoking": {
-    "type": "ordinal",
-    "target": false
-  },
   "field_cannabisSmoking": {
     "type": "ordinal",
     "target": false
@@ -404,15 +368,15 @@
     "target": false
   },
   "field_tobaccoProducts": {
-    "type": "categorical",
+    "type": "multi_categorical",
     "target": false
   },
   "field_tobaccoProductsEver": {
-    "type": "categorical",
+    "type": "multi_categorical",
     "target": false
   },
   "field_labwork": {
-    "type": "binary",
+    "type": "categorical",
     "target": false
   },
   "field_device_iphone": {
@@ -615,10 +579,6 @@
     "type": "categorical",
     "target": false
   },
-  "field_blood_type_covid": {
-    "type": "ordinal",
-    "target": false
-  },
   "field_exposure": {
     "type": "ordinal",
     "target": false
@@ -633,18 +593,6 @@
   },
   "field_face_covering": {
     "type": "ordinal",
-    "target": false
-  },
-  "field_covid_relatives": {
-    "type": "binary",
-    "target": false
-  },
-  "field_icu_treated": {
-    "type": "binary",
-    "target": false
-  },
-  "field_ventilator": {
-    "type": "binary",
     "target": false
   },
   "field_days_admitted": {
@@ -689,6 +637,42 @@
   },
   "field_sleep_time_daily": {
     "type": "continuous",
+    "target": false
+  },
+  "field_everQuitSmokeless": {
+    "type": "binary",
+    "target": false
+  },
+  "field_durationQuitSmoking": {
+    "type": "categorical",
+    "target": false
+  },
+  "field_durationQuitVaping": {
+    "type": "categorical",
+    "target": false
+  },
+  "field_durationQuitSmokeless": {
+    "type": "categorical",
+    "target": false
+  },
+  "field_antibiotics": {
+    "type": "multi_categorical",
+    "target": false
+  },
+  "field_conditions": {
+    "type": "multi_categorical",
+    "target": false
+  },
+  "field_symptoms_past_week": {
+    "type": "multi_categorical",
+    "target": false
+  },
+  "field_symptoms_week_preceding": {
+    "type": "multi_categorical",
+    "target": false
+  },
+  "field_zip": {
+    "type": "categorical",
     "target": false
   }
 }

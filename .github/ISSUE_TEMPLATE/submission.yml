@@ -13,7 +13,7 @@ body:
         Metric definitions follow the paper (Section 4.4 / Appendix A):
 
         - **Skill Score (S)** = relative error reduction over the track baseline (Track 1: LINEAR; Track 2: LOCF; Track 3: Seasonal Naive). Reported as a **percentage**, e.g. `12.5` means +12.5 % (not `0.125`).
-        - **Fairness-adjusted Skill Score** = `S − λ·D̄`, where `D̄` is the mean of per-attribute disparities (one per sensitive attribute: age and sex), and each attribute's disparity is the max−min skill score across that attribute's groups (λ = 0.5).
+        - **Fairness Skill Score** = `1 − GeoMean_r(clip(D_j^{(G)} / D_b^{(G)}, 0.01, 100))`, computed analogously to the skill score but on subgroup-disparity values rather than raw errors: `D^{(G)}` = max−min error across the subgroups of sensitive attribute G (age, sex) on task r, with the baseline `D_b^{(G)}` taken from the same track baseline (Track 2: LOCF). The leaderboard reports the macro-average across attributes, as a percentage.
         - **Average Rank** = mean rank across sub-tasks (1 = best).
 
   - type: input
@@ -136,7 +136,10 @@ body:
         **Track 1:** AUPRC for binary outcomes, Spearman ρ for ordinal,
         R² for real-valued
 
-        **Track 2:** RMSE per continuous channel, ROC AUC per binary channel
+        **Track 2:** MAE per continuous channel (mean over users), ROC AUC
+        per binary channel (mean over users). nMAE / RMSE / nRMSE may be
+        included alongside MAE for reference but MAE is the leaderboard
+        metric (parity with Track 3).
 
         **Track 3:** MAE, MASE, QL, sQL for continuous channels;
         AUPRC, AUROC for binary channels

@@ -15,7 +15,6 @@ each group/user before model means and ranks are computed.
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import json
 import sys
 from pathlib import Path
@@ -29,85 +28,34 @@ SRC_ROOT = REPO_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-_CHANNEL_CONSTANTS_PATH = SRC_ROOT / "visualizations" / "constants.py"
-_CHANNEL_SPEC = importlib.util.spec_from_file_location(
-    "_forecasting_grouped_metric_channel_constants",
-    _CHANNEL_CONSTANTS_PATH,
-)
-if _CHANNEL_SPEC is None or _CHANNEL_SPEC.loader is None:
-    CHANNEL_INFO = {}
-else:
-    _channel_module = importlib.util.module_from_spec(_CHANNEL_SPEC)
-    _CHANNEL_SPEC.loader.exec_module(_channel_module)
-    CHANNEL_INFO = getattr(_channel_module, "CHANNEL_INFO", {})
+from forecasting_evaluation.metrics import metric_spec as _spec  # noqa: E402
 
-LOWER_IS_BETTER_METRICS = {"mae", "mse", "mase", "mase_all", "ql", "sql"}
-HIGHER_IS_BETTER_METRICS = {"f1", "auprc", "auroc"}
-DEFAULT_CONTINUOUS_CHANNELS = tuple(range(0, 7))
-DEFAULT_BINARY_GROUPS: tuple[tuple[str, tuple[int, ...]], ...] = (
-    ("sleep", (7, 8)),
-    ("workout", tuple(range(9, 19))),
-)
+CHANNEL_INFO = _spec.CHANNEL_INFO
+LOWER_IS_BETTER_METRICS = _spec.LOWER_IS_BETTER_METRICS
+HIGHER_IS_BETTER_METRICS = _spec.HIGHER_IS_BETTER_METRICS
+DEFAULT_CONTINUOUS_CHANNELS = _spec.CONTINUOUS_CHANNELS
+DEFAULT_BINARY_GROUPS = _spec.BINARY_GROUPS
 
 
-def _safe_read_parquet(file_path: str | Path, **kwargs: Any) -> pd.DataFrame | None:
-    path = Path(file_path)
-    try:
-        if not path.exists() or path.stat().st_size == 0:
-            return None
-        return pd.read_parquet(path, **kwargs)
-    except Exception:
-        return None
+_safe_read_parquet = _spec.safe_read_parquet
 
 
-def _list_parquet_files(path: str | Path) -> list[Path]:
-    root = Path(path)
-    if not root.exists():
-        return []
-    return sorted(root.rglob("*.parquet"))
+_list_parquet_files = _spec.list_parquet_files
 
 
-def _channel_label(channel_idx: int) -> str:
-    metadata = CHANNEL_INFO.get(int(channel_idx))
-    if metadata is None:
-        return f"Channel {channel_idx}"
-    return str(metadata["name"])
+_channel_label = _spec.channel_label
 
 
-def _metric_display_name(metric_name: str) -> str:
-    normalized = metric_name.strip().lower()
-    mapping = {
-        "mae": "MAE",
-        "mse": "MSE",
-        "mase": "MASE",
-        "mase_all": "MASE_all",
-        "ql": "QL",
-        "sql": "sQL",
-        "f1": "F1",
-        "auprc": "AUPRC",
-        "auroc": "AUROC",
-    }
-    return mapping.get(normalized, metric_name)
+_metric_display_name = _spec.metric_display_name
 
 
-def _metric_lower_is_better(metric_name: str) -> bool:
-    metric_key = metric_name.strip().lower()
-    if metric_key in LOWER_IS_BETTER_METRICS:
-        return True
-    if metric_key in HIGHER_IS_BETTER_METRICS:
-        return False
-    raise ValueError(
-        f"Unknown metric '{metric_name}'. Add it to lower- or higher-is-better sets."
-    )
+_metric_lower_is_better = _spec.metric_lower_is_better
 
 
-def _parse_channel_indices(raw_value: str | None, default: tuple[int, ...]) -> tuple[int, ...]:
-    if raw_value is None or not raw_value.strip():
-        return default
-    indices = [int(token.strip()) for token in raw_value.split(",") if token.strip()]
-    if not indices:
-        raise ValueError("At least one channel index must be provided.")
-    return tuple(indices)
+_parse_channel_indices = _spec.parse_channel_indices
+
+
+_metric_channel_sum_count = _spec.metric_channel_sum_count
 
 
 def _parse_group_arg(group_arg: str) -> tuple[str, tuple[int, ...]]:
@@ -232,24 +180,6 @@ def _safe_to_metric_array(value: Any) -> np.ndarray | None:
     return np.vstack([row[:min_len] for row in rows])
 
 
-def _metric_channel_value(metric: np.ndarray, channel_idx: int) -> tuple[float, int] | None:
-    if metric.ndim == 1:
-        if channel_idx >= metric.shape[0]:
-            return None
-        value = float(metric[channel_idx])
-        if not np.isfinite(value):
-            return None
-        return value, 1
-
-    if channel_idx >= metric.shape[0]:
-        return None
-    values = metric[channel_idx]
-    finite_values = values[np.isfinite(values)]
-    if finite_values.size == 0:
-        return None
-    return float(np.mean(finite_values)), int(finite_values.size)
-
-
 def _load_channel_user_metrics(
     *,
     model_name: str,
@@ -257,11 +187,12 @@ def _load_channel_user_metrics(
     metric_name: str,
     channel_indices: tuple[int, ...],
     scope_type: str,
+    within_user_aggregation: str = "micro",
 ) -> pd.DataFrame:
     metric_dir = Path(model_root) / metric_name
     rows: list[dict[str, Any]] = []
-    per_user_values: dict[tuple[str, int], list[float]] = {}
-    per_user_counts: dict[tuple[str, int], int] = {}
+    # Per (user, channel): one (cell_sum, cell_count) pair per window.
+    per_user_pairs: dict[tuple[str, int], list[tuple[float, int]]] = {}
 
     for parquet_file in _list_parquet_files(metric_dir):
         df = _safe_read_parquet(parquet_file, columns=["user_id", metric_name])
@@ -273,20 +204,19 @@ def _load_channel_user_metrics(
             if metric is None:
                 continue
             for channel_idx in channel_indices:
-                collapsed = _metric_channel_value(metric=metric, channel_idx=channel_idx)
-                if collapsed is None:
+                sum_count = _metric_channel_sum_count(metric=metric, channel_idx=channel_idx)
+                if sum_count is None:
                     continue
-                metric_value, n_values = collapsed
-                per_user_values.setdefault((user_id, int(channel_idx)), []).append(metric_value)
-                per_user_counts[(user_id, int(channel_idx))] = (
-                    per_user_counts.get((user_id, int(channel_idx)), 0) + int(n_values)
-                )
+                per_user_pairs.setdefault((user_id, int(channel_idx)), []).append(sum_count)
 
-    for (user_id, channel_idx), values in per_user_values.items():
-        finite_values = np.asarray(values, dtype=float)
-        finite_values = finite_values[np.isfinite(finite_values)]
-        if finite_values.size == 0:
+    for (user_id, channel_idx), pairs in per_user_pairs.items():
+        total_count = int(sum(cell_count for _, cell_count in pairs))
+        if total_count == 0:
             continue
+        if within_user_aggregation == "macro":
+            metric_value = float(np.mean([cell_sum / cell_count for cell_sum, cell_count in pairs]))
+        else:
+            metric_value = float(sum(cell_sum for cell_sum, _ in pairs)) / total_count
         rows.append(
             {
                 "model": model_name,
@@ -297,8 +227,8 @@ def _load_channel_user_metrics(
                 "metric_display": _metric_display_name(metric_name),
                 "channel_idx": int(channel_idx),
                 "user_id": user_id,
-                "metric_value": float(np.mean(finite_values)),
-                "n_values": int(per_user_counts.get((user_id, channel_idx), finite_values.size)),
+                "metric_value": metric_value,
+                "n_values": total_count,
             }
         )
 
@@ -310,7 +240,15 @@ def _build_continuous_user_rows(
     models: dict[str, dict[str, str]],
     metrics: list[str],
     channel_indices: tuple[int, ...],
+    within_user_aggregation: str = "micro",
+    groups: list[tuple[str, tuple[int, ...]]] | None = None,
 ) -> pd.DataFrame:
+    # Device-pair scopes (steps, distance) aggregate their per-channel rows the
+    # same way binary groups (sleep/workout) do, giving per-task device pairs a
+    # group-level rank scope. Defaults to metric_spec.CONTINUOUS_GROUPS.
+    continuous_groups = (
+        [(name, tuple(idx)) for name, idx in _spec.CONTINUOUS_GROUPS] if groups is None else groups
+    )
     frames: list[pd.DataFrame] = []
     for model_name, model_spec in models.items():
         for metric_name in metrics:
@@ -320,9 +258,44 @@ def _build_continuous_user_rows(
                 metric_name=metric_name,
                 channel_indices=channel_indices,
                 scope_type="continuous_channel",
+                within_user_aggregation=within_user_aggregation,
             )
-            if not frame.empty:
-                frames.append(frame)
+            if frame.empty:
+                continue
+            frames.append(frame)
+            for group_name, group_channels in continuous_groups:
+                if not set(group_channels).issubset(set(channel_indices)):
+                    continue
+                group_slice = frame.loc[frame["channel_idx"].isin(group_channels)].copy()
+                if group_slice.empty:
+                    continue
+                grouped = group_slice.groupby(
+                    ["model", "user_id", "metric", "metric_display"],
+                    as_index=False,
+                ).agg(
+                    metric_value=("metric_value", "mean"),
+                    n_values=("n_values", "sum"),
+                )
+                grouped["scope_type"] = "continuous_group"
+                grouped["scope"] = group_name
+                grouped["scope_label"] = group_name
+                grouped["channel_idx"] = -1
+                frames.append(
+                    grouped[
+                        [
+                            "model",
+                            "scope_type",
+                            "scope",
+                            "scope_label",
+                            "metric",
+                            "metric_display",
+                            "channel_idx",
+                            "user_id",
+                            "metric_value",
+                            "n_values",
+                        ]
+                    ]
+                )
     if not frames:
         return pd.DataFrame()
     return pd.concat(frames, ignore_index=True)
@@ -333,6 +306,7 @@ def _build_binary_user_rows(
     models: dict[str, dict[str, str]],
     metrics: list[str],
     groups: list[tuple[str, tuple[int, ...]]],
+    within_user_aggregation: str = "micro",
 ) -> pd.DataFrame:
     frames: list[pd.DataFrame] = []
     all_binary_channels = tuple(sorted({idx for _, indices in groups for idx in indices}))
@@ -344,24 +318,25 @@ def _build_binary_user_rows(
                 metric_name=metric_name,
                 channel_indices=all_binary_channels,
                 scope_type="binary_channel",
+                within_user_aggregation=within_user_aggregation,
             )
             if channel_rows.empty:
                 continue
+            # Emit the per-binary-channel rows (channels 7-18 individually) for
+            # ranking, alongside the sleep/workout group rows built below.
+            frames.append(channel_rows)
             for group_name, channel_indices in groups:
                 group_slice = channel_rows.loc[
                     channel_rows["channel_idx"].isin(channel_indices)
                 ].copy()
                 if group_slice.empty:
                     continue
-                grouped = (
-                    group_slice.groupby(
-                        ["model", "user_id", "metric", "metric_display"],
-                        as_index=False,
-                    )
-                    .agg(
-                        metric_value=("metric_value", "mean"),
-                        n_values=("n_values", "sum"),
-                    )
+                grouped = group_slice.groupby(
+                    ["model", "user_id", "metric", "metric_display"],
+                    as_index=False,
+                ).agg(
+                    metric_value=("metric_value", "mean"),
+                    n_values=("n_values", "sum"),
                 )
                 grouped["scope_type"] = "binary_group"
                 grouped["scope"] = group_name
@@ -415,10 +390,121 @@ def _compute_mean_ranks(user_metric_df: pd.DataFrame) -> pd.DataFrame:
     if not rank_rows:
         return pd.DataFrame(columns=["scope", "metric", "model", "rank", "rank_n_users"])
     rank_all = pd.concat(rank_rows, ignore_index=True)
-    return (
-        rank_all.groupby(["scope", "metric", "model"], as_index=False)
-        .agg(rank=("rank", "mean"), rank_n_users=("user_id", "nunique"))
+    return rank_all.groupby(["scope", "metric", "model"], as_index=False).agg(
+        rank=("rank", "mean"), rank_n_users=("user_id", "nunique")
     )
+
+
+def _compute_category_balanced_ranks(user_metric_df: pd.DataFrame) -> pd.DataFrame:
+    """Category-balanced ranks: the 4 sensor-category scopes + the ``overall`` headline.
+
+    Mean-of-ranks, users-first — mirrors the canonical imputation track
+    (``imputation_evaluation`` ``_average_rankings_per_user`` +
+    ``aggregate_task_ranks_to_scopes`` on the ``feature/imputation-eval-impl`` branch,
+    minus its extra scenario level) and forecasting's own skill-overall user-first
+    collapse. Uses the per-channel rows
+    (``scope_type in {continuous_channel, binary_channel}``):
+
+    Stage 0 (leaf, users-first): for each ``(category scope, metric, channel)`` rank
+    models within each user (scale-free, so MAE and AUROC are comparable once ranked),
+    then collapse users into one ``task_rank`` per ``(model, category scope, metric,
+    channel)`` (mean over users) — identical to the per-channel scope ranks
+    ``_compute_mean_ranks`` produces.
+
+    Category rows: average the per-channel task ranks within each ``(category scope,
+    metric)`` (one row per configured metric; default activity/physiology→mae,
+    sleep/workout→auroc).
+
+    Overall row: collapse metrics+channels within each category first (so a category is
+    one voice regardless of its channel/metric count), then average the (<=4) categories
+    equally — what stops the 10 workout channels dominating. ``rank_n_users`` is carried
+    as the max over tasks-in-scope, mirroring imputation's ``aggregate_task_ranks_to_scopes``.
+
+    Returns ``[scope, metric, model, rank, rank_n_users]`` — category scopes
+    (activity/physiology/sleep/workout, ``metric`` = the configured metric) plus a
+    synthetic ``scope == metric == "overall"`` row; the same shape as
+    ``_compute_mean_ranks`` so callers concat it.
+    """
+    out_cols = ["scope", "metric", "model", "rank", "rank_n_users"]
+    if user_metric_df.empty:
+        return pd.DataFrame(columns=out_cols)
+    df = user_metric_df.loc[
+        user_metric_df["scope_type"].isin(("continuous_channel", "binary_channel"))
+        & (user_metric_df["channel_idx"] >= 0)
+        & np.isfinite(user_metric_df["metric_value"])
+    ].copy()
+    if df.empty:
+        return pd.DataFrame(columns=out_cols)
+    df["cat_scope"] = df["channel_idx"].map(_spec.category_scope_for_channel)
+    df = df[df["cat_scope"].notna()]
+    if df.empty:
+        return pd.DataFrame(columns=out_cols)
+
+    # Stage 0: per-user model ranks for each (cat_scope, metric, channel) task.
+    rank_rows: list[pd.DataFrame] = []
+    for (cat_scope, metric_name, channel_idx), grp in df.groupby(
+        ["cat_scope", "metric", "channel_idx"], sort=True
+    ):
+        pivot = grp.pivot(index="user_id", columns="model", values="metric_value")
+        if pivot.empty:
+            continue
+        ranks = pivot.rank(axis=1, method="average", ascending=_metric_lower_is_better(metric_name))
+        long_rank = ranks.stack(future_stack=True).reset_index()
+        long_rank.columns = ["user_id", "model", "rank"]
+        long_rank["cat_scope"] = cat_scope
+        long_rank["metric"] = metric_name
+        long_rank["channel_idx"] = channel_idx
+        rank_rows.append(long_rank)
+    if not rank_rows:
+        return pd.DataFrame(columns=out_cols)
+    ranks_all = pd.concat(rank_rows, ignore_index=True)
+
+    # Collapse users -> one task_rank per (model, cat_scope, metric, channel).
+    task = ranks_all.groupby(["model", "cat_scope", "metric", "channel_idx"], as_index=False).agg(
+        rank=("rank", "mean"), task_n_users=("user_id", "nunique")
+    )
+
+    # Category rows: mean of per-channel task ranks within (cat_scope, metric).
+    category = (
+        task.groupby(["model", "cat_scope", "metric"], as_index=False)
+        .agg(rank=("rank", "mean"), rank_n_users=("task_n_users", "max"))
+        .rename(columns={"cat_scope": "scope"})
+    )
+
+    # Overall row: collapse metrics+channels within each category, then 4-way mean.
+    cat_val = task.groupby(["model", "cat_scope"], as_index=False)["rank"].mean()
+    overall = cat_val.groupby("model", as_index=False).agg(rank=("rank", "mean"))
+    overall_n_users = task.groupby("model", as_index=False).agg(
+        rank_n_users=("task_n_users", "max")
+    )
+    overall = overall.merge(overall_n_users, on="model", how="left")
+    overall["scope"] = "overall"
+    overall["metric"] = "overall"
+
+    return pd.concat([category[out_cols], overall[out_cols]], ignore_index=True)
+
+
+def _compute_all_ranks(user_metric_df: pd.DataFrame) -> pd.DataFrame:
+    """Per-channel scope ranks + the category-balanced (category + overall) ranks.
+
+    Shared by the point flow (``_build_summary_tables``) and the bootstrap so both
+    produce identical rank rows (identity-draw == point). Per-channel ranks come from
+    the unchanged ``_compute_mean_ranks`` (run on the per-channel rows only); the 4
+    category scopes + overall come from ``_compute_category_balanced_ranks``
+    (mean-of-ranks, users-first).
+    """
+    out_cols = ["scope", "metric", "model", "rank", "rank_n_users"]
+    if user_metric_df.empty:
+        return pd.DataFrame(columns=out_cols)
+    per_channel = user_metric_df.loc[
+        user_metric_df["scope_type"].isin(("continuous_channel", "binary_channel"))
+    ]
+    channel_ranks = _compute_mean_ranks(user_metric_df=per_channel)
+    cat_overall = _compute_category_balanced_ranks(user_metric_df=user_metric_df)
+    frames = [frame for frame in (channel_ranks, cat_overall) if not frame.empty]
+    if not frames:
+        return pd.DataFrame(columns=out_cols)
+    return pd.concat(frames, ignore_index=True)
 
 
 def _build_summary_tables(
@@ -443,18 +529,40 @@ def _build_summary_tables(
         return pd.DataFrame(columns=long_columns), pd.DataFrame(columns=["scope_type", "scope"])
 
     finite_df = user_metric_df.loc[np.isfinite(user_metric_df["metric_value"])].copy()
-    metric_means = (
-        finite_df.groupby(
-            ["scope_type", "scope", "scope_label", "metric", "metric_display", "model"],
-            as_index=False,
-        )
-        .agg(
-            metric_mean=("metric_value", "mean"),
-            n_users=("user_id", "nunique"),
-            n_values=("n_values", "sum"),
-        )
+    metric_means = finite_df.groupby(
+        ["scope_type", "scope", "scope_label", "metric", "metric_display", "model"],
+        as_index=False,
+    ).agg(
+        metric_mean=("metric_value", "mean"),
+        n_users=("user_id", "nunique"),
+        n_values=("n_values", "sum"),
     )
-    rank_df = _compute_mean_ranks(user_metric_df=user_metric_df)
+    rank_df = _compute_all_ranks(user_metric_df=user_metric_df)
+    overall_rank_df = rank_df[rank_df["scope"] == "overall"].copy()
+    if not overall_rank_df.empty:
+        # The overall scope has no single metric value; add NaN-metric mean rows so
+        # the left-merge keeps the overall rank in the long/wide tables.
+        overall_means = overall_rank_df.assign(
+            scope_type="overall",
+            scope_label="overall",
+            metric_display="overall",
+            metric_mean=np.nan,
+            n_users=overall_rank_df["rank_n_users"],
+            n_values=0,
+        )[
+            [
+                "scope_type",
+                "scope",
+                "scope_label",
+                "metric",
+                "metric_display",
+                "model",
+                "metric_mean",
+                "n_users",
+                "n_values",
+            ]
+        ]
+        metric_means = pd.concat([metric_means, overall_means], ignore_index=True)
     long_df = metric_means.merge(rank_df, on=["scope", "metric", "model"], how="left")
     model_order = list(models.keys())
     long_df["model"] = pd.Categorical(long_df["model"], categories=model_order, ordered=True)
@@ -490,17 +598,22 @@ def build_grouped_metric_rank_tables(
     binary_metrics: list[str],
     continuous_channel_indices: tuple[int, ...],
     binary_groups: list[tuple[str, tuple[int, ...]]],
+    within_user_aggregation: str = "micro",
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Build user-level, long, and wide grouped metric rank tables."""
+    if within_user_aggregation not in {"micro", "macro"}:
+        raise ValueError("--within-user-aggregation must be either 'micro' or 'macro'")
     continuous_user = _build_continuous_user_rows(
         models=models,
         metrics=[metric.strip().lower() for metric in continuous_metrics if metric.strip()],
         channel_indices=continuous_channel_indices,
+        within_user_aggregation=within_user_aggregation,
     )
     binary_user = _build_binary_user_rows(
         models=models,
         metrics=[metric.strip().lower() for metric in binary_metrics if metric.strip()],
         groups=binary_groups,
+        within_user_aggregation=within_user_aggregation,
     )
     frames = [frame for frame in [continuous_user, binary_user] if not frame.empty]
     if frames:
@@ -549,6 +662,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Binary group mapping GROUP=idx,idx. Defaults to sleep=7,8 and workout=9-18.",
     )
     parser.add_argument(
+        "--within-user-aggregation",
+        choices=["micro", "macro"],
+        default="micro",
+        help=(
+            "How to combine a user's prediction windows per channel: 'micro' weights "
+            "each window by its finite horizon-cell count; 'macro' averages per-window "
+            "means unweighted (legacy). The cross-channel group fold is unaffected."
+        ),
+    )
+    parser.add_argument(
         "--output-dir",
         default="results/metrics_summary",
         help="Directory for generated CSV files.",
@@ -577,6 +700,7 @@ def main() -> None:
         binary_metrics=list(args.binary_metrics),
         continuous_channel_indices=continuous_channel_indices,
         binary_groups=binary_groups,
+        within_user_aggregation=str(args.within_user_aggregation),
     )
 
     output_dir = Path(args.output_dir)
@@ -600,6 +724,7 @@ def main() -> None:
     print(f"Continuous metrics: {args.continuous_metrics}")
     print(f"Binary groups: {binary_groups}")
     print(f"Binary metrics: {args.binary_metrics}")
+    print(f"Within-user aggregation: {args.within_user_aggregation}")
 
 
 if __name__ == "__main__":

@@ -12,6 +12,11 @@ import numpy as np
 class SubTrajectoryInput:
     """Container for a single forecasting sub-trajectory.
 
+    .. deprecated::
+        Produced only by the deprecated :class:`SubTrajectoryGenerator`. The
+        evaluation main path no longer builds this container; it slices windows
+        directly from the raw ``history_cf`` cache. Kept for reference only.
+
     Attributes:
         history: Historical target values with shape (n_features, history_length).
         history_mask: Optional observed-value mask for history with shape

@@ -15,21 +15,61 @@ from typing import Any
 
 import pandas as pd
 
-DATA_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "labels"
-LABELS_PATH = Path(os.getenv("LABELS_DATA_PATH", DATA_DIR / "last_labels.json"))
-CONTEXT_LABELS_PATH = Path(
-    os.getenv("CONTEXT_LABELS_PATH", DATA_DIR / "context_labels.json")
+from openmhc._dataset import bundled_metadata_dir as _bundled_metadata_dir
+from openmhc._dataset import data_dir as _resolve_dataset_root
+
+BUNDLED_METADATA_DIR = _bundled_metadata_dir()
+DATA_DIR = BUNDLED_METADATA_DIR
+
+
+def _normalize_path(path: str | Path) -> Path:
+    return Path(path).expanduser().resolve()
+
+
+def _resolve_bundled_metadata_path(env_var: str, filename: str) -> Path:
+    override = os.getenv(env_var)
+    if override:
+        return _normalize_path(override)
+    return (BUNDLED_METADATA_DIR / filename).resolve()
+
+
+def _resolve_dataset_payload_path(env_var: str, filename: str) -> Path | None:
+    override = os.getenv(env_var)
+    if override:
+        return _normalize_path(override)
+    try:
+        root = _resolve_dataset_root()
+    except ValueError:
+        return None
+    return root / "labels" / filename
+
+
+def _require_dataset_payload_path(
+    path: Path | None,
+    *,
+    env_var: str,
+    filename: str,
+) -> Path:
+    if path is not None:
+        return path
+    raise ValueError(
+        f"OpenMHC dataset root is required to resolve labels/{filename}. "
+        f"Expected this file under <dataset_root>/labels/{filename}. "
+        f"Set `{env_var}` directly, pass `data_dir=` / `dest=`, or set `MHC_DATA_DIR`."
+    )
+
+
+LABELS_PATH = _resolve_dataset_payload_path("LABELS_DATA_PATH", "last_labels.json")
+CONTEXT_LABELS_PATH = _resolve_dataset_payload_path("CONTEXT_LABELS_PATH", "context_labels.json")
+ORDINAL_DICTIONARY_PATH = _resolve_bundled_metadata_path(
+    "ORDINAL_DICTIONARY_PATH", "ordinal_dictionary.json"
 )
-ORDINAL_DICTIONARY_PATH = Path(
-    os.getenv("ORDINAL_DICTIONARY_PATH", DATA_DIR / "ordinal_dictionary.json")
-)
-ENROLLMENT_PATH = Path(os.getenv("ENROLLMENT_DATA_PATH", DATA_DIR / "enrollment_info.json"))
-LABEL_TYPES_PATH = Path(os.getenv("LABEL_TYPES_PATH", DATA_DIR / "label_types.json"))
-LABEL_VALIDITY_PATH = Path(
-    os.getenv("LABEL_VALIDITY_PATH", DATA_DIR / "label_validity.json")
-)
-HEALTHKIT_DAILY_PATH = Path(
-    os.getenv("HEALTHKIT_DAILY_PATH", DATA_DIR / "healthkit_daily.json")
+ENROLLMENT_PATH = _resolve_dataset_payload_path("ENROLLMENT_DATA_PATH", "enrollment_info.json")
+LABEL_TYPES_PATH = _resolve_bundled_metadata_path("LABEL_TYPES_PATH", "label_types.json")
+LABEL_VALIDITY_PATH = _resolve_dataset_payload_path("LABEL_VALIDITY_PATH", "label_validity.json")
+HEALTHKIT_DAILY_PATH = _resolve_dataset_payload_path("HEALTHKIT_DAILY_PATH", "healthkit_daily.json")
+VALIDITY_CONFIG_PATH = _resolve_bundled_metadata_path(
+    "VALIDITY_CONFIG_PATH", "validity_config.json"
 )
 
 
@@ -213,26 +253,20 @@ def _to_tuple_of_int(value: Any, label: str) -> tuple[int, ...]:
     """
     if not isinstance(value, (list, tuple)):
         raise LabelTypeError(
-            f"multi_categorical label '{label}' expects list/tuple, "
-            f"got {type(value).__name__}"
+            f"multi_categorical label '{label}' expects list/tuple, got {type(value).__name__}"
         )
     if len(value) == 0:
-        raise LabelTypeError(
-            f"multi_categorical label '{label}' has empty selection"
-        )
+        raise LabelTypeError(f"multi_categorical label '{label}' has empty selection")
     coerced: list[int] = []
     for elem in value:
         if isinstance(elem, bool):
-            raise LabelTypeError(
-                f"multi_categorical '{label}' element is bool: {elem!r}"
-            )
+            raise LabelTypeError(f"multi_categorical '{label}' element is bool: {elem!r}")
         if isinstance(elem, int):
             coerced.append(elem)
         elif isinstance(elem, float):
             if not elem.is_integer():
                 raise LabelTypeError(
-                    f"multi_categorical '{label}' element is non-integer "
-                    f"float: {elem}"
+                    f"multi_categorical '{label}' element is non-integer float: {elem}"
                 )
             coerced.append(int(elem))
         else:
@@ -354,8 +388,7 @@ class LabelSeries:
         """
         if aggregation not in _VALID_AGGREGATIONS:
             raise ValueError(
-                f"Unknown aggregation '{aggregation}', "
-                f"expected one of {_VALID_AGGREGATIONS}"
+                f"Unknown aggregation '{aggregation}', expected one of {_VALID_AGGREGATIONS}"
             )
         if not self.timestamps_ns:
             raise KeyError("No timestamps available for windowed query")
@@ -494,8 +527,8 @@ class LabelsStore:
 
     def __init__(
         self,
-        labels_path: Path,
-        enrollment_path: Path,
+        labels_path: Path | None,
+        enrollment_path: Path | None,
         validity_path: Path | None = None,
         healthkit_daily_path: Path | None = None,
         context_labels_path: Path | None = None,
@@ -534,11 +567,14 @@ class LabelsStore:
         ``last_labels.json`` takes precedence.
         """
         if self._labels_index is None:
-            index = _load_labels(self.labels_path)
-            if (
-                self.context_labels_path is not None
-                and self.context_labels_path.exists()
-            ):
+            index = _load_labels(
+                _require_dataset_payload_path(
+                    self.labels_path,
+                    env_var="LABELS_DATA_PATH",
+                    filename="last_labels.json",
+                )
+            )
+            if self.context_labels_path is not None and self.context_labels_path.exists():
                 ctx = _load_labels(self.context_labels_path)
                 for label, per_user in ctx.items():
                     if label not in index:
@@ -559,7 +595,15 @@ class LabelsStore:
             EnrollmentIndex containing enrollment data.
         """
         if self._enrollment is None:
-            self._enrollment = EnrollmentIndex(_load_enrollment(self.enrollment_path))
+            self._enrollment = EnrollmentIndex(
+                _load_enrollment(
+                    _require_dataset_payload_path(
+                        self.enrollment_path,
+                        env_var="ENROLLMENT_DATA_PATH",
+                        filename="enrollment_info.json",
+                    )
+                )
+            )
         return self._enrollment
 
     @property
@@ -569,13 +613,8 @@ class LabelsStore:
         Returns None if healthkit_daily.json does not exist.
         """
         if self._daily_index is None:
-            if (
-                self.healthkit_daily_path is not None
-                and self.healthkit_daily_path.exists()
-            ):
-                self._daily_index = LabelsIndex(
-                    _load_labels(self.healthkit_daily_path)
-                )
+            if self.healthkit_daily_path is not None and self.healthkit_daily_path.exists():
+                self._daily_index = LabelsIndex(_load_labels(self.healthkit_daily_path))
         return self._daily_index
 
     def _ensure_validity_loaded(self) -> None:
@@ -840,8 +879,11 @@ def get_labels_one_hot(
             f"got '{label}' (type={LABEL_TYPES.get(label)!r})"
         )
     selected = get_labels(
-        health_code, timestamp, label,
-        enforce_type=True, return_valid_only=return_valid_only,
+        health_code,
+        timestamp,
+        label,
+        enforce_type=True,
+        return_valid_only=return_valid_only,
     ).value
     if options is None:
         ord_dict = _load_ordinal_dictionary(ORDINAL_DICTIONARY_PATH)
@@ -876,10 +918,15 @@ def get_labels_count(
             f"get_labels_count only supports multi_categorical labels, "
             f"got '{label}' (type={LABEL_TYPES.get(label)!r})"
         )
-    return len(get_labels(
-        health_code, timestamp, label,
-        enforce_type=True, return_valid_only=return_valid_only,
-    ).value)
+    return len(
+        get_labels(
+            health_code,
+            timestamp,
+            label,
+            enforce_type=True,
+            return_valid_only=return_valid_only,
+        ).value
+    )
 
 
 def get_labels_contains(
@@ -911,8 +958,11 @@ def get_labels_contains(
             f"got '{label}' (type={LABEL_TYPES.get(label)!r})"
         )
     selected = get_labels(
-        health_code, timestamp, label,
-        enforce_type=True, return_valid_only=return_valid_only,
+        health_code,
+        timestamp,
+        label,
+        enforce_type=True,
+        return_valid_only=return_valid_only,
     ).value
     return option in selected
 
@@ -923,7 +973,13 @@ def get_labels_statistics() -> pd.DataFrame:
     For each label, includes: data type, min value, max value, median value,
     and count of unique values.
     """
-    labels_data = _load_labels(LABELS_PATH)
+    labels_data = _load_labels(
+        _require_dataset_payload_path(
+            LABELS_PATH,
+            env_var="LABELS_DATA_PATH",
+            filename="last_labels.json",
+        )
+    )
     stats_data = []
 
     for label in sorted(LABEL_NAMES):

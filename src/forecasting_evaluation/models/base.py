@@ -1,81 +1,38 @@
-"""Base protocol for forecasting models."""
+"""Base class for forecasting models — the unified Forecaster contract.
+
+Forecasting models implement a single method::
+
+    def predict(self, history, horizon, *, <optional declared kwargs>)
+        -> np.ndarray | tuple[np.ndarray, np.ndarray | None]
+
+where ``history`` is the **full-prefix** window of shape
+``(n_channels, history_length)`` (data-quality-filtered, may contain NaN and may
+be shorter than any fixed context the model wants), ``horizon`` is the number of
+future hours, and the return is the point forecast ``(n_channels, horizon)`` —
+optionally a ``(point, quantiles)`` tuple. A model MUST emit ``NaN`` for any
+window/channel/timestep it cannot predict; the harness never drops a window for
+model-capability reasons (it substitutes the Seasonal-Naive baseline for NaN
+positions and reports how often that happened).
+
+Inheritance is **not** required: the evaluator duck-types ``predict`` and uses
+``inspect.signature`` to forward only the optional metadata kwargs a model
+declares (e.g. ``variable_names``, ``past_covariates``, ``future_covariates``,
+``index_days``). This base only offers conveniences: a default no-op ``reset()``
+(called once per user to clear cross-user state) and the optional ``model_name``
+/ ``quantile_levels`` attributes the evaluator reads via ``getattr``.
+"""
 
 from __future__ import annotations
 
-import time
-import tracemalloc
-from abc import ABC, abstractmethod
-
 import numpy as np
 
-from forecasting_evaluation.data.types import SubTrajectoryInput
 
+class BasePredictionModel:
+    """Optional convenience base for forecasting models (see module docstring)."""
 
-class BasePredictionModel(ABC):
-    """Protocol for Base Prediction Models."""
-    model_name: str  # Optional name attribute for model instance (e.g. "ARIMA")
+    model_name: str = ""
     quantile_levels: np.ndarray | None = None
-    
-    @abstractmethod
-    def predict(
-        self,
-        inputs: SubTrajectoryInput,
-    ) -> tuple[np.ndarray | None, np.ndarray | None]:
-        """Predict future values for given time series data.
-
-        Args:
-            inputs: Typed forecasting sub-trajectory input containing target,
-                covariates, horizon, and metadata.
-
-        Returns:
-            Tuple of:
-                - point forecast of shape (n_features, prediction_length), or None.
-                - quantile forecast of shape (n_features, prediction_length, n_quantiles), or None.
-        """
-        pass
 
     def reset(self) -> None:
-        """Reset model state if applicable (e.g. for stateful models)."""
+        """Reset model state between users if applicable (default: no-op)."""
         pass
-
-    def predict_wrapper(
-        self,
-        inputs: SubTrajectoryInput
-    ) -> tuple[np.ndarray | None, np.ndarray | None, dict]:
-        """Wrapper around predict() that handles performance tracking.
-        
-        This method:
-        1. Starts performance tracking (time and memory)
-        2. Calls the model's predict() method
-        3. Collects performance metrics
-        4. Returns predictions along with performance metadata
-        
-        Args:
-            inputs: Typed forecasting sub-trajectory input.
-            
-        Returns:
-            Tuple of:
-                - point forecast of shape (n_features, prediction_length), or None.
-                - quantile forecast of shape (n_features, prediction_length, n_quantiles), or None.
-                - base_result: dict with total performance metrics for this prediction call:
-                    - 'prediction_time_seconds': total prediction wall time in seconds
-                    - 'memory_usage_mb': total peak traced memory in MB
-        """
-        # Start performance tracking
-        tracemalloc.start()
-        start_time = time.time()
-        
-        # Call model's predict method
-        point_result, quantiles_result = self.predict(inputs)
-        
-        # Collect performance metrics
-        prediction_time = time.time() - start_time
-        _current_mem, peak_mem = tracemalloc.get_traced_memory()
-        tracemalloc.stop()
-        
-        base_result = {
-            "prediction_time_seconds": float(prediction_time),
-            "memory_usage_mb": float(peak_mem / 1024 / 1024),
-        }
-
-        return point_result, quantiles_result, base_result

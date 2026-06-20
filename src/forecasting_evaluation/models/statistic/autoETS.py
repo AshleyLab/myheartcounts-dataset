@@ -12,39 +12,36 @@ try:
 except ImportError:  # pragma: no cover - optional dependency in some envs
     ConvergenceWarning = Warning
 
-from forecasting_evaluation.data.types import SubTrajectoryInput
 from forecasting_evaluation.models.base import BasePredictionModel
 
-SEASONAL_CYCLE_ERROR_MSG = (
-    "Cannot compute initial seasonals using heuristic method with less than two full seasonal cycles in the data."
-)
+SEASONAL_CYCLE_ERROR_MSG = "Cannot compute initial seasonals using heuristic method with less than two full seasonal cycles in the data."
 MLE_CONVERGENCE_MSG = "Maximum Likelihood optimization failed to converge"
 
 
 class AutoETSModel(BasePredictionModel):
     """AutoETS forecasting model using sktime.
-    
+
     This model uses Exponential Smoothing (ETS) framework to automatically
     select the best combination of Error, Trend, and Seasonality components
     via information criteria (AIC/BIC/AICc). For multivariate time series,
     it fits a separate model for each feature.
-    
+
     Note: Since sktime's AutoETS doesn't have true incremental update,
     this model refits on all historical data each time.
     """
-    
+
     def __init__(
-            self, 
-            seed: int = 42,
-            auto: bool = True,
-            sp: int = 24,
-            information_criterion: str = "aic",
-            n_jobs: int = -1,
-            max_history_length: int | None = None,
-            quantile_levels: tuple[float, ...] = (0.1, 0.5, 0.9),
-        ):
+        self,
+        seed: int = 42,
+        auto: bool = True,
+        sp: int = 24,
+        information_criterion: str = "aic",
+        n_jobs: int = -1,
+        max_history_length: int | None = None,
+        quantile_levels: tuple[float, ...] = (0.1, 0.5, 0.9),
+    ):
         """Initialize AutoETS model.
-        
+
         Args:
             seed: Random seed for reproducibility.
             auto: Set True to enable automatic model selection.
@@ -66,7 +63,7 @@ class AutoETSModel(BasePredictionModel):
         self.n_jobs = n_jobs
         self.max_history_length = max_history_length
         self.quantile_levels = self._validate_quantile_levels(quantile_levels)
-        
+
         # Set random seeds
         np.random.seed(seed)
         random.seed(seed)
@@ -74,38 +71,44 @@ class AutoETSModel(BasePredictionModel):
         self.reset()
 
     def predict(
-            self,
-            inputs: SubTrajectoryInput,
-        ) -> tuple[np.ndarray | None, np.ndarray | None]:
+        self,
+        history: np.ndarray,
+        horizon: int,
+    ) -> tuple[np.ndarray | None, np.ndarray | None]:
         """Predict future values using AutoETS.
-        
+
         Fits a new model on all available historical data for each prediction.
+
+        Args:
+            history: Full-prefix history of shape (n_features, history_length),
+                may contain NaN.
+            horizon: Number of future hours to forecast.
         """
-        target = inputs.history
-        prediction_length = inputs.prediction_hours
+        target = history
+        prediction_length = horizon
         n_features, _ = target.shape
         n_quantiles = 0 if self.quantile_levels is None else len(self.quantile_levels)
-        
+
         predictions = np.zeros((n_features, prediction_length))
         quantiles = None
         if n_quantiles > 0:
             quantiles = np.zeros((n_features, prediction_length, n_quantiles))
-        
+
         for i in range(n_features):
             y = target[i, :]
-            y = np.where(np.isnan(y), 0.0, y)
-            
+            y = self._forward_fill_nan(y)
+
             # Truncate to most recent data if max_history_length is specified
             if self.max_history_length is not None and len(y) > self.max_history_length:
-                y = y[-self.max_history_length:]
-            
+                y = y[-self.max_history_length :]
+
             # Preprocessing: skip constant or all-zero series
             if np.all(y == 0) or np.std(y) < 1e-10:
                 predictions[i, :] = y[-1]
                 if quantiles is not None:
                     quantiles[i, :, :] = y[-1]
                 continue
-            
+
             # Fit model on (truncated) historical data
             try:
                 # ETS seasonal initialization needs at least two full cycles.
@@ -117,15 +120,15 @@ class AutoETSModel(BasePredictionModel):
                     sp=effective_sp,
                     information_criterion=self.information_criterion,
                     n_jobs=self.n_jobs,
-                    random_state=self.seed
+                    random_state=self.seed,
                 )
-                
+
                 # Suppress warnings about non-positive time series
                 with warnings.catch_warnings():
                     warnings.filterwarnings(
                         "ignore",
                         message=".*time series is not strictly positive.*",
-                        category=UserWarning
+                        category=UserWarning,
                     )
                     warnings.filterwarnings(
                         "ignore",
@@ -137,7 +140,7 @@ class AutoETSModel(BasePredictionModel):
                         category=Warning,
                     )
                     model.fit(y)
-                
+
                 # Perform prediction
                 fh = np.arange(1, prediction_length + 1)
                 y_pred = model.predict(fh=fh)
@@ -158,8 +161,30 @@ class AutoETSModel(BasePredictionModel):
                 predictions[i, :] = y[-1]
                 if quantiles is not None:
                     quantiles[i, :, :] = y[-1]
-        
+
         return predictions, quantiles
+
+    @staticmethod
+    def _forward_fill_nan(y: np.ndarray) -> np.ndarray:
+        """Fill missing values from the previous timestamp."""
+        y_filled = np.asarray(y, dtype=float).copy()
+        nan_mask = np.isnan(y_filled)
+        if not np.any(nan_mask):
+            return y_filled
+
+        valid_indices = np.flatnonzero(~nan_mask)
+        if valid_indices.size == 0:
+            return np.zeros_like(y_filled, dtype=float)
+
+        first_valid = valid_indices[0]
+        if first_valid > 0:
+            y_filled[:first_valid] = y_filled[first_valid]
+
+        valid_mask = ~np.isnan(y_filled)
+        previous_valid_indices = np.maximum.accumulate(
+            np.where(valid_mask, np.arange(y_filled.size), 0)
+        )
+        return y_filled[previous_valid_indices]
 
     @staticmethod
     def _validate_quantile_levels(
@@ -201,7 +226,7 @@ class AutoETSModel(BasePredictionModel):
             "Unexpected quantile prediction shape "
             f"{quantile_values.shape}; expected ({prediction_length}, {len(self.quantile_levels)})"
         )
-    
+
     def reset(self):
         """Reset model state (no-op for stateless model)."""
         pass

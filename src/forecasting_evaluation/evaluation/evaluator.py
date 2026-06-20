@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import inspect
 import logging
 import random
+import time
+import tracemalloc
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -13,16 +16,16 @@ import h5py
 import numpy as np
 
 from forecasting_evaluation.config import print_config
+from forecasting_evaluation.data.cache_bundle import (
+    prepare_history_cf_raw_cache_for_split,
+)
 from forecasting_evaluation.data.data_loader import ForecastingDataLoader
-from forecasting_evaluation.data.types import SubTrajectoryInput
-from forecasting_evaluation.forecasting_training.cache_bundle import (
-    prepare_history_cf_cache_bundle,
+from forecasting_evaluation.data.online_dataset import (
+    _resolve_window_hours,
+    resolve_cache_base_dir,
 )
-from forecasting_evaluation.forecasting_training.online_dataset import _resolve_window_hours
 from forecasting_evaluation.io.predict_result_writer import PredictResultWriter, PublicWriter
-from forecasting_evaluation.models.deep_learning_model.pypots_forecasting_base import (
-    BasePyPOTSForecastingModel,
-)
+from forecasting_evaluation.models.naive.seasonal_naive import SeasonalNaiveModel
 from forecasting_evaluation.models.registry import create_forecasting_model
 
 if TYPE_CHECKING:
@@ -30,6 +33,91 @@ if TYPE_CHECKING:
     from forecasting_evaluation.models.base import BasePredictionModel
 
 logger = logging.getLogger(__name__)
+
+# Optional metadata kwargs the harness can forward to a model's predict(), if
+# the model declares them. The harness inspects each model's signature once and
+# forwards only the declared subset (the same duck-typed pattern as Encoder /
+# Imputer protocols).
+_OPTIONAL_PREDICT_KWARGS = (
+    "variable_names",
+    "past_covariates",
+    "future_covariates",
+    "index_days",
+)
+
+# Per-class cache of the optional kwargs a model's predict() accepts.
+_PREDICT_KWARG_CACHE: dict[type, set[str]] = {}
+
+
+def _declared_optional_kwargs(predict_fn) -> set[str]:
+    """Return the subset of optional metadata kwargs a predict() accepts.
+
+    A ``**kwargs`` in the signature means "accepts all".
+    """
+    params = inspect.signature(predict_fn).parameters
+    if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()):
+        return set(_OPTIONAL_PREDICT_KWARGS)
+    declared = {
+        name
+        for name, p in params.items()
+        if p.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+    }
+    return declared & set(_OPTIONAL_PREDICT_KWARGS)
+
+
+def _forward_kwargs(model, candidates: dict) -> dict:
+    """Select only the optional metadata kwargs the model's predict() declares."""
+    cls = type(model)
+    allowed = _PREDICT_KWARG_CACHE.get(cls)
+    if allowed is None:
+        allowed = _declared_optional_kwargs(model.predict)
+        _PREDICT_KWARG_CACHE[cls] = allowed
+    return {k: v for k, v in candidates.items() if k in allowed}
+
+
+def _normalize_forecast_output(output) -> tuple[np.ndarray | None, np.ndarray | None]:
+    """Normalize a model's return to ``(point, quantiles)``.
+
+    Accepts either a bare point array or a ``(point, quantiles)`` tuple.
+    """
+    if isinstance(output, tuple):
+        point = output[0]
+        quantiles = output[1] if len(output) > 1 else None
+    else:
+        point, quantiles = output, None
+    if point is not None:
+        point = np.asarray(point, dtype=np.float32)
+    if quantiles is not None:
+        quantiles = np.asarray(quantiles, dtype=np.float32)
+    return point, quantiles
+
+
+def _invoke_forecaster(
+    model,
+    history: np.ndarray,
+    horizon: int,
+    meta: dict,
+) -> tuple[np.ndarray | None, np.ndarray | None, dict]:
+    """Call ``model.predict`` under the unified contract with perf tracking.
+
+    Forwards only the optional metadata kwargs the model declares, times the
+    call, tracks peak memory, and normalizes the return to
+    ``(point, quantiles, perf)``.
+    """
+    kwargs = _forward_kwargs(model, meta)
+    tracemalloc.start()
+    start_time = time.time()
+    output = model.predict(history, horizon, **kwargs)
+    prediction_time = time.time() - start_time
+    _current_mem, peak_mem = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+
+    point_result, quantiles_result = _normalize_forecast_output(output)
+    perf = {
+        "prediction_time_seconds": float(prediction_time),
+        "memory_usage_mb": float(peak_mem / 1024 / 1024),
+    }
+    return point_result, quantiles_result, perf
 
 
 @dataclass(slots=True)
@@ -58,6 +146,9 @@ class ForecastingEvaluator:
         np.random.seed(config.seed)
         random.seed(config.seed)
 
+        # Populated by ``_run_sequential``; always present so ``run`` can read it.
+        self._fallback_summary: dict = {"overall_fallback_rate": 0.0, "fallback_rate": {}}
+
     def run(self) -> dict:
         """Execute full evaluation pipeline.
 
@@ -75,7 +166,7 @@ class ForecastingEvaluator:
         )
 
         # 1) Build a unified evaluation context (splits + cache + row groups).
-        data_context = self._load_evaluation_data(model)
+        data_context = self._load_evaluation_data()
 
         # 2) Initialize run-level writer for shared metadata/config persistence.
         public_writer = PublicWriter(
@@ -92,10 +183,17 @@ class ForecastingEvaluator:
             "run_dir": str(run_dir),
             "prediction_samples": public_writer.total_written,
             "skipped_users": public_writer.skipped_users,
+            **self._fallback_summary,
         }
 
-    def _load_evaluation_data(self, model: BasePredictionModel) -> EvaluationDataContext:
-        """Load all data needed by the current model during the unified load step."""
+    def _load_evaluation_data(self) -> EvaluationDataContext:
+        """Load all data needed during evaluation via one model-agnostic path.
+
+        Every model reads the same raw full-trajectory history cache and the same
+        data-quality-only window manifest, so the in-scope window set is identical
+        across model families. Models that need a fixed context window slice it
+        themselves; models trained on standardized inputs standardize internally.
+        """
         data_loader = ForecastingDataLoader(self.config.data)
         train_ds, val_ds, test_ds = data_loader.load_splits()
 
@@ -104,63 +202,28 @@ class ForecastingEvaluator:
             val_ds=val_ds,
             test_ds=test_ds,
         )
-        # Resolve cache layout once so all model types use one loader path.
-        model_config, h5_output_dir = self._resolve_eval_cache_config(model, test_ds)
-        split_datasets = {
-            "train": train_ds,
-            "val": val_ds,
-            "test": test_ds,
-        }
-        # Cache bundle generation is split-aware: train/val/test are prepared together
-        # even though prediction is only emitted for test trajectories.
-        _cache_dir, cache_paths, row_groups_by_split, _scaler_stats = prepare_history_cf_cache_bundle(
-            split_datasets=split_datasets,
+        model_config, h5_output_dir = self._resolve_eval_cache_config(test_ds)
+        _cache_dir, test_cache_path, test_row_groups = prepare_history_cf_raw_cache_for_split(
+            split_name="test",
+            split_ds=test_ds,
             data_config=self.config.data,
             model_config=model_config,
             features_config=self.config.features,
             h5_output_dir=h5_output_dir,
             overwrite=False,
-            scaler_stats_override=(
-                model.scaler_stats if isinstance(model, BasePyPOTSForecastingModel) else None
-            ),
         )
-        context.test_cache_path = (
-            cache_paths["test_standard"]
-            if isinstance(model, BasePyPOTSForecastingModel) and model.uses_standard_scaler
-            else cache_paths["test"]
-        )
-        context.test_row_groups = row_groups_by_split["test"]
-        logger.info(
-            "Prepared eval dataset using %s cache at %s",
-            (
-                "standardized"
-                if isinstance(model, BasePyPOTSForecastingModel) and model.uses_standard_scaler
-                else "raw"
-            ),
-            context.test_cache_path,
-        )
+        context.test_cache_path = test_cache_path
+        context.test_row_groups = test_row_groups
+        logger.info("Prepared eval dataset using raw cache at %s", context.test_cache_path)
         return context
 
-    def _resolve_eval_cache_config(self, model: BasePredictionModel, test_ds) -> tuple[SimpleNamespace, str]:
-        """Resolve one cache-bundle config so every model can share the same loader path."""
-        if isinstance(model, BasePyPOTSForecastingModel):
-            h5_output_dir = model._get_training_config_value("h5_export", "output_dir")
-            if not h5_output_dir:
-                h5_output_dir = "data/processed/forecasting_pypots_h5"
-            if model.uses_standard_scaler and model.scaler_stats is None:
-                raise FileNotFoundError(
-                    "PyPOTS checkpoint was trained with standard scaling, but "
-                    "standard_scaler_stats.json could not be resolved from the saved training config."
-                )
-            return (
-                SimpleNamespace(
-                    n_steps=int(model.n_steps),
-                    n_pred_steps=int(model.n_pred_steps),
-                    n_features=int(model.n_features),
-                ),
-                h5_output_dir,
-            )
+    def _resolve_eval_cache_config(self, test_ds) -> tuple[SimpleNamespace, str]:
+        """Resolve one model-agnostic cache-bundle config shared by all models.
 
+        The eval cache holds raw full-trajectory history and a data-quality-only
+        window manifest (``n_steps=1`` ⇒ no model-capability filtering). Models
+        that need a fixed context window slice it themselves from the full prefix.
+        """
         if len(test_ds) > 0:
             n_features = int(np.asarray(test_ds[0]["values"]).shape[1])
         else:
@@ -172,7 +235,7 @@ class ForecastingEvaluator:
                 n_pred_steps=int(self.config.forecasting.forecasting_length),
                 n_features=n_features,
             ),
-            "data/processed/forecasting_eval_h5",
+            str(resolve_cache_base_dir(self.config.data)),
         )
 
     def _run_sequential(
@@ -194,11 +257,20 @@ class ForecastingEvaluator:
             len(test_ds),
         )
         daily_start_hour_offset = self._resolve_runtime_daily_start_hour_offset(model)
-        prediction_hours = (
-            int(model.n_pred_steps)
-            if isinstance(model, BasePyPOTSForecastingModel)
-            else int(self.config.forecasting.forecasting_length)
-        )
+        prediction_hours = int(self.config.forecasting.forecasting_length)
+        model_pred_steps = getattr(model, "n_pred_steps", None)
+        if model_pred_steps is not None and int(model_pred_steps) != prediction_hours:
+            raise ValueError(
+                f"Model exposes n_pred_steps={int(model_pred_steps)} but eval "
+                f"forecasting_length={prediction_hours}; a horizon mismatch would "
+                "desync the prediction window from the metrics path."
+            )
+
+        # Seasonal-Naive baseline used to fill any NaN the model emits, so every
+        # in-scope forecast cell is scored. Deterministic + model-agnostic.
+        fallback_model = SeasonalNaiveModel(seed=self.config.seed, seasonal=24)
+        fallback_substituted: np.ndarray | None = None
+        fallback_total: np.ndarray | None = None
 
         with h5py.File(data_context.test_cache_path, "r") as history_handle:
             for row_group in data_context.test_row_groups:
@@ -225,6 +297,11 @@ class ForecastingEvaluator:
                     history_handle["history_cf_rows"][str(row_group.dataset_row_idx)][...],
                     dtype=np.float32,
                 )
+                n_channels = int(history_cf.shape[0])
+                if fallback_substituted is None:
+                    fallback_substituted = np.zeros(n_channels, dtype=np.int64)
+                    fallback_total = np.zeros(n_channels, dtype=np.int64)
+                variable_names = list(row["channel_names"])
                 predict_writer = PredictResultWriter(
                     model_dir=model_dir,
                     user_id=user_id,
@@ -240,50 +317,50 @@ class ForecastingEvaluator:
                             daily_start_hour_offset=daily_start_hour_offset,
                         )
 
+                        # Data-quality drops only (applied equally to every model):
+                        # no history before the day boundary, and ground truth must
+                        # exist for the full horizon. No model-capability drops.
                         if history_end_hour <= 0:
                             continue
-
-                        if (
-                            isinstance(model, BasePyPOTSForecastingModel)
-                            and history_end_hour < int(model.n_steps)
-                        ):
-                            continue
-
                         if pred_end_hour > history_cf.shape[1]:
                             continue
 
-                        # History slicing depends on model family:
-                        # - PyPOTS: fixed-length trailing context.
-                        # - Others: full-prefix context up to forecast origin.
-                        history_window = self._build_history_window(
-                            model=model,
-                            history_cf=history_cf,
-                            history_end_hour=history_end_hour,
+                        # Every model receives the full raw history prefix; it owns
+                        # any context windowing / truncation / padding it needs.
+                        history_window = history_cf[:, :history_end_hour]
+
+                        # NB: the horizon ground-truth slice is intentionally NOT
+                        # persisted with the predictions. Scoring re-derives it from the
+                        # raw history cache (metrics/offline slice_ground_truth) so every
+                        # model and the baseline share one identical, model-agnostic
+                        # ground truth. Do not re-add a per-model ground_truth column:
+                        # a model that standardized its window would silently persist a
+                        # mis-scaled copy (it has happened) that nothing would catch.
+
+                        meta = {
+                            "variable_names": variable_names,
+                            "past_covariates": None,
+                            "future_covariates": None,
+                            "index_days": int(window.current_day),
+                        }
+                        point_result, quantiles_result, base_result = _invoke_forecaster(
+                            model,
+                            history_window,
+                            prediction_hours,
+                            meta,
                         )
 
-                        if history_window.shape[1] <= 0:
-                            continue
-
-                        # Target window is always the absolute horizon slice from origin.
-                        target_window = history_cf[
-                            :,
-                            history_end_hour:pred_end_hour,
-                        ]
-
-                        sub_trajectory = SubTrajectoryInput(
-                            history=history_window,
-                            variable_names=list(row["channel_names"]),
-                            past_covariates={},
-                            future_covariates={},
-                            static_covariates=None,
-                            ground_truth=target_window,
-                            index_days=int(window.current_day),
-                            prediction_hours=prediction_hours,
+                        # Fill NaN predictions with the Seasonal-Naive baseline so
+                        # gaps are scored (not silently dropped) and record where.
+                        point_result, fallback_mask = self._apply_seasonal_naive_fallback(
+                            point_result=point_result,
+                            history_window=history_window,
+                            horizon=prediction_hours,
+                            n_channels=n_channels,
+                            fallback_model=fallback_model,
                         )
-
-                        point_result, quantiles_result, base_result = model.predict_wrapper(
-                            sub_trajectory
-                        )
+                        fallback_substituted += fallback_mask.sum(axis=1)
+                        fallback_total += prediction_hours
 
                         prediction_record = {
                             "user_id": user_id,
@@ -291,6 +368,9 @@ class ForecastingEvaluator:
                             "history_length": int(history_end_hour),
                             "point_predictions": point_result,
                             "quantile_predictions": quantiles_result,
+                            # Boolean mask (n_channels, horizon): True where the model
+                            # emitted NaN and the Seasonal-Naive baseline was substituted.
+                            "fallback_mask": fallback_mask,
                             "performance": base_result,
                         }
                         quantile_levels = getattr(model, "quantile_levels", None)
@@ -301,23 +381,89 @@ class ForecastingEvaluator:
                 finally:
                     predict_writer.close()
                     # Reset model state between users to avoid cross-user leakage.
-                    model.reset()
+                    # reset() is optional under the unified contract.
+                    reset_fn = getattr(model, "reset", None)
+                    if callable(reset_fn):
+                        reset_fn()
 
                 public_writer.increment_written(predict_writer.records_written)
 
+        self._fallback_summary = self._summarize_fallback(
+            model_name, fallback_substituted, fallback_total
+        )
+
+    @staticmethod
+    def _apply_seasonal_naive_fallback(
+        *,
+        point_result: np.ndarray | None,
+        history_window: np.ndarray,
+        horizon: int,
+        n_channels: int,
+        fallback_model: SeasonalNaiveModel,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Substitute Seasonal-Naive predictions wherever the model emitted NaN.
+
+        Returns the (possibly) repaired point forecast and the boolean mask of
+        substituted positions, shape ``(n_channels, horizon)``.
+        """
+        if point_result is None:
+            point_result = np.full((n_channels, horizon), np.nan, dtype=np.float32)
+        fallback_mask = ~np.isfinite(point_result)
+        if fallback_mask.any():
+            fb_point, _fb_quantiles = fallback_model.predict(history_window, horizon)
+            fb_point = np.asarray(fb_point, dtype=np.float32)
+            point_result = point_result.copy()
+            point_result[fallback_mask] = fb_point[fallback_mask]
+        return point_result, fallback_mask
+
+    def _summarize_fallback(
+        self,
+        model_name: str,
+        substituted: np.ndarray | None,
+        total: np.ndarray | None,
+    ) -> dict:
+        """Aggregate per-channel Seasonal-Naive fallback rates and warn if used."""
+        if substituted is None or total is None or int(total.sum()) == 0:
+            return {"overall_fallback_rate": 0.0, "fallback_rate": {}}
+
+        total_cells = int(total.sum())
+        subst_cells = int(substituted.sum())
+        overall = subst_cells / total_cells
+        per_channel = {
+            f"ch_{i}": float(substituted[i] / total[i])
+            for i in range(len(total))
+            if int(total[i]) > 0
+        }
+        if subst_cells > 0:
+            logger.warning(
+                "[%s] Seasonal-Naive fallback substituted %.2f%% of forecast cells "
+                "(%d / %d) where the model returned NaN. Per-channel rates: %s",
+                model_name,
+                100.0 * overall,
+                subst_cells,
+                total_cells,
+                {k: round(v, 4) for k, v in per_channel.items() if v > 0.0},
+            )
+        return {"overall_fallback_rate": float(overall), "fallback_rate": per_channel}
+
     def _resolve_runtime_daily_start_hour_offset(self, model: BasePredictionModel) -> int:
-        """Resolve the effective runtime offset for one evaluation run."""
+        """Resolve the effective runtime offset for one evaluation run.
+
+        The offset is a data-alignment concern (it changes which hours a window
+        covers), not a model-capability drop. Models trained at a fixed offset
+        expose ``training_daily_start_hour_offset``; the evaluator uses it and
+        only errors when the eval config explicitly disagrees.
+        """
         eval_offset = int(self.config.forecasting.daily_start_hour_offset)
         eval_offset_explicit = bool(
             getattr(self.config.forecasting, "_daily_start_hour_offset_explicit", False)
         )
 
-        if not isinstance(model, BasePyPOTSForecastingModel):
+        training_offset = getattr(model, "training_daily_start_hour_offset", None)
+        if training_offset is None:
             return eval_offset
 
-        training_offset = int(model.training_daily_start_hour_offset)
-        # For fixed-window deep models, day-boundary mismatch changes samples.
-        # Enforce exact match when eval config explicitly sets an offset.
+        training_offset = int(training_offset)
         if eval_offset_explicit and eval_offset != training_offset:
             raise ValueError(
                 "Eval config forecasting.daily_start_hour_offset="
@@ -325,15 +471,3 @@ class ForecastingEvaluator:
                 f"{training_offset}."
             )
         return training_offset
-
-    def _build_history_window(
-        self,
-        *,
-        model: BasePredictionModel,
-        history_cf: np.ndarray,
-        history_end_hour: int,
-    ) -> np.ndarray:
-        """Slice one model-ready history window from the shared cached row tensor."""
-        if isinstance(model, BasePyPOTSForecastingModel):
-            return history_cf[:, history_end_hour - model.n_steps : history_end_hour]
-        return history_cf[:, :history_end_hour]

@@ -9,11 +9,13 @@ from typing import Literal
 @dataclass
 class DataConfig:
     """Data source and splitting configuration."""
+
     trajectory_hf_dir: str = "data/hourly_trajectory"
     task_name: str = "hourly_trajectory_forecasting"
     split_file: str | None = "data/splits/sharable_users_seed42_2026.json"
     day_remain_mask: str | None = "data/forecasting_sample_index/day_remain_mask.json"
-    # Required for forecasting evaluation. Generate it with scripts/precompute_forecasting_inputs.py.
+    # Required for forecasting evaluation; ships in the openmhc.download_dataset()
+    # bundle (see docs/manual-dataset-setup.md to assemble a root by hand).
     sample_index_file: str = "data/forecasting_sample_index/sample_index_P_24_M_H_7_3_S_100.json"
     train_ratio: float = 0.8
     val_ratio: float = 0.1
@@ -21,9 +23,9 @@ class DataConfig:
     num_workers: int = 4
     max_samples: int | None = None
 
+
 ModelType = Literal[
     "seasonal_naive",
-    "seasonal_naive_average_history",
     "autoARIMA",
     "autoETS",
     "chronos2",
@@ -33,6 +35,7 @@ ModelType = Literal[
     "segrnn",
 ]
 
+
 @dataclass
 class SeasonalNaiveModelConfig:
     """seasonal_naive model hyperparameters."""
@@ -41,13 +44,6 @@ class SeasonalNaiveModelConfig:
     quantile_levels: list[float] = field(
         default_factory=lambda: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
     )
-
-
-@dataclass
-class SeasonalNaiveAverageHistoryModelConfig:
-    """seasonal_naive_average_history model hyperparameters."""
-
-    season_length: int = 24
 
 
 @dataclass
@@ -94,7 +90,7 @@ class Chronos2ModelConfig:
     checkpoint_path: str | None = None
     training_output_dir: str | None = None
     finetuned_ckpt_name: str | None = None
-    device: str = "cuda"
+    device: str = "auto"
     torch_dtype: Literal["auto", "float32", "float16", "bfloat16"] = "auto"
 
 
@@ -105,7 +101,7 @@ class TotoModelConfig:
     pretrained_model_name_or_path: str = "Datadog/Toto-Open-Base-1.0"
     checkpoint_path: str | None = None
     lora_alpha: float | None = None
-    device: str = "cuda"
+    device: str = "auto"
     context_length: int = 2048
     num_samples: int = 256
     samples_per_batch: int = 256
@@ -118,7 +114,7 @@ class MixLinearModelConfig:
     """mixlinear model hyperparameters."""
 
     checkpoint_path: str | None = None
-    device: str = "cuda"
+    device: str = "auto"
     batch_size: int = 64
     n_steps: int | None = None
     n_pred_steps: int | None = None
@@ -134,7 +130,7 @@ class DLinearModelConfig:
     """dlinear model hyperparameters."""
 
     checkpoint_path: str | None = None
-    device: str = "cuda"
+    device: str = "auto"
     batch_size: int = 64
     n_steps: int | None = None
     n_pred_steps: int | None = None
@@ -149,7 +145,7 @@ class SegRNNModelConfig:
     """segrnn model hyperparameters."""
 
     checkpoint_path: str | None = None
-    device: str = "cuda"
+    device: str = "auto"
     batch_size: int = 64
     n_steps: int | None = None
     n_pred_steps: int | None = None
@@ -169,11 +165,9 @@ class ForecastingModelConfig:
 
     type: ModelType = "seasonal_naive"
     name: str | None = None
+    release_dir: str | None = None
 
     seasonal_naive: SeasonalNaiveModelConfig = field(default_factory=SeasonalNaiveModelConfig)
-    seasonal_naive_average_history: SeasonalNaiveAverageHistoryModelConfig = field(
-        default_factory=SeasonalNaiveAverageHistoryModelConfig
-    )
     autoARIMA: AutoARIMAModelConfig = field(default_factory=AutoARIMAModelConfig)
     autoETS: AutoETSModelConfig = field(default_factory=AutoETSModelConfig)
     chronos2: Chronos2ModelConfig = field(default_factory=Chronos2ModelConfig)
@@ -181,6 +175,7 @@ class ForecastingModelConfig:
     mixlinear: MixLinearModelConfig = field(default_factory=MixLinearModelConfig)
     dlinear: DLinearModelConfig = field(default_factory=DLinearModelConfig)
     segrnn: SegRNNModelConfig = field(default_factory=SegRNNModelConfig)
+
 
 @dataclass
 class OutputConfig:
@@ -192,10 +187,35 @@ class OutputConfig:
 
 
 @dataclass
+class MetricsConfig:
+    """Which offline metrics to persist, and how to group channels.
+
+    All metrics are derived cheaply from the stored predictions in one pass;
+    these lists only control what gets persisted to the metrics tree. The skill
+    score and ranking need ``mae`` (continuous) + ``auprc`` (binary); the full
+    sets are persisted by default so the scoring method can be decided later.
+    Set ``binary_metrics=[]`` to skip the binary-metric pass entirely.
+    """
+
+    point_metrics: list[str] = field(
+        default_factory=lambda: ["mae", "mse", "mase", "mase_all", "ql", "sql"]
+    )
+    binary_metrics: list[str] = field(default_factory=lambda: ["auprc", "auroc", "f1"])
+    # Device-pair scoring. Default False = per-task: phone/watch channels keep
+    # separate skill ratios (the steps/distance scopes geomean them), matching the
+    # sleep/workout scopes and the imputation track. Set True for the legacy
+    # signal-merge (nan-mean the paired channels before scoring; appendix tables).
+    combine_channels: bool = False
+    # Threshold to binarize continuous scores for F1.
+    f1_threshold: float = 0.5
+
+
+@dataclass
 class EvaluatorConfig:
     """Evaluator execution configuration (sequential-only)."""
 
     mode: Literal["sequential"] = "sequential"
+
 
 @dataclass
 class ForecastingConfig:
@@ -203,6 +223,7 @@ class ForecastingConfig:
 
     forecasting_length: int = 24  # Number of hours to forecast
     daily_start_hour_offset: int = 0
+
 
 @dataclass
 class FeaturesConfig:
@@ -221,13 +242,14 @@ class ForecastingEvalConfig:
     seed: int = 42
     experiment_name: str | None = "Default_Test"
     debug_mode: bool = True
-    time_granularity: Literal["minutely","hourly","daily"] = "hourly"
+    time_granularity: Literal["minutely", "hourly", "daily"] = "hourly"
     data: DataConfig = field(default_factory=DataConfig)
     forecasting: ForecastingConfig = field(default_factory=ForecastingConfig)
     model: ForecastingModelConfig = field(default_factory=ForecastingModelConfig)
     features: FeaturesConfig = field(default_factory=FeaturesConfig)
     evaluator: EvaluatorConfig = field(default_factory=EvaluatorConfig)
     output: OutputConfig = field(default_factory=OutputConfig)
+    metrics: MetricsConfig = field(default_factory=MetricsConfig)
 
 
 def print_config(config: ForecastingEvalConfig) -> None:

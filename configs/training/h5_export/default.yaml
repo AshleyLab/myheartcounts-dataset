@@ -1,0 +1,10 @@
+# @package h5_export
+# H5 cache layout: <output_dir>/<8-char-hash>/{train,val,test}.h5
+# The hash is derived from data + h5_export fields so different
+# split/preprocessing combos never collide.
+output_dir: data/pypots_h5
+overwrite: false
+chunk_size: 1000
+val_mask_ratio: 0.2          # held-out positions PyPOTS uses for val metric
+normalize: true              # z-score continuous channels (0-6) using <cache>/processed/normalization_stats.json
+stats_max_samples: 10000     # deprecated, kept for back-compat

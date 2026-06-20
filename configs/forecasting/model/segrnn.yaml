@@ -1,0 +1,13 @@
+# @package model
+# Learned forecaster — set ``model.release_dir`` or
+# ``model.segrnn.checkpoint_path`` to a trained checkpoint.
+type: segrnn
+name: null
+release_dir: null
+segrnn:
+  checkpoint_path: ???
+  device: auto
+  batch_size: 64
+  seg_len: 24
+  d_model: 64
+  dropout: 0.1

@@ -45,8 +45,10 @@ def _load_context_api(
     # Reload labels.api first so STORE picks up the new env vars,
     # then reload context.api which imports from labels.api.
     import labels.api
+
     importlib.reload(labels.api)
     import context.api
+
     return importlib.reload(context.api)
 
 

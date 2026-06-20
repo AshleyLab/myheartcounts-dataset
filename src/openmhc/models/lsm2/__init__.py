@@ -1,0 +1,23 @@
+"""LSM2 (Latent Sequence Model v2) — masked autoencoder ViT for 1D wearable data.
+
+The model code is vendored from the private MHC-benchmark repo. Two model
+classes are exposed:
+
+- :class:`LSM2ViT1D` — daily and weekly (configurable ``seq_length``, ``patch_size``)
+  MAE-style encoder/decoder. Used by ``LSM2Imputer``.
+- :class:`WeeklySparseDecoderLSM2` — frozen-daily-encoder + sparse cross-day decoder.
+  Used by ``LSM2WeeklySparseImputer``.
+
+The :func:`create_inherited_mask` helper builds the patch-level mask from the
+sample-level boolean missingness mask used at inference time.
+"""
+
+from openmhc.models.lsm2.utils import create_inherited_mask
+from openmhc.models.lsm2.vit1d import LSM2ViT1D
+from openmhc.models.lsm2.weekly_sparse_decoder import WeeklySparseDecoderLSM2
+
+__all__ = [
+    "LSM2ViT1D",
+    "WeeklySparseDecoderLSM2",
+    "create_inherited_mask",
+]

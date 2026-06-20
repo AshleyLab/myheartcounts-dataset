@@ -1,0 +1,32 @@
+# Paper forecasting evaluation model sweep for ``mhc-forecast-eval``.
+#
+# Baselines and statistical models run without checkpoint artifacts. Learned and
+# finetuned models should be launched with ``model.release_dir=<release-dir>``
+# where the release contains ``openmhc_manifest.json`` and the checkpoint.
+
+models:
+  baselines:
+    - seasonal_naive
+    - autoARIMA
+    - autoETS
+  foundational:
+    - chronos2
+    - toto
+  learned:
+    - mixlinear
+    - dlinear
+    - segrnn
+
+required_release_dir:
+  mixlinear: true
+  dlinear: true
+  segrnn: true
+  chronos2: false
+  toto: false
+
+defaults:
+  forecasting: default
+  features: default
+  data: default
+  evaluator: default
+  output: default

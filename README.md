@@ -11,18 +11,28 @@ Evaluation API and reference implementations for the **MyHeartCounts Datasets & 
 ```bash
 git clone https://github.com/AshleyLab/myheartcounts-dataset.git
 cd myheartcounts-dataset
-pip install -e .
+
+# Install into a dedicated environment (conda for Python, pip for the rest):
+conda create -n openmhc python=3.10 -y && conda activate openmhc
+pip install -e ".[all]"
 ```
 
-Python ≥ 3.10. Installs the `openmhc` package and its evaluation dependencies.
+Python ≥ 3.10. `[all]` pulls in every track (prediction, imputation,
+forecasting) plus the Hydra CLIs and W&B logging; use a bare `pip install -e .`
+for just Track 1 + the core API. **Install into an isolated environment** — the
+evaluation engines use non-unique top-level package names that will collide with
+the private `MHC-benchmark` repo if both share one environment.
+
+See [`docs/install.md`](docs/install.md) for the full guide (extras table, venv
+alternative, Sherlock cluster setup, verification).
 
 ## Quickstart
 
-Download the tiny version of the dataset (small subset for reviewers and quickstart):
+Download the XS version of the dataset (small subset for reviewers and quickstart):
 
 ```python
 import openmhc
-openmhc.download_dataset(version="tiny")
+openmhc.download_dataset(version="xs")
 ```
 
 Then evaluate a model. Models implement one of three duck-typed protocols — no inheritance required.
@@ -73,9 +83,32 @@ class MeanImputer:
             out[:, ch, :][target] = self.means[ch]
         return out.astype(np.float32)
 
-results = openmhc.evaluate_imputation(MeanImputer())
+results = openmhc.evaluate_imputation(MeanImputer(), version="xs")
 print(results.summary())
 ```
+
+For the paper baselines (BRITS, TimesNet, DLinear, FEDformer, LSM2 daily / weekly /
+weekly-sparse), `openmhc.imputers` ships pre-trained-checkpoint wrappers loadable in
+one line from a release bundle:
+
+```python
+from openmhc.imputers import LSM2Imputer
+imp = LSM2Imputer.from_release("path/to/openmhc-lsm2-daily/")
+```
+
+See [`docs/neural-imputers.md`](docs/neural-imputers.md) for the full reference
+(architecture hyperparameters, paper checkpoint sources, release bundle format,
+and the `tools/build_manifest.py` converter for staging your own bundles).
+
+For reproducible runs (W&B logging, SLURM sweeps, manifest-traceable releases),
+the `mhc-impute-eval` Hydra CLI composes YAML configs at `configs/imputation/`:
+
+```bash
+mhc-impute-eval method=brits method.release_dir=path/to/openmhc-brits-paper/
+mhc-impute-eval --multirun method=brits,timesnet,lsm2 masking=all_six
+```
+
+See [`src/imputation_evaluation/README.md`](src/imputation_evaluation/README.md#part-15--reproducible-runs-via-mhc-impute-eval) for the full guide (configs, overrides, SLURM dispatch, adding new methods).
 
 ### Track 3 — forecasting (`Forecaster`)
 
@@ -89,9 +122,27 @@ class LastValueForecaster:
         last = np.nan_to_num(history[:, -1:], nan=0.0)
         return np.tile(last, (1, horizon)).astype(np.float32)
 
-results = openmhc.evaluate_forecasting(LastValueForecaster(), forecasting_length=24)
+results = openmhc.evaluate_forecasting(LastValueForecaster(), version="xs", forecasting_length=24)
 print(results.summary())
 ```
+
+For reproducible paper-style forecasting runs, use the Hydra CLI and config
+family at `configs/forecasting/`:
+
+```bash
+mhc-forecast-eval model=seasonal_naive
+mhc-forecast-eval --multirun model=seasonal_naive,autoARIMA,autoETS
+```
+
+Simurgh (SC) SLURM wrappers live in `jobs/sc-cluster/forecasting_eval/`. The
+forecasting implementation supports both device-channel scoring modes: per-task
+(default) — phone/watch channels scored separately and combined into
+steps/distance scopes by geometric mean, consistent with the imputation track —
+and the legacy signal-merge (`--combine-channels`) used for some appendix tables.
+
+See [`src/forecasting_evaluation/README.md`](src/forecasting_evaluation/README.md)
+for the full guide (Hydra overrides, release checkpoints, full-data Seasonal
+Naive parity checks, offline metrics, raw appendix tables, and SLURM dispatch).
 
 A more complete walkthrough is in [`notebooks/quickstart.ipynb`](notebooks/quickstart.ipynb).
 
@@ -107,7 +158,7 @@ body = results.to_submission_yaml(
 print(body)
 ```
 
-`to_submission_yaml` returns a paste-ready body matching the textareas in the [submission issue template](../../issues/new?template=submission.yml). For Track 2 imputation, skill scores and per-category subgroup scores are computed locally against the frozen LOCF baseline; for Tracks 1 and 3, those fields are filled in by the maintainers from `raw_metrics` during ingestion (Linear + Seasonal Naive baseline files aren't shipped yet). The HuggingFace Space ingests merged submissions and the public leaderboard rebuilds automatically.
+`to_submission_yaml` returns a paste-ready body matching the textareas in the [submission issue template](../../issues/new?template=submission.yml). Skill scores, fair skill scores, and average ranks are filled in by the maintainers from `raw_metrics` during ingestion for **all three tracks** (Track 1 vs Linear, Track 2 vs LOCF, Track 3 vs Seasonal Naive). The maintainer-side reducer is a paired per-user geomean of clipped error ratios — MAE for continuous channels, `max(1 − AUC_u, 0.005)` for binary — matching the formula in `forecasting_evaluation/metrics/skill_score_summary.py::compute_skill_from_errors` so the same word means the same thing across tracks. Submitters only paste the absolute per-channel MAE / AUC. The HuggingFace Space ingests merged submissions and the public leaderboard rebuilds automatically.
 
 Submissions must follow the standard evaluation protocol — same split file, masking config, and benchmark task list as the paper. The submission template enforces required fields.
 
@@ -118,6 +169,7 @@ Submissions must follow the standard evaluation protocol — same split file, ma
 | `src/openmhc/` | Public API (`evaluate_prediction`, `evaluate_imputation`, `evaluate_forecasting`, `download_dataset`, …) |
 | `src/downstream_evaluation/` | Track 1 internals (linear probes, time-window selection, metrics) |
 | `src/imputation_evaluation/` | Track 2 internals (masking scenarios, per-channel metrics) |
+| `src/imputation_training/` | Track 2 training pipeline — `mhc-impute-train` for BRITS/DLinear/TimesNet/FEDformer. See [`docs/neural-imputers.md`](docs/neural-imputers.md#training-your-own-imputer) |
 | `src/forecasting_evaluation/` | Track 3 internals (window cache, point + quantile metrics) |
 | `src/labels/` | Label registry + type lookup |
 | `data/labels/` | Schema-only registry files (label types, ordinal vocab, validity config) |

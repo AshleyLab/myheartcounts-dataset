@@ -35,10 +35,22 @@ class MethodRegistry:
     name: str
     builders: dict[str, Builder]
 
-    def build(self, type_key: str, *args: Any, **kwargs: Any) -> tuple[Any, "Manifest | None"]:
+    def build(self, type_key: str, *args: Any, **kwargs: Any) -> tuple[Any, Manifest | None]:
+        """Build the method/model registered under ``type_key``.
+
+        Args:
+            type_key: The registered type string selecting a builder.
+            *args: Positional args forwarded to the builder.
+            **kwargs: Keyword args forwarded to the builder.
+
+        Returns:
+            The ``(method_or_model_instance, manifest_or_none)`` pair returned
+            by the selected builder.
+
+        Raises:
+            KeyError: If ``type_key`` is not registered.
+        """
         if type_key not in self.builders:
             known = ", ".join(sorted(self.builders.keys()))
-            raise KeyError(
-                f"Unknown {self.name} type {type_key!r}. Known: {known}"
-            )
+            raise KeyError(f"Unknown {self.name} type {type_key!r}. Known: {known}")
         return self.builders[type_key](*args, **kwargs)

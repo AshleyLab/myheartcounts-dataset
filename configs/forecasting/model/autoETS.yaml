@@ -1,0 +1,10 @@
+# @package model
+type: autoETS
+name: null
+release_dir: null
+autoETS:
+  auto: true
+  sp: 24
+  information_criterion: aic
+  n_jobs: -1
+  max_history_length: 336   # 14 days

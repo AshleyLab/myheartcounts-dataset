@@ -1,0 +1,13 @@
+# @package model
+# TimesNet — period-aware 2D convolution imputer.
+# Matches the MHC-benchmark training config (timesnet.pypots:v31 used these).
+model_name: timesnet
+n_steps: 1440
+n_features: 19
+n_layers: 2
+top_k: 5
+d_model: 128
+d_ffn: 512
+n_kernels: 6
+dropout: 0.4
+apply_nonstationary_norm: false

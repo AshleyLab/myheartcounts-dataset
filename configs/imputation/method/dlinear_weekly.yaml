@@ -1,0 +1,24 @@
+# @package method
+# 7-day-window DLinear variant for paper parity with the MHC-benchmark
+# ``dlinear_7day`` configuration. Reuses ``DLinearImputer`` (no new class) —
+# the only differences vs ``dlinear`` are ``n_steps`` (10080 instead of 1440)
+# and the harness running with ``data.n_days=7``.
+#
+# Recommended: ``release_dir`` to a manifest-bundled release. The release
+# manifest's ``kind`` stays ``"dlinear"`` so ``from_release`` validation
+# matches ``DLinearImputer.model_name``.
+type: dlinear_weekly
+release_dir: ???
+device: auto
+inference_batch_size: 64
+pypots:
+  model_path: ""
+  model_name: dlinear
+  # 7 * 1440 minutes/day. Must match the trained checkpoint (v48 in
+  # ``wandb:MHC_Dataset/mhc-pypots-dlinear/dlinear:v48``).
+  n_steps: 10080
+  n_features: 19
+  # Training-time values (configs/pypots/dlinear.yaml + dlinear_7day.yaml in
+  # MHC-benchmark). Identical to the daily v49 except for ``n_steps``.
+  moving_avg_window_size: 51
+  d_model: 256

@@ -1,0 +1,12 @@
+# @package model
+# Learned forecaster — set ``model.release_dir`` or
+# ``model.dlinear.checkpoint_path`` to a trained checkpoint.
+type: dlinear
+name: null
+release_dir: null
+dlinear:
+  checkpoint_path: ???
+  device: auto
+  batch_size: 64
+  moving_avg_window_size: 25
+  individual: false

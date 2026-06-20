@@ -21,7 +21,7 @@ def write_run_artifacts(
     run_dir: Path,
     *,
     resolved_cfg: DictConfig,
-    manifest: "Manifest | None" = None,
+    manifest: Manifest | None = None,
     wandb_run_id: str | None = None,
 ) -> None:
     """Write the standard per-run artifact set into ``run_dir``.

@@ -1,0 +1,6 @@
+# @package wandb
+enabled: true
+project: mhc-imputation-eval
+entity: MHC_Dataset
+tags: []
+log_plots: false

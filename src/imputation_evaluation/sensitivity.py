@@ -77,6 +77,20 @@ def get_user_demographics(
 
         demographics[uid] = {"birth_year": birth_year, "sex": sex}
 
+    # Surface the case where age fairness will be silently empty downstream:
+    # if the enrollment payload omits ``birth_year`` for every user, the age
+    # subgroup map collapses to "unknown" and the Phase 2 aggregator drops
+    # those rows from fairness_summary_bootstrap.csv with no error. The cli
+    # log line is the only way an operator notices unless we warn here.
+    if user_ids and all(v["birth_year"] is None for v in demographics.values()):
+        logger.warning(
+            "Age fairness will be empty: 0/%d users have birth_year. Check "
+            "that the enrollment_info.json payload includes a 'birth_year' "
+            "field (the canonical Dataverse schema). Sex fairness still "
+            "works if BiologicalSex labels are present.",
+            len(user_ids),
+        )
+
     return demographics
 
 

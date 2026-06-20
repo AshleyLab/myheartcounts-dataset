@@ -37,10 +37,10 @@ def _isolate_env(monkeypatch):
 class TestDataDir:
     """Cover ``data_dir`` resolution precedence and path normalization."""
 
-    def test_default_under_user_cache(self):
-        """Default to the per-user cache dir when no override or env var is set."""
-        result = data_dir()
-        assert result == Path.home() / ".cache" / "openmhc" / "data"
+    def test_raises_when_not_configured(self):
+        """With no override and no env var, ``data_dir`` raises (no implicit fallback)."""
+        with pytest.raises(ValueError, match="MHC_DATA_DIR"):
+            data_dir()
 
     def test_explicit_override_wins(self, tmp_path):
         """Resolve an explicit override argument to an absolute path."""
@@ -68,10 +68,10 @@ class TestDataDir:
 class TestDatasetPaths:
     """Confirm the eval pipeline routes through ``data_dir`` consistently."""
 
-    def test_default_root_matches_data_dir(self):
-        """Anchor the resolved root to ``data_dir`` by default."""
-        paths = _DatasetPaths.resolve()
-        assert paths.root == data_dir()
+    def test_resolve_requires_configured_root(self):
+        """With no override and no env var, ``resolve`` raises (mirrors ``data_dir``)."""
+        with pytest.raises(ValueError, match="MHC_DATA_DIR"):
+            _DatasetPaths.resolve()
 
     def test_all_subpaths_under_root(self, tmp_path):
         """Place every dataset subpath under the resolved root."""

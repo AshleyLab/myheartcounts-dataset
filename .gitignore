@@ -27,7 +27,6 @@ env/
 .cache/
 data/.hf_cache/
 data/processed/
-
 # Eval build artifacts (regenerated from raw; never commit)
 results/
 logs/
@@ -35,3 +34,15 @@ eval_*.csv
 __pycache__/
 *.pyc
 
+# Generated outputs (eval run results, notebook-side artifacts)
+data/cache/
+notebooks/data/
+
+# Forecasting release staging + merge artifacts (large weights, not source)
+.merge_cache/
+releases-fc/
+forecasting_model_ckpt/
+__MACOSX/
+
+# Scratch / throwaway experiment + benchmark scaffolding
+scratch/

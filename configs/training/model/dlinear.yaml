@@ -1,0 +1,11 @@
+# @package model
+# DLinear — trend-decomposed linear imputer.
+# Matches the MHC-benchmark training config (dlinear.pypots:v49 used these).
+model_name: dlinear
+n_steps: 1440
+n_features: 19
+d_model: 256
+moving_avg_window_size: 51
+individual: false
+ORT_weight: 1.0
+MIT_weight: 1.0

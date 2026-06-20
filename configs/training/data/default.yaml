@@ -1,0 +1,10 @@
+# @package data
+# Mirrors configs/imputation/data/default.yaml — using the same DataConfig
+# dataclass so train and eval share split semantics exactly.
+daily_hf_dir: data/hf_daily
+split_file: null
+version: ???   # caller must set to "xs" or "full"; no default to prevent silent mismatch
+batch_size: 500
+num_workers: 4
+num_eval_workers: 1
+n_days: 1

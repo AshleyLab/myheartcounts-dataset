@@ -1,0 +1,31 @@
+# @package hydra.launcher
+# Shared Submitit/SLURM launcher preset for Stanford Sherlock.
+#
+# Each track's eval.yaml can pull this in via:
+#   defaults:
+#     - override hydra/launcher: sherlock_submitit
+#   hydra:
+#     searchpath:
+#       - pkg://eval_hydra.launchers
+#
+# Override at the CLI as needed, e.g.:
+#   hydra.launcher.timeout_min=480 hydra.launcher.gpus_per_node=2
+_target_: hydra_plugins.hydra_submitit_launcher.submitit_launcher.SlurmLauncher
+timeout_min: 240
+cpus_per_task: 4
+gpus_per_node: 1
+mem_gb: 64
+nodes: 1
+tasks_per_node: 1
+partition: gpu
+qos: null
+comment: null
+constraint: null
+exclude: null
+gres: null
+signal_delay_s: 120
+max_num_timeout: 0
+additional_parameters:
+  account: ${oc.env:SLURM_ACCOUNT,euan}
+setup:
+  - "source ~/.bashrc"
