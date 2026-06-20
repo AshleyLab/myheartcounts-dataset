@@ -11,8 +11,8 @@
 #   overrides  - optional extra Hydra dot-key strings for mhc-forecast-eval
 
 run_label: forecasting_full_20260609
-runs_root: results/forecasting_eval/sc-cluster
-output_root: results/forecasting_eval/sc-cluster/summary/forecasting_full_20260609
+runs_root: results/forecasting_eval/simurgh
+output_root: results/forecasting_eval/simurgh/summary/forecasting_full_20260609
 
 baseline: seasonal_naive
 continuous_metrics: [mae]
@@ -69,10 +69,10 @@ models:
     overrides: [model.toto.context_length=4096]
   - name: dlinear
     type: dlinear
-    release_dir: results/forecasting_train/sc-cluster/releases/dlinear_20260609_024228
+    release_dir: results/forecasting_train/simurgh/releases/dlinear_20260609_024228
   - name: mixlinear
     type: mixlinear
-    release_dir: results/forecasting_train/sc-cluster/releases/mixlinear_20260609_025728
+    release_dir: results/forecasting_train/simurgh/releases/mixlinear_20260609_025728
   - name: segrnn
     type: segrnn
-    release_dir: results/forecasting_train/sc-cluster/releases/segrnn_20260609_031230
+    release_dir: results/forecasting_train/simurgh/releases/segrnn_20260609_031230

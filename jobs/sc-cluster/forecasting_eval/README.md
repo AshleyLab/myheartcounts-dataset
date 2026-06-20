@@ -1,4 +1,4 @@
-# SC Cluster Forecasting Evaluation
+# Simurgh (SC) Forecasting Evaluation
 
 SLURM wrappers for the public Hydra forecasting CLI (`mhc-forecast-eval`) plus the
 one-command **paper pipeline** that produces the full Track-3 leaderboard.
@@ -51,7 +51,7 @@ MHC_FORECAST_RUN_LABEL=forecasting_paper_001 \
 # subset:    jobs/sc-cluster/forecasting_eval/submit_pipeline.sh --only dlinear segrnn
 # eval-only: MHC_FORECAST_PIPELINE=0 jobs/sc-cluster/forecasting_eval/submit_pipeline.sh
 ```
-Results land in `results/forecasting_eval/sc-cluster/summary/<RUN_LABEL>/`
+Results land in `results/forecasting_eval/simurgh/summary/<RUN_LABEL>/`
 (`forecasting_skill_score_*` + `forecasting_grouped_metric_rank_*`).
 
 **CPU baselines only:**
@@ -75,7 +75,7 @@ sbatch --export=ALL,MHC_FORECAST_RUN_LABEL=<label> jobs/sc-cluster/forecasting_e
 | `MHC_CONDA_BASE` | conda install prefix | `/simurgh/u/schuetzn/conda` |
 | `MHC_CONDA_ENV` | conda env name | `openmhc` |
 | `MHC_DATA_DIR` | dataset root (`hourly_trajectory`, `splits`, `forecasting_sample_index`, `labels`) | `/simurgh/u/schuetzn/OpenMHC-Full/data` |
-| `MHC_FORECAST_RUNS_ROOT` | output root | `results/forecasting_eval/sc-cluster` |
+| `MHC_FORECAST_RUNS_ROOT` | output root | `results/forecasting_eval/simurgh` |
 | `MHC_FORECAST_RUN_LABEL` | shared run label | `forecasting_<jobid>` |
 | `MHC_FORECAST_OVERWRITE` | overwrite existing parquets (else resume by skipping) | `false` |
 | `MHC_FORECAST_AGGREGATE` | (legacy `submit_all`/`submit_models`) set `0` to skip the deprecated aggregation | `1` |

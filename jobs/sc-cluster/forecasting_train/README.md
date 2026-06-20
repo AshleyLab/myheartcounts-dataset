@@ -1,4 +1,4 @@
-# SC cluster forecasting-model training
+# Simurgh forecasting-model training
 
 Train the three trainable PyPOTS forecasters (**DLinear, MixLinear, SegRNN**) on
 the OpenMHC dataset and emit release bundles the eval pipeline consumes directly.
@@ -31,7 +31,7 @@ sbatch jobs/sc-cluster/forecasting_train/run_segrnn.sbatch
 ```
 
 Each job writes a timestamped release bundle under
-`results/forecasting_train/sc-cluster/releases/<model>_<timestamp>/` containing:
+`results/forecasting_train/simurgh/releases/<model>_<timestamp>/` containing:
 
 ```
 <model>_<timestamp>/
@@ -49,7 +49,7 @@ The eval jobs read a per-model release dir from
 `MHC_FORECAST_<MODEL>_RELEASE_DIR`:
 
 ```bash
-export MHC_FORECAST_DLINEAR_RELEASE_DIR=results/forecasting_train/sc-cluster/releases/dlinear_<timestamp>
+export MHC_FORECAST_DLINEAR_RELEASE_DIR=results/forecasting_train/simurgh/releases/dlinear_<timestamp>
 sbatch jobs/sc-cluster/forecasting_eval/run_dlinear.sbatch
 # likewise MHC_FORECAST_MIXLINEAR_RELEASE_DIR / MHC_FORECAST_SEGRNN_RELEASE_DIR
 ```

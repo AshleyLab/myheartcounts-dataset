@@ -219,7 +219,7 @@ mhc-forecast-eval model=seasonal_naive
 ```
 
 See [README.md](README.md#05-reproducible-runs-via-mhc-forecast-eval) for the
-Hydra CLI, config composition, and SC-cluster dispatch.
+Hydra CLI, config composition, and Simurgh dispatch.
 
 ## 6. Supported model types
 

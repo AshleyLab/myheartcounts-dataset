@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Submit the CPU forecasting-baseline suite on the SC cluster.
+# Submit the CPU forecasting-baseline suite on Simurgh (SC).
 #
 # Submits the 3 CPU jobs (naive / autoETS / autoARIMA) under a shared run label,
 # then chains the summary aggregation with an afterok dependency (set

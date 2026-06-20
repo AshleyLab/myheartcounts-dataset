@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-command end-to-end forecasting paper run on the SC cluster.
+# One-command end-to-end forecasting paper run on Simurgh.
 #
 # Fans out every per-model eval job under a single RUN_LABEL (SLURM), then chains
 # the paper pipeline (discover + skill + rank) via an afterok dependency on all of
@@ -22,7 +22,7 @@ export MHC_FORECAST_RUN_LABEL="${RUN_LABEL}"
 
 # Release bundles (override via env). Retrained pypots + published foundation bundles.
 RELEASES="${MHC_FORECAST_RELEASES_DIR:-${REPO_DIR}/releases-fc}"
-TRAIN_REL="${REPO_DIR}/results/forecasting_train/sc-cluster/releases"
+TRAIN_REL="${REPO_DIR}/results/forecasting_train/simurgh/releases"
 export MHC_FORECAST_DLINEAR_RELEASE_DIR="${MHC_FORECAST_DLINEAR_RELEASE_DIR:-${TRAIN_REL}/dlinear_20260609_024228}"
 export MHC_FORECAST_MIXLINEAR_RELEASE_DIR="${MHC_FORECAST_MIXLINEAR_RELEASE_DIR:-${TRAIN_REL}/mixlinear_20260609_025728}"
 export MHC_FORECAST_SEGRNN_RELEASE_DIR="${MHC_FORECAST_SEGRNN_RELEASE_DIR:-${TRAIN_REL}/segrnn_20260609_031230}"
@@ -39,7 +39,7 @@ while (( $# )); do
 done
 want() { (( ${#ONLY[@]} == 0 )) && return 0; local x; for x in "${ONLY[@]}"; do [[ "$x" == "$1" ]] && return 0; done; return 1; }
 
-MANIFEST="${REPO_DIR}/results/forecasting_eval/sc-cluster/${RUN_LABEL}_job_manifest.tsv"
+MANIFEST="${REPO_DIR}/results/forecasting_eval/simurgh/${RUN_LABEL}_job_manifest.tsv"
 mkdir -p "$(dirname "${MANIFEST}")"
 : > "${MANIFEST}"
 printf '# jobid\tlabel\tscript\t(%s)\n' "$(date -Is)" >> "${MANIFEST}"
@@ -87,4 +87,4 @@ fi
 echo
 echo "RUN_LABEL=${RUN_LABEL}"
 echo "Submitted ${#ids[@]} eval jobs. Manifest: ${MANIFEST}"
-echo "Results will land in: results/forecasting_eval/sc-cluster/summary/${RUN_LABEL}/"
+echo "Results will land in: results/forecasting_eval/simurgh/summary/${RUN_LABEL}/"

@@ -236,7 +236,7 @@ def _check_paper_csvs() -> None:
 
 
 def main() -> int:
-    """Diff new SC-cluster eval metrics against the MHC-benchmark references.
+    """Diff new Sherlock eval metrics against the MHC-benchmark references.
 
     Returns:
         Process exit code: ``2`` if no new runs exist, otherwise the table

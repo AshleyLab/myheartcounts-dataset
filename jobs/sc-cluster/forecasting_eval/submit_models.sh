@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Submit the GPU forecasting *model* suite on the SC cluster, to land alongside the
+# Submit the GPU forecasting *model* suite on Simurgh (SC), to land alongside the
 # CPU baselines (submit_all.sh) under a shared run label.
 #
 # 5 jobs / 7 evaluations:

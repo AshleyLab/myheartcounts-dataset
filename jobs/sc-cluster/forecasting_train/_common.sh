@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Shared setup for SC-cluster forecasting-TRAIN jobs.
+# Shared setup for Simurgh (SC) forecasting-TRAIN jobs.
 #
 # Mirrors jobs/sc-cluster/forecasting_eval/_common.sh (conda env, explicit
 # MHC_DATA_DIR, HF cache off the home quota) but for training: it adds output
@@ -38,7 +38,7 @@ fi
 export HF_HOME="${HF_HOME:-/simurgh/u/schuetzn/.cache/huggingface}"
 
 # --- Output roots ---
-export TRAIN_BASE="${MHC_FORECAST_TRAIN_BASE:-${REPO_DIR}/results/forecasting_train/sc-cluster}"
+export TRAIN_BASE="${MHC_FORECAST_TRAIN_BASE:-${REPO_DIR}/results/forecasting_train/simurgh}"
 export RUNS_ROOT="${TRAIN_BASE}/runs"          # PyPOTS saving_path per run
 export RELEASES_ROOT="${TRAIN_BASE}/releases"  # one openmhc release bundle per trained model
 mkdir -p "${RUNS_ROOT}" "${RELEASES_ROOT}"

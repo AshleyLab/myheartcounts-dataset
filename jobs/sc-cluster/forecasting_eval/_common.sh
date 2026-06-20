@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Shared setup for SC-cluster forecasting-eval jobs.
+# Shared setup for Simurgh (SC) forecasting-eval jobs.
 #
-# SC-cluster specifics:
+# Simurgh (SC) specifics:
 #   - conda env activation instead of module/venv,
 #   - explicit MHC_DATA_DIR (no ~/.cache fallback on SC),
 #   - BLAS threads pinned to 1 (statsforecast/ARIMA use joblib n_jobs=-1;
@@ -45,7 +45,7 @@ fi
 export HF_HOME="${HF_HOME:-/simurgh/u/schuetzn/.cache/huggingface}"
 
 # --- Output roots ---
-export RUNS_ROOT="${MHC_FORECAST_RUNS_ROOT:-${REPO_DIR}/results/forecasting_eval/sc-cluster}"
+export RUNS_ROOT="${MHC_FORECAST_RUNS_ROOT:-${REPO_DIR}/results/forecasting_eval/simurgh}"
 export RUN_LABEL="${MHC_FORECAST_RUN_LABEL:-forecasting_${SLURM_JOB_ID:-local}}"
 mkdir -p "${RUNS_ROOT}"
 
