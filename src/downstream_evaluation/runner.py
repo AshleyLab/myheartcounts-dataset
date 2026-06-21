@@ -83,7 +83,7 @@ def run_eval(config: EvalConfig, model) -> dict[str, dict]:
 
     logger.info("Running prediction eval (granularity=%s) on %d tasks", grain, len(config.tasks))
 
-    evaluator = DownstreamEvaluator(predictions_dir=config.predictions_dir)
+    evaluator = DownstreamEvaluator(predictions_dir=config.predictions_dir, seed=config.seed)
     results = evaluator.run(provider, loader_for_run, model, config.tasks, spec=spec)
 
     # Predictions export: alongside the per-(method, task) parquets the evaluator

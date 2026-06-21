@@ -218,7 +218,7 @@ class DataLoader:
 
         from openmhc._evaluate import _DatasetPaths
 
-        paths = _DatasetPaths.resolve(self._data_dir)
+        paths = _DatasetPaths.from_root(self._data_dir)
         if self.resolution == "minute":
             self._load_minute_index(hf_ds, paths)
             return

@@ -1,14 +1,14 @@
-"""MAE / LSM2 daily encoder (masked-autoencoder 1D Vision Transformer).
+"""LSM2 daily encoder (masked-autoencoder 1D Vision Transformer).
 
 Two stages, both run from raw data:
 
-  - **Stage 1 (extraction, GPU):** ``extract_mae_embeddings`` loads the pretrained
-    LSM2 MAE checkpoint and runs the *dense* encoder (no artificial masking) over the
+  - **Stage 1 (extraction, GPU):** ``extract_lsm2_embeddings`` loads the pretrained
+    LSM2 checkpoint and runs the *dense* encoder (no artificial masking) over the
     minute-level daily tensors in ``daily_hf``, pooling the non-masked tokens per day
     into one 384-d embedding per (user, day). This regenerates the embeddings from raw
     data rather than loading a prebuilt cache. The ViT forward pass requires a GPU.
 
-  - **Stage 2 (eval):** the ``MAE`` ``Method`` loads that intermediate, mean-pools
+  - **Stage 2 (eval):** the ``LSM2`` ``Method`` loads that intermediate, mean-pools
     each user's eligible daily embeddings (the cohort's ``dates``) → 384-d, and runs
     the uniform PCA-50 probe (``openmhc.LinearProbe``) in ``fit`` / ``predict``.
 
@@ -35,15 +35,15 @@ BATCH_SIZE = 64
 MAX_NONWEAR_MINUTES = 720
 # Public default: the LSM2 daily checkpoint published on the Hugging Face Hub, so a
 # fresh user with no W&B account / no local copy can still fetch it. Override with a
-# local .ckpt path (or any wandb:/hf:// ref) via the MAE_CHECKPOINT env var.
-DEFAULT_CHECKPOINT = os.environ.get("MAE_CHECKPOINT", "hf://MyHeartCounts/openmhc-lsm2-daily")
+# local .ckpt path (or any wandb:/hf:// ref) via the LSM2_CHECKPOINT env var.
+DEFAULT_CHECKPOINT = os.environ.get("LSM2_CHECKPOINT", "hf://MyHeartCounts/openmhc-lsm2-daily")
 
 
 # --------------------------------------------------------------------------- #
 # Stage-1 helpers: model load and input transforms.
 # --------------------------------------------------------------------------- #
-def _load_mae_model(checkpoint: str, device):
-    """Load + freeze the LSM2 MAE encoder from a Lightning checkpoint.
+def _load_lsm2_model(checkpoint: str, device):
+    """Load + freeze the LSM2 encoder from a Lightning checkpoint.
 
     ``LSM2Module.load_from_checkpoint`` rebuilds the architecture from the
     checkpoint's saved hyperparameters and loads the weights; ``.model`` is the
@@ -54,7 +54,7 @@ def _load_mae_model(checkpoint: str, device):
     from openmhc.models.lsm2.modules import LSM2Module
 
     resolved = resolve_checkpoint_path(checkpoint)
-    logger.info("loading MAE checkpoint: %s", resolved)
+    logger.info("loading LSM2 checkpoint: %s", resolved)
     model = LSM2Module.load_from_checkpoint(str(resolved), map_location=device).model
     model = model.to(device).eval()
     for p in model.parameters():
@@ -96,7 +96,7 @@ def _build_transforms(stats_path: Path):
 # --------------------------------------------------------------------------- #
 # Stage 1 — extraction (GPU job): raw daily_hf -> per-(user, day) 384-d
 # --------------------------------------------------------------------------- #
-def extract_mae_embeddings(
+def extract_lsm2_embeddings(
     output_dir: str,
     checkpoint: str = DEFAULT_CHECKPOINT,
     data_dir: str | None = None,
@@ -104,7 +104,7 @@ def extract_mae_embeddings(
     seed: int = 42,
     loader=None,
 ) -> None:
-    """Regenerate the MAE day-embedding intermediate from raw (GPU). Writes
+    """Regenerate the LSM2 day-embedding intermediate from raw (GPU). Writes
     ``embeddings.npy`` (N_days, 384) / ``user_ids.npy`` / ``dates.npy`` under
     ``output_dir`` — one pooled row per eligible (user, day).
 
@@ -126,10 +126,10 @@ def extract_mae_embeddings(
 
     torch.manual_seed(seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    logger.info("MAE extraction device=%s", device)
+    logger.info("LSM2 extraction device=%s", device)
 
-    paths = _DatasetPaths.resolve(data_dir)
-    model = _load_mae_model(checkpoint, device)
+    paths = _DatasetPaths.from_root(data_dir)
+    model = _load_lsm2_model(checkpoint, device)
     patch_size = model.patch_size
     transforms = _build_transforms(paths.daily_hf.parent / "normalization_stats.json")
 
@@ -149,7 +149,7 @@ def extract_mae_embeddings(
         if u in cohort_users:
             eligible_by_user[u].append(d[:10])
     logger.info(
-        "MAE eligible days (daily lookup ∩ cohort): %d users, %d (user,day) cells",
+        "LSM2 eligible days (daily lookup ∩ cohort): %d users, %d (user,day) cells",
         len(eligible_by_user), sum(len(v) for v in eligible_by_user.values()),
     )
 
@@ -163,7 +163,7 @@ def extract_mae_embeddings(
     date_list: list[str] = []
 
     with torch.no_grad():
-        for uid in tqdm(sorted(eligible_by_user), desc="MAE encode", unit="user"):
+        for uid in tqdm(sorted(eligible_by_user), desc="LSM2 encode", unit="user"):
             day_values, day_dates = loader.participant_minute(uid, eligible_by_user[uid])
             for start in range(0, len(day_values), batch_size):
                 batch_v = day_values[start : start + batch_size]
@@ -200,21 +200,21 @@ def extract_mae_embeddings(
     np.save(out / "embeddings.npy", emb)
     np.save(out / "user_ids.npy", np.array(uid_list, dtype=object))
     np.save(out / "dates.npy", np.array(date_list, dtype=object))
-    logger.info("wrote %d MAE day-embeddings (dim=%d) -> %s", len(emb), EMBED_DIM, out)
+    logger.info("wrote %d LSM2 day-embeddings (dim=%d) -> %s", len(emb), EMBED_DIM, out)
 
 
 # --------------------------------------------------------------------------- #
-# Stage 2 — the MAE Encoder (driven by run_eval; build-on-miss is internal)
+# Stage 2 — the LSM2 Encoder (driven by run_eval; build-on-miss is internal)
 # --------------------------------------------------------------------------- #
-class MAE:
-    """Unified ``Method``: MAE daily-encoder embeddings + the uniform linear probe.
+class LSM2:
+    """Unified ``Method``: LSM2 daily-encoder embeddings + the uniform linear probe.
 
     Per-user 384-d embeddings are built **on a cache miss** (dense encoder over raw,
     GPU), saved, and reused on a hit; ``fit`` / ``predict`` mean-pool each cohort
     participant's eligible day-embeddings and run :class:`openmhc.LinearProbe`.
     """
 
-    name = "mae"
+    name = "lsm2"
     input_granularity = "daily"  # per-user eligible days come from the daily lookup
     needs_segments = False  # consumes its own build-on-miss embedding cache
     segment_resolution = "minute"  # extraction reads the minute store (daily_hf) via the loader
@@ -240,7 +240,7 @@ class MAE:
 
     def set_context(self, ctx) -> None:
         """Receive the per-(task, split) cohort context; the engine injects it before
-        ``fit`` / ``predict``. MAE pools each user's cached day-embeddings over their
+        ``fit`` / ``predict``. LSM2 pools each user's cached day-embeddings over their
         eligible ``dates`` — neither carried by the clean ``Method`` signature."""
         self._ctx = ctx
 
@@ -253,15 +253,15 @@ class MAE:
     def _resolve_cache_dir(self) -> Path:
         if self._cache_dir is not None:
             return Path(self._cache_dir)
-        return Path("results") / "mae_embeddings" / "from_raw"
+        return Path("results") / "lsm2_embeddings" / "from_raw"
 
     def _ensure_embeddings(self) -> None:
         if self._by_key is not None:
             return
         cache = self._resolve_cache_dir()
         if not (cache / "embeddings.npy").exists():
-            logger.info("MAE embeddings cache miss at %s — extracting from raw (GPU)", cache)
-            extract_mae_embeddings(
+            logger.info("LSM2 embeddings cache miss at %s — extracting from raw (GPU)", cache)
+            extract_lsm2_embeddings(
                 output_dir=str(cache),
                 checkpoint=self._checkpoint,
                 data_dir=self._data_dir,
@@ -275,10 +275,10 @@ class MAE:
         self._by_key = {(str(u), str(d)[:10]): e for u, d, e in zip(uids, dates, emb)}
         if emb.size:
             self._dim = int(emb.shape[1])
-        logger.info("MAE embeddings ready: %d day-embeddings, dim=%d", len(emb), self._dim)
+        logger.info("LSM2 embeddings ready: %d day-embeddings, dim=%d", len(emb), self._dim)
 
     def _encode(self, user_ids, dates) -> np.ndarray:
-        """Per-user mean-pool of the cached MAE day-embeddings over each user's eligible days."""
+        """Per-user mean-pool of the cached LSM2 day-embeddings over each user's eligible days."""
         self._ensure_embeddings()
         X = np.zeros((len(user_ids), self._dim), dtype=np.float32)
         for i, (uid, ds) in enumerate(zip(user_ids, dates)):
@@ -288,7 +288,7 @@ class MAE:
         return X
 
     def fit(self, data, labels, task_type) -> None:
-        # ``data`` is unused: MAE self-serves cached day-embeddings, pooled per user
+        # ``data`` is unused: LSM2 self-serves cached day-embeddings, pooled per user
         # over the cohort's eligible dates from set_context.
         import openmhc
 
@@ -304,14 +304,14 @@ def _main() -> None:
     import argparse
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    ap = argparse.ArgumentParser(description="Stage-1 MAE day-embedding extraction (from raw, GPU).")
+    ap = argparse.ArgumentParser(description="Stage-1 LSM2 day-embedding extraction (from raw, GPU).")
     ap.add_argument("--output-dir", required=True)
     ap.add_argument("--checkpoint", default=DEFAULT_CHECKPOINT)
     ap.add_argument("--data-dir", default=None, help="dataset root (else MHC_DATA_DIR)")
     ap.add_argument("--batch-size", type=int, default=BATCH_SIZE)
     ap.add_argument("--seed", type=int, default=42)
     args = ap.parse_args()
-    extract_mae_embeddings(
+    extract_lsm2_embeddings(
         output_dir=args.output_dir,
         checkpoint=args.checkpoint,
         data_dir=args.data_dir,

@@ -1,5 +1,5 @@
 # @package method
-type: mae
-# Was the MAE_CHECKPOINT env var. Default = the public HF checkpoint; override
+type: lsm2
+# Was the LSM2_CHECKPOINT env var. Default = the public HF checkpoint; override
 # with a local .ckpt path or an alternate ref when the registry is restricted.
 checkpoint: hf://MyHeartCounts/openmhc-lsm2-daily

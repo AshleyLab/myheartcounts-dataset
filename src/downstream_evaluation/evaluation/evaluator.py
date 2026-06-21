@@ -23,19 +23,19 @@ from downstream_evaluation.evaluation.metrics import (
 logger = logging.getLogger(__name__)
 
 
-def _metrics_for(task: str, y_true, y_pred) -> dict[str, float]:
+def _metrics_for(task: str, y_true, y_pred, seed: int = 42) -> dict[str, float]:
     ttype = get_task_type(task)
     if ttype == "binary":
-        return compute_binary_metrics(y_true, y_pred)
+        return compute_binary_metrics(y_true, y_pred, seed=seed)
     # multiclass/ordinal scores discrete class predictions. The uniform ordinal probe
     # already predicts ints; an end-to-end method may hand back raw floats (e.g. the
     # hybrid's rank-combined scores, GRU-D's ordinal expected level), so round to int
     # before scoring (a no-op when predictions are already discrete).
     if ttype == "multiclass":
-        return compute_multiclass_metrics(y_true, np.round(y_pred).astype(int))
+        return compute_multiclass_metrics(y_true, np.round(y_pred).astype(int), seed=seed)
     if ttype == "ordinal":
-        return compute_ordinal_metrics(y_true, np.round(y_pred).astype(int))
-    return compute_regression_metrics(y_true, y_pred)
+        return compute_ordinal_metrics(y_true, np.round(y_pred).astype(int), seed=seed)
+    return compute_regression_metrics(y_true, y_pred, seed=seed)
 
 
 def _public_inputs(td):
@@ -86,12 +86,15 @@ def _set_context(model, td) -> None:
 class DownstreamEvaluator:
     """Run the per-task fit→predict→score loop for one model."""
 
-    def __init__(self, predictions_dir: str | None = None):
+    def __init__(self, predictions_dir: str | None = None, seed: int = 42):
         """Args:
         predictions_dir: when set, write each task's test predictions (uid, y_true,
             y_pred, y_proba) to ``<predictions_dir>/<method>/<task>/test.parquet``.
+        seed: random seed for the per-task bootstrap standard errors (default 42,
+            the canonical leaderboard seed).
         """
         self.predictions_dir = predictions_dir
+        self.seed = seed
 
     def run(self, provider, loader, model, tasks: list[str], spec=None) -> dict[str, dict]:
         """Evaluate ``model`` on each task; returns ``{task: {**metrics, n_test}}``.
@@ -114,7 +117,10 @@ class DownstreamEvaluator:
             y_true, y_pred = self._eval_task(
                 model, task, train_td, test_td, loader, spec, streaming
             )
-            results[task] = {**_metrics_for(task, y_true, y_pred), "n_test": int(len(y_true))}
+            results[task] = {
+                **_metrics_for(task, y_true, y_pred, seed=self.seed),
+                "n_test": int(len(y_true)),
+            }
             if self.predictions_dir is not None:
                 from downstream_evaluation.evaluation.predictions_io import (
                     write_task_predictions,

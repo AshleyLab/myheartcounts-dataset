@@ -35,12 +35,12 @@ def _xgboost(method: MethodConfig, data: DataConfig):
     ), None
 
 
-def _mae(method: MethodConfig, data: DataConfig):
-    from downstream_evaluation.models.mae import MAE
+def _lsm2(method: MethodConfig, data: DataConfig):
+    from downstream_evaluation.models.lsm2 import LSM2
 
     if method.checkpoint:
-        return MAE(data_dir=data.data_dir, checkpoint=method.checkpoint), None
-    return MAE(data_dir=data.data_dir), None
+        return LSM2(data_dir=data.data_dir, checkpoint=method.checkpoint), None
+    return LSM2(data_dir=data.data_dir), None
 
 
 def _wbm(method: MethodConfig, data: DataConfig):
@@ -82,7 +82,7 @@ METHOD_REGISTRY = MethodRegistry(
     builders={
         "linear": _linear,
         "xgboost": _xgboost,
-        "mae": _mae,
+        "lsm2": _lsm2,
         "wbm": _wbm,
         "toto": _toto,
         "chronos2": _chronos2,

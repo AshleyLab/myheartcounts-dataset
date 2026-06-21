@@ -88,9 +88,10 @@ class EvalConfig:
 # --------------------------------------------------------------------------- #
 @dataclass
 class DataConfig:
-    """Dataset location for the CLI; ``None`` falls back to ``MHC_DATA_DIR``."""
+    """Dataset location + version for the CLI; ``data_dir=None`` falls back to ``MHC_DATA_DIR``."""
 
     data_dir: str | None = None
+    version: str = "full"  # "xs" or "full" — cross-checked against dataset_version.json
 
 
 @dataclass

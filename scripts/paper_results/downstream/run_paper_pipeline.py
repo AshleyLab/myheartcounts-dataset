@@ -5,26 +5,34 @@ One command, one config: reads ``configs/paper/downstream_paper.yaml`` (or any
 ``--config``) and chains the bootstrap phases, each as a subprocess so a failing
 phase prints its command and aborts:
 
+  Phase 0 — ``run_eval.py`` per method  → ``eval_<m>.csv`` + per-(method, task) preds
+            (mirrors forecasting/imputation; ``--skip-eval`` to reuse existing ones)
   Phase 1 — ``bootstrap_downstream_draws.py``         → ``bootstrap_draws.parquet``
   Phase 2 — ``aggregate_downstream_paper_metrics.py`` → 4 sidecar CSVs
             ``aggregate_fairness_skill_score.py``     → ``fairness_skill_score_bootstrap.csv``
 
-Predictions (per-(method, task) ``test.parquet`` under ``predictions_dir``) come
-from the eval run with ``PREDICTIONS_DIR`` set; this driver does not run the eval.
+By default Phase 0 regenerates the predictions under ``predictions_dir`` (needs the
+dataset + a GPU for the neural models). Pass ``--skip-eval`` to start from the frozen
+predictions — the published numbers come from logged SLURM eval jobs.
 
 Usage::
 
-    PYTHONPATH=src python scripts/downstream_paper_results/run_paper_pipeline.py \
+    # full reproduction (runs the eval, then aggregates):
+    PYTHONPATH=src python scripts/paper_results/downstream/run_paper_pipeline.py \
         --config configs/paper/downstream_paper.yaml
 
+    # re-aggregate from frozen predictions (the everyday path):
+    ... --config configs/paper/downstream_paper.yaml --skip-eval
+
     # re-aggregate only (draws already exist), e.g. to retune the fairness knobs:
-    ... --config configs/paper/downstream_paper.yaml --skip-phase1
+    ... --config configs/paper/downstream_paper.yaml --skip-eval --skip-phase1
 """
 
 from __future__ import annotations
 
 import argparse
 import logging
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -35,15 +43,42 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(
 log = logging.getLogger(__name__)
 
 HERE = Path(__file__).resolve().parent
+# scripts/paper_results/downstream/run_paper_pipeline.py -> parents[3] = repo root.
+REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
-def _run(cmd: list[str], dry_run: bool) -> None:
+def _run(cmd: list[str], dry_run: bool, env: dict | None = None) -> None:
     """Run a subprocess (inheriting env, e.g. PYTHONPATH); raise on non-zero exit."""
     log.info("$ %s", " ".join(str(c) for c in cmd))
     if dry_run:
         return
-    if subprocess.run(cmd, check=False).returncode != 0:
+    if subprocess.run(cmd, check=False, env=env).returncode != 0:
         raise SystemExit(f"Command failed: {' '.join(str(c) for c in cmd)}")
+
+
+def _phase0_eval(cfg: dict, methods: list[str], dry_run: bool) -> None:
+    """Phase 0 — run the downstream eval per method (the SLURM-goldens driver).
+
+    Invokes ``scripts/run_eval.py`` once per method, writing ``eval_<method>.csv`` to
+    ``csvs_dir`` + per-(method, task) predictions to ``predictions_dir`` — exactly the
+    layout Phase 1 reads. ``data_dir`` (null → ``MHC_DATA_DIR``) is the dataset root;
+    ``version`` (default ``full``) selects the release. Mirrors the per-track Phase 0
+    of the forecasting / imputation pipelines.
+    """
+    csvs_dir = Path(cfg["csvs_dir"])
+    csvs_dir.mkdir(parents=True, exist_ok=True)
+    for m in methods:
+        env = {
+            **os.environ,
+            "METHOD": m,
+            "VERSION": str(cfg.get("version", "full")),
+            "PREDICTIONS_DIR": str(cfg["predictions_dir"]),
+            "OUT_CSV": str(csvs_dir / f"eval_{m}.csv"),
+        }
+        if cfg.get("data_dir"):
+            env["MHC_DATA_DIR"] = str(cfg["data_dir"])
+        log.info("phase 0 — eval method=%s -> %s (+ predictions/)", m, env["OUT_CSV"])
+        _run([sys.executable, str(REPO_ROOT / "scripts" / "run_eval.py")], dry_run, env=env)
 
 
 def _phase1_bootstrap(cfg: dict, draws: Path, methods: list[str], dry_run: bool) -> None:
@@ -108,7 +143,7 @@ def _phase2_aggregate(cfg: dict, draws: Path, out_dir: Path, methods: list[str],
 
 
 def main() -> None:
-    """Read the config, chain phase 1 → phase 2 (+ fairness reducer)."""
+    """Read the config, chain phase 0 (eval) → phase 1 → phase 2 (+ fairness reducer)."""
     p = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -121,6 +156,11 @@ def main() -> None:
     )
     p.add_argument(
         "--methods", nargs="+", default=None, help="Restrict to a subset of the config's methods."
+    )
+    p.add_argument(
+        "--skip-eval",
+        action="store_true",
+        help="Skip phase 0 (reuse the frozen predictions under predictions_dir, e.g. from SLURM).",
     )
     p.add_argument(
         "--skip-phase1",
@@ -143,6 +183,9 @@ def main() -> None:
     out_dir = Path(cfg["output_dir"])
     out_dir.mkdir(parents=True, exist_ok=True)
     draws = out_dir / "bootstrap_draws.parquet"
+
+    if not args.skip_eval:
+        _phase0_eval(cfg, methods, args.dry_run)
 
     if args.strict:
         pred_root = Path(cfg["predictions_dir"])

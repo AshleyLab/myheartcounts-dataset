@@ -3,8 +3,8 @@
 # Compose: each group below picks one preset YAML under its directory. Override
 # on the CLI, e.g.:
 #   mhc-downstream-eval method=xgboost
-#   mhc-downstream-eval --multirun method=linear,mae,xgboost
-#   mhc-downstream-eval method=mae data.data_dir=/path output.predictions_dir=preds/
+#   mhc-downstream-eval --multirun method=linear,lsm2,xgboost
+#   mhc-downstream-eval method=lsm2 data.data_dir=/path output.predictions_dir=preds/
 #
 # (SLURM dispatch via the shared eval_hydra Submitit launcher is a follow-up;
 #  add the launcher package + `hydra/launcher=...` then, mirroring mhc-impute-eval.)

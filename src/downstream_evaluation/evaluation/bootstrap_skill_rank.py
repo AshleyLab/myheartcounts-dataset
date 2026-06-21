@@ -15,8 +15,8 @@ Two-phase, mirroring the imputation paper-metrics pipeline:
   Overall + per-domain), and the **fairness** tables (per-subgroup skill, disparity,
   fairness-adjusted skill).
 
-The runnable CLIs are ``scripts/downstream_paper_results/bootstrap_downstream_draws.py`` (phase
-1) and ``scripts/downstream_paper_results/aggregate_downstream_paper_metrics.py`` (phase 2).
+The runnable CLIs are ``scripts/paper_results/downstream/bootstrap_downstream_draws.py`` (phase
+1) and ``scripts/paper_results/downstream/aggregate_downstream_paper_metrics.py`` (phase 2).
 Fairness rows require ``predictions_dir/_subgroups.json`` (per-user {age_group, sex});
 without it only the global (``subgroup_attr="all"``) rows are produced.
 """
@@ -915,24 +915,51 @@ def _pad_jackknife_maps(per_user_maps: list[dict[tuple, float]]) -> dict[tuple, 
 # ---------------------------------------------------------------------------
 
 
+def mean_pairwise_abs_diff(values) -> float:
+    """Mean ``|E_a − E_c|`` over all unique unordered subgroup pairs (NaN if < 2 finite).
+
+    The "average pairwise" disparity alternative to ``max − min``: uses every
+    subgroup relationship rather than just the two extremes. Unlike ``max − min``
+    it is sensitive to duplicate subgroup values (a duplicate adds a zero-diff
+    pair), so callers must pass one error per subgroup value.
+    """
+    vals = np.asarray(values, dtype=float)
+    vals = vals[np.isfinite(vals)]
+    if vals.size < 2:
+        return float("nan")
+    d = np.abs(vals[:, None] - vals[None, :])
+    return float(np.mean(d[np.triu_indices(vals.size, k=1)]))
+
+
+def _disparity_agg(disparity: str):
+    """Map a disparity-mode name to the per-(task, method) aggregator over subgroup ``E``."""
+    if disparity == "maxmin":
+        return lambda x: x.max() - x.min()
+    if disparity == "mean_pairwise":
+        return mean_pairwise_abs_diff
+    raise ValueError(f"unknown disparity {disparity!r}; expected 'maxmin' or 'mean_pairwise'")
+
+
 def _attr_disparity_ratio_skill(
     g: pd.DataFrame,
     methods: list[str],
     baseline: str,
     clip_lower: float,
     clip_upper: float,
+    disparity: str = "maxmin",
 ) -> dict[str, float]:
     """Disparity-ratio fairness skill ``{method: S}`` for one (attribute, draw) slice.
 
     ``g`` carries columns ``task, method, subgroup_value, E``. Per task the
-    disparity ``D = max_v E − min_v E`` over subgroup values; ``ratio = clip(
+    disparity ``D`` over subgroup values (``disparity="maxmin"`` → ``max_v E −
+    min_v E``; ``"mean_pairwise"`` → mean unordered-pairwise ``|ΔE|``); ``ratio = clip(
     D_model / D_baseline)`` dropping tasks where ``D_baseline ≤ 0`` or non-finite;
     ``S = 1 − geomean_task(ratio)``. Shared by the draws path
     (``aggregate_fairness_skill_score``) and the leave-one-user-out jackknife so
     the two are identical by construction.
     """
     out: dict[str, float] = {}
-    disp = g.groupby(["task", "method"])["E"].agg(lambda x: x.max() - x.min()).unstack("method")
+    disp = g.groupby(["task", "method"])["E"].agg(_disparity_agg(disparity)).unstack("method")
     if baseline not in disp.columns:
         return out
     d_base = disp[baseline]
@@ -958,6 +985,7 @@ def _fairness_skill_from_indices(
     baseline: str,
     clip_lower: float,
     clip_upper: float,
+    disparity: str = "maxmin",
 ) -> dict[tuple[str, str], float]:
     """``{(method, scope): S}`` (scopes = each attribute + ``overall``) on given row indices.
 
@@ -997,7 +1025,9 @@ def _fairness_skill_from_indices(
         if not rows:
             continue
         g = pd.DataFrame(rows, columns=["task", "method", "subgroup_value", "E"])
-        for m, s in _attr_disparity_ratio_skill(g, methods, baseline, clip_lower, clip_upper).items():
+        for m, s in _attr_disparity_ratio_skill(
+            g, methods, baseline, clip_lower, clip_upper, disparity
+        ).items():
             out[(m, attr)] = s
             per_attr.setdefault(m, {})[attr] = s
     for m in methods:
@@ -1015,6 +1045,7 @@ def jackknife_fairness_skill(
     *,
     clip_lower: float,
     clip_upper: float,
+    disparity: str = "maxmin",
 ) -> tuple[dict[tuple[str, str], np.ndarray], dict[tuple[str, str], float]]:
     """Exact leave-one-user-out jackknife of the disparity-ratio fairness skill score.
 
@@ -1031,7 +1062,8 @@ def jackknife_fairness_skill(
     attribute_masks = _build_subgroup_masks(aligned, tasks, methods, subgroup_map, list(attributes))
     full_idx = {t: np.arange(len(aligned[methods[0]][t]["uids"])) for t in tasks}
     point = _fairness_skill_from_indices(
-        aligned, methods, tasks, attributes, attribute_masks, full_idx, baseline, clip_lower, clip_upper
+        aligned, methods, tasks, attributes, attribute_masks, full_idx, baseline, clip_lower, clip_upper,
+        disparity,
     )
     pos = {t: {u: i for i, u in enumerate(aligned[methods[0]][t]["uids"])} for t in tasks}
     users = sorted({u for t in tasks for u in aligned[methods[0]][t]["uids"]})
@@ -1043,7 +1075,8 @@ def jackknife_fairness_skill(
             idx_u[t] = full_idx[t] if p is None else np.delete(full_idx[t], p)
         per_user_maps.append(
             _fairness_skill_from_indices(
-                aligned, methods, tasks, attributes, attribute_masks, idx_u, baseline, clip_lower, clip_upper
+                aligned, methods, tasks, attributes, attribute_masks, idx_u, baseline, clip_lower, clip_upper,
+                disparity,
             )
         )
     return _pad_jackknife_maps(per_user_maps), point

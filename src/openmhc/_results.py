@@ -19,7 +19,7 @@ class PredictionResults:
 
     Attributes:
         records: List of per-task metric records. Each record is a dict with
-            keys: task, task_type, classifier, metric, value, n_train, n_test.
+            keys: task, task_type, classifier, metric, value, n_test.
     """
 
     records: list[dict] = field(repr=False)
@@ -29,7 +29,7 @@ class PredictionResults:
 
         Returns:
             DataFrame with columns: task, task_type, classifier, metric,
-            value, n_train, n_test.
+            value, n_test.
         """
         return pd.DataFrame(self.records)
 

@@ -13,7 +13,7 @@ the per-domain JSON field names :data:`DOMAIN_FIELD`, and the leaderboard seed.
 
 Usage::
 
-    python scripts/downstream_paper_results/build_leaderboard_json.py \
+    python scripts/paper_results/downstream/build_leaderboard_json.py \
         --current   /tmp/leaderboard.json \
         --paper-dir results/paper \
         --output    /tmp/leaderboard_updated.json
@@ -27,10 +27,12 @@ import json
 from datetime import date
 from pathlib import Path
 
-# (csv_key, display_name, mtype) — order is the display order in the JSON, which
-# the schema expects to coincide with skill-score ranking (asserted at render).
+# (csv_key, display_name, mtype) — static metadata only. The display order and
+# sectionRank are computed at render time from the bootstrapped skill scores
+# (descending), so a CSV refresh reflows the leaderboard automatically; the list
+# order here is irrelevant.
 METHODS: list[tuple[str, str, str]] = [
-    ("mae", "LSM-2", "Self-Supervised"),
+    ("lsm2", "LSM-2", "Self-Supervised"),
     ("xgboost", "XGBoost", "Statistical"),
     ("multirocket", "MultiRocket", "Convolutional"),
     ("wbm", "WBM", "Self-Supervised"),
@@ -92,13 +94,15 @@ def _build_section(
     doms: dict[str, dict[str, float]],
     submitted_on: str,
 ) -> list[dict]:
-    """Render method rows; verify the static order is descending by skill."""
-    scores = [skill[k] for k, _, _ in methods]
-    if scores != sorted(scores, reverse=True):
-        ordered = [k for k, _, _ in sorted(methods, key=lambda x: -skill[x[0]])]
-        raise SystemExit(f"Section order mismatch — reorder METHODS to: {ordered}")
+    """Render method rows, sorted by descending skill score.
+
+    ``methods`` carries the (csv_key, display_name, mtype) mapping only; the
+    display order and ``sectionRank`` are derived from ``skill`` at render time,
+    so a CSV refresh that reorders methods reflows the leaderboard automatically.
+    """
+    ordered = sorted(methods, key=lambda m: -skill[m[0]])
     rows: list[dict] = []
-    for i, (key, display, mtype) in enumerate(methods, start=1):
+    for i, (key, display, mtype) in enumerate(ordered, start=1):
         dd = doms.get(key, {})
         row = {
             "type": "method",

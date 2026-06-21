@@ -138,7 +138,7 @@ def extract_xgboost_features(
     )
     from downstream_evaluation.models.xgboost.preprocessing import build_cutoff_dates
 
-    paths = _DatasetPaths.resolve(data_dir)
+    paths = _DatasetPaths.from_root(data_dir)
     _ensure_labels_env(paths.labels_dir)  # build_cutoff_dates reads the Labels API
     arrow_dir = paths.daily_hf
     out = Path(output_dir)

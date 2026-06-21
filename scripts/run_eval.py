@@ -33,12 +33,12 @@ def build_model(method: str, data_dir: str):
     if method == "multirocket":
         from downstream_evaluation.models.multirocket import MultiRocket
         return MultiRocket(data_dir=data_dir, tasks=BENCHMARK_TASKS)
-    if method == "mae":
-        from downstream_evaluation.models.mae import MAE
-        # MAE_CHECKPOINT overrides the default registry ref with a local .ckpt path
+    if method == "lsm2":
+        from downstream_evaluation.models.lsm2 import LSM2
+        # LSM2_CHECKPOINT overrides the default registry ref with a local .ckpt path
         # (or an alternate wandb ref) — e.g. when the registry is access-restricted.
-        ckpt = os.environ.get("MAE_CHECKPOINT")
-        return MAE(data_dir=data_dir, checkpoint=ckpt) if ckpt else MAE(data_dir=data_dir)
+        ckpt = os.environ.get("LSM2_CHECKPOINT")
+        return LSM2(data_dir=data_dir, checkpoint=ckpt) if ckpt else LSM2(data_dir=data_dir)
     if method == "xgboost":
         from downstream_evaluation.models.xgboost import XGBoost
         return XGBoost(data_dir=data_dir)
@@ -49,17 +49,25 @@ def build_model(method: str, data_dir: str):
 
 
 def main() -> None:
+    """Run ``METHOD`` through ``evaluate_prediction``; write ``OUT_CSV`` (+ optional preds).
+
+    Env vars: ``METHOD`` (default ``linear``), ``VERSION`` (``xs``|``full``, default
+    ``full``), ``MHC_DATA_DIR``, ``PREDICTIONS_DIR`` (optional), ``OUT_CSV`` (default
+    ``eval_<METHOD>.csv``).
+    """
     import openmhc
     from openmhc._evaluate import _DatasetPaths
 
     method = os.environ.get("METHOD", "linear")
-    paths = _DatasetPaths.resolve(os.environ.get("MHC_DATA_DIR"))
+    version = os.environ.get("VERSION", "full")
+    paths = _DatasetPaths.resolve(os.environ.get("MHC_DATA_DIR"), version=version)
     model = build_model(method, str(paths.root))
 
     # PREDICTIONS_DIR (optional): emit per-(method, task) test predictions +
     # _subgroups.json for the paper-metrics bootstrap (skill / rank / fairness CIs).
     results = openmhc.evaluate_prediction(
         model,
+        version=version,
         tasks=BENCHMARK_TASKS,
         data_dir=str(paths.root),
         predictions_dir=os.environ.get("PREDICTIONS_DIR"),

@@ -253,7 +253,7 @@ class Forecaster(Protocol):
 
     Optional metadata kwargs are keyword-only and forwarded only if declared
     (the harness inspects the signature once, the same duck-typed pattern as
-    :class:`Encoder` / :class:`Imputer`): ``variable_names``,
+    :class:`Method` / :class:`Imputer`): ``variable_names``,
     ``past_covariates``, ``future_covariates``, ``index_days``.
 
     The benchmark ranks point forecasts; quantile forecasts are optional by

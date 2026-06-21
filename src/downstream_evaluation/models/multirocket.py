@@ -105,7 +105,7 @@ class MultiRocket:
         from downstream_evaluation.data.splits import load_split_file
         from openmhc._evaluate import _DatasetPaths
 
-        paths = _DatasetPaths.resolve(self._data_dir)
+        paths = _DatasetPaths.from_root(self._data_dir)
         split_users = load_split_file(paths.splits_file)
 
         # Whole-history store from the shared loader (one daily_hourly_hf read across the

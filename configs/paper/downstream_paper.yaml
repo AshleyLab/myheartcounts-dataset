@@ -1,12 +1,17 @@
 # Downstream paper-metrics pipeline config — the single record of how the
 # published downstream numbers are produced. Consumed by
-# scripts/downstream_paper_results/run_paper_pipeline.py.
+# scripts/paper_results/downstream/run_paper_pipeline.py.
 #
-# NOTE: this is a params / provenance file, not a method "sweep". The downstream
-# eval runs separately (logged slurm jobs); this pipeline starts from the frozen
-# per-(method, task) predictions under predictions_dir and never runs the eval.
+# NOTE: this is a params / provenance file, not a method "sweep". Phase 0 can run the
+# eval per method (run_eval.py) into predictions_dir + csvs_dir, but the published
+# numbers come from logged SLURM eval jobs — so the everyday invocation passes
+# --skip-eval and starts from the frozen predictions below.
 
-# Inputs — frozen eval predictions + their metric CSVs.
+# Phase 0 (eval) — dataset root + release. data_dir: null -> MHC_DATA_DIR.
+data_dir: null
+version: full
+
+# Inputs — eval predictions + their metric CSVs (frozen, or written by phase 0).
 predictions_dir: results/eval/final/predictions
 csvs_dir: results/eval/final
 output_dir: results/paper
@@ -15,7 +20,7 @@ output_dir: results/paper
 methods:
   - linear
   - multirocket
-  - mae
+  - lsm2
   - toto
   - chronos2
   - xgboost

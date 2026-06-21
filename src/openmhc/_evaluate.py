@@ -70,6 +70,7 @@ class _DatasetPaths:
     daily_hf: Path
     window_index: Path
     weekly_labels_lookup: Path
+    daily_labels_lookup: Path
     splits_file: Path
     norm_stats: Path
     clip_dates: Path
@@ -123,16 +124,21 @@ class _DatasetPaths:
                 f"root, or pass version={marker['version']!r}."
             )
 
-        splits_file = root / "splits" / _SPLIT_FILENAMES[version]
-        cls._validate_split_file(splits_file, version, marker)
+        paths = cls._build(root, version)
+        cls._validate_split_file(paths.splits_file, version, marker)
+        return paths
 
+    @classmethod
+    def _build(cls, root: Path, version: str) -> _DatasetPaths:
+        """Derive the sub-path bundle from a resolved root + version (no I/O)."""
         return cls(
             root=root,
             daily_hourly_hf=root / "processed" / "daily_hourly_hf",
             daily_hf=root / "processed" / "daily_hf",
             window_index=root / "processed" / "window_index_w7_s7_d5.parquet",
             weekly_labels_lookup=root / "processed" / "weekly_labels_lookup_stride7.parquet",
-            splits_file=splits_file,
+            daily_labels_lookup=root / "processed" / "daily_labels_lookup.parquet",
+            splits_file=root / "splits" / _SPLIT_FILENAMES[version],
             norm_stats=root / "processed" / "normalization_stats_hourly.json",
             clip_dates=root / "labels" / "clip_dates.json",
             labels_dir=root / "labels",
@@ -140,6 +146,24 @@ class _DatasetPaths:
             forecasting_sample_index_dir=root / "forecasting_sample_index",
             version=version,
         )
+
+    @classmethod
+    def from_root(cls, override: str | Path | None = None) -> _DatasetPaths:
+        """Build the bundle from an already-validated root, trusting its marker.
+
+        For internal callers (the bundled models, the loader) that received a root the
+        public API already resolved and version-checked: they need the sub-paths, not a
+        re-assertion of the version. The ``dataset_version.json`` marker supplies the
+        version; there is no caller-vs-marker cross-check. Public entry points use
+        :meth:`resolve`, which requires an explicit ``version`` and cross-checks it.
+
+        Raises:
+            FileNotFoundError: If the root is missing or has no ``dataset_version.json``
+                marker (see :func:`openmhc.write_dataset_marker`).
+        """
+        root = _resolve_dataset_root(override)
+        version = read_dataset_marker(root)["version"]
+        return cls._build(root, version)
 
     @staticmethod
     def _validate_split_file(splits_file: Path, version: str, marker: dict) -> None:

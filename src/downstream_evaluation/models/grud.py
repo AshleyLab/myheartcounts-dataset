@@ -355,7 +355,7 @@ class GRUD:
         from downstream_evaluation.data.splits import load_split_file
         from openmhc._evaluate import _DatasetPaths
 
-        paths = _DatasetPaths.resolve(self._data_dir)
+        paths = _DatasetPaths.from_root(self._data_dir)
         lookup = str(paths.root / "processed" / LOOKUP_BY_GRANULARITY["daily"])
         return TaskDataProvider(lookup, load_split_file(paths.splits_file), granularity="daily")
 

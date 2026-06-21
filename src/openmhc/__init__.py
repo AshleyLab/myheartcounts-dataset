@@ -16,7 +16,7 @@ Quick start:
 
 from pathlib import Path
 
-from openmhc._constants import MASKING_SCENARIOS, SENSOR_CHANNELS
+from openmhc._constants import MASKING_SCENARIOS, SENSOR_CHANNELS, TASK_DISPLAY_NAMES
 from openmhc._data_spec import DataSpec
 from openmhc._data_utils import (
     iter_split_data,
@@ -71,6 +71,7 @@ __all__ = [
     "list_tasks",
     "list_masking_scenarios",
     "SENSOR_CHANNELS",
+    "TASK_DISPLAY_NAMES",
     # Result types
     "PredictionResults",
     "ImputationResults",

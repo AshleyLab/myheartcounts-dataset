@@ -142,7 +142,7 @@ def extract_wbm_embeddings(
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logger.info("WBM extraction device=%s", device)
 
-    paths = _DatasetPaths.resolve(data_dir)
+    paths = _DatasetPaths.from_root(data_dir)
     if loader is None:
         loader = DataLoader(data_dir, granularity="daily")
     ds = IndexedWeekDataset(

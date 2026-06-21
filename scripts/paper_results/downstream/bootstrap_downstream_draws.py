@@ -12,7 +12,7 @@ skill / rank / fairness sidecar CSVs without re-resampling.
 
 Usage::
 
-    PYTHONPATH=src python scripts/downstream_paper_results/bootstrap_downstream_draws.py \
+    PYTHONPATH=src python scripts/paper_results/downstream/bootstrap_downstream_draws.py \
         --predictions_dir results/eval/final/predictions \
         --csvs_dir results/eval/final \
         --methods linear multirocket mae toto chronos2 xgboost wbm gru_d \

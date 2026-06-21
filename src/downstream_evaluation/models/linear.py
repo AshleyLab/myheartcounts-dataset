@@ -16,6 +16,8 @@ import warnings
 
 import numpy as np
 
+from openmhc import DataSpec
+
 logger = logging.getLogger(__name__)
 
 _DEMO_COVARIATES = ["age", "BiologicalSex", "BMI_values"]
@@ -46,7 +48,11 @@ class Linear:
     """Unified ``Method``: raw 38-d mean/std + demographics + a linear probe."""
 
     name = "linear"
-    input_granularity = "daily"
+    # Dogfood the public input-shape contract: declare data_spec instead of the legacy
+    # input_granularity. ("hourly", "day") = per-eligible-day (n_days, 24, 38) tensors
+    # from daily_hourly_hf — the same data the legacy path served, so results are
+    # unchanged; the engine routes data_spec models through the CohortStream path.
+    data_spec = DataSpec("hourly", "day")
 
     def __init__(self, data_dir: str | None = None, seed: int = 42) -> None:
         """Args:
@@ -77,7 +83,7 @@ class Linear:
 
         from downstream_evaluation.demo_covariates import build_demo_user_lookup_from_labels_df
 
-        paths = _DatasetPaths.resolve(self._data_dir)
+        paths = _DatasetPaths.from_root(self._data_dir)
         labels_df = pd.read_parquet(paths.daily_labels_lookup)
         self._demo_lookup = build_demo_user_lookup_from_labels_df(labels_df, _DEMO_COVARIATES)
 

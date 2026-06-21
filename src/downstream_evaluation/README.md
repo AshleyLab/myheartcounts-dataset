@@ -51,7 +51,7 @@ for M in linear multirocket gru_d xgboost mae toto chronos2 wbm; do
   METHOD=$M MHC_DATA_DIR=path/to/mhc-data \
   PREDICTIONS_DIR=results/eval/final/predictions \
   OUT_CSV=results/eval/final/eval_$M.csv \
-  sbatch jobs/imperial/slurm/run_eval.slurm        # add --gres=gpu:1 for toto/chronos2/wbm/mae/gru_d
+  sbatch jobs/imperial/slurm/run_eval.slurm        # add --gres=gpu:1 for toto/chronos2/wbm/lsm2/gru_d
 done
 ```
 
@@ -70,7 +70,7 @@ done
 **3. Run the paper pipeline** (bootstrap CIs, skill/rank/fairness aggregates) — one config drives every phase:
 
 ```bash
-PYTHONPATH=src python scripts/downstream_paper_results/run_paper_pipeline.py \
+PYTHONPATH=src python scripts/paper_results/downstream/run_paper_pipeline.py \
     --config configs/paper/downstream_paper.yaml
 ```
 
@@ -104,7 +104,7 @@ configs/downstream/
 mhc-downstream-eval method=linear                       # one method, all 32 tasks
 mhc-downstream-eval method=xgboost evaluation.tasks=[age,Diabetes] \
     data.data_dir=/path/to/mhc-data output.predictions_dir=results/eval/predictions
-mhc-downstream-eval --multirun method=linear,mae,xgboost   # sweep (one run dir each)
+mhc-downstream-eval --multirun method=linear,lsm2,xgboost   # sweep (one run dir each)
 ```
 
 **Output.** Each run lands in `${output.results_dir}/<timestamp>_<method>/`:

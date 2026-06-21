@@ -167,6 +167,28 @@ class TestDatasetPaths:
         with pytest.raises(ValueError, match="contains 5 users"):
             _DatasetPaths.resolve(tmp_path, version="full")
 
+    def test_from_root_trusts_marker_without_version_arg(self, tmp_path):
+        """Internal callers use ``from_root``: no version arg, version from the marker.
+
+        Regression guard — the bundled models and the loader resolve paths this way
+        (they get an already-validated root). A version-required ``resolve`` broke the
+        whole downstream track end-to-end. ``from_root`` needs only the marker, not the
+        split file.
+        """
+        write_dataset_marker(tmp_path, version="xs", n_users=593)  # marker only, no split
+        paths = _DatasetPaths.from_root(tmp_path)
+        assert paths.version == "xs"  # trusted from the marker, not asserted by the caller
+        # daily_labels_lookup is the field the version merge dropped; the linear baseline
+        # (and others) read it.
+        assert (
+            paths.daily_labels_lookup == tmp_path / "processed" / "daily_labels_lookup.parquet"
+        )
+
+    def test_from_root_matches_resolve(self, tmp_path):
+        """``from_root`` and ``resolve(version=...)`` derive identical sub-paths."""
+        _write_minimal_split(tmp_path, version="full")
+        assert _DatasetPaths.from_root(tmp_path) == _DatasetPaths.resolve(tmp_path, version="full")
+
 
 class TestLabelsEnvWiring:
     """Verify the labels.api env-var bridge is set when missing."""

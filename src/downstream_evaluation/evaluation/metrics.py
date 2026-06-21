@@ -94,12 +94,15 @@ def get_task_type(task_name: str) -> str:
         raise ValueError(f"Unknown label type '{label_type}' for task '{task_name}'")
 
 
-def compute_binary_metrics(y_true: np.ndarray, y_prob: np.ndarray) -> dict[str, float]:
+def compute_binary_metrics(
+    y_true: np.ndarray, y_prob: np.ndarray, seed: int = _BOOTSTRAP_SEED
+) -> dict[str, float]:
     """AUPRC (primary binary metric) + bootstrap SE.
 
     Args:
         y_true: Ground truth binary labels (N,).
         y_prob: Predicted probabilities/scores for the positive class (N,).
+        seed: Random seed for the bootstrap SE.
     """
     if len(np.unique(y_true)) < 2 or np.isnan(y_prob).any() or np.isinf(y_prob).any():
         return {"auprc": float("nan"), "auprc_se": float("nan")}
@@ -112,11 +115,13 @@ def compute_binary_metrics(y_true: np.ndarray, y_prob: np.ndarray) -> dict[str, 
 
     return {
         "auprc": float(average_precision_score(y_true, y_prob)),
-        "auprc_se": bootstrap_se(y_true, y_prob, _auprc),
+        "auprc_se": bootstrap_se(y_true, y_prob, _auprc, seed=seed),
     }
 
 
-def compute_multiclass_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, float]:
+def compute_multiclass_metrics(
+    y_true: np.ndarray, y_pred: np.ndarray, seed: int = _BOOTSTRAP_SEED
+) -> dict[str, float]:
     """Accuracy (primary multiclass metric) + bootstrap SE."""
 
     def _acc(yt, yp):
@@ -124,11 +129,13 @@ def compute_multiclass_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict[s
 
     return {
         "accuracy": float(accuracy_score(y_true, y_pred)),
-        "accuracy_se": bootstrap_se(y_true, y_pred, _acc),
+        "accuracy_se": bootstrap_se(y_true, y_pred, _acc, seed=seed),
     }
 
 
-def compute_ordinal_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, float]:
+def compute_ordinal_metrics(
+    y_true: np.ndarray, y_pred: np.ndarray, seed: int = _BOOTSTRAP_SEED
+) -> dict[str, float]:
     """Spearman's rho (primary ordinal metric) + bootstrap SE."""
 
     def _spearman(yt, yp):
@@ -139,11 +146,13 @@ def compute_ordinal_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str,
     spearman_val, _ = spearmanr(y_true, y_pred)
     return {
         "spearman_r": float(spearman_val),
-        "spearman_r_se": bootstrap_se(y_true, y_pred, _spearman),
+        "spearman_r_se": bootstrap_se(y_true, y_pred, _spearman, seed=seed),
     }
 
 
-def compute_regression_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, float]:
+def compute_regression_metrics(
+    y_true: np.ndarray, y_pred: np.ndarray, seed: int = _BOOTSTRAP_SEED
+) -> dict[str, float]:
     """Pearson r (primary regression metric) + bootstrap SE."""
     # Epsilon threshold for "zero variance" — guards float-precision residuals when
     # y_true/y_pred are effectively constant after centering (Pearson r → NaN).
@@ -160,7 +169,7 @@ def compute_regression_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict[s
         pearson_r = float(pearsonr(y_true, y_pred)[0])
     return {
         "pearson_r": pearson_r,
-        "pearson_r_se": bootstrap_se(y_true, y_pred, _pearson),
+        "pearson_r_se": bootstrap_se(y_true, y_pred, _pearson, seed=seed),
     }
 
 

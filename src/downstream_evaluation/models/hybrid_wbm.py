@@ -72,7 +72,7 @@ class Hybrid:
             )
             from downstream_evaluation.data.splits import load_split_file
 
-            paths = _DatasetPaths.resolve(self._data_dir)
+            paths = _DatasetPaths.from_root(self._data_dir)
             lookup = str(paths.root / "processed" / LOOKUP_BY_GRANULARITY["weekly"])
             self._weekly_provider = TaskDataProvider(
                 lookup, load_split_file(paths.splits_file), granularity="weekly"

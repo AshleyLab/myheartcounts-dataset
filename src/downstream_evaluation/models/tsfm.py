@@ -339,7 +339,7 @@ class TSFMEncoder:
         from downstream_evaluation.data.splits import load_split_file
         from openmhc._evaluate import _DatasetPaths
 
-        paths = _DatasetPaths.resolve(self._data_dir)
+        paths = _DatasetPaths.from_root(self._data_dir)
         if self._loader is None:
             # Standalone use without the runner (which injects the shared loader).
             from downstream_evaluation.data.loader import DataLoader
@@ -480,4 +480,4 @@ class TSFMEncoder:
 def _DatasetPaths_root(data_dir):
     from openmhc._evaluate import _DatasetPaths
 
-    return _DatasetPaths.resolve(data_dir).daily_hourly_hf
+    return _DatasetPaths.from_root(data_dir).daily_hourly_hf

@@ -17,7 +17,7 @@ or clip bounds without re-resampling.
 
 Usage::
 
-    PYTHONPATH=src python scripts/downstream_paper_results/aggregate_downstream_paper_metrics.py \
+    PYTHONPATH=src python scripts/paper_results/downstream/aggregate_downstream_paper_metrics.py \
         --draws results/paper/bootstrap_draws.parquet \
         --output-dir results/paper/ \
         --baseline-method linear \

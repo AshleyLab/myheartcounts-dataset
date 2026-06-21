@@ -1,8 +1,8 @@
-"""Sklearn-based downstream evaluation for MHC benchmark.
+"""Downstream outcome-prediction evaluation for the MHC benchmark.
 
-This package provides a flexible evaluation framework using sklearn classifiers
-instead of PyTorch Lightning, while maintaining consistency with the existing
-data loading and splitting infrastructure.
+This package evaluates ``Method``-protocol models — linear/logistic probes
+(sklearn), gradient boosting, and neural encoders — on the benchmark prediction
+tasks, sharing the existing data-loading and splitting infrastructure.
 """
 
 # Lazy imports to avoid requiring sklearn at module load time

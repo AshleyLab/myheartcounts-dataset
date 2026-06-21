@@ -7,12 +7,12 @@ through the public ``openmhc.evaluate_prediction`` API, and write the eval CSV
 + resolved config into the Hydra run directory.
 
 Replaces the env-var-driven ``scripts/run_eval.py`` (``METHOD=…``,
-``MHC_DATA_DIR=…``, ``PREDICTIONS_DIR=…``, ``MAE_CHECKPOINT=…``) with composable
+``MHC_DATA_DIR=…``, ``PREDICTIONS_DIR=…``, ``LSM2_CHECKPOINT=…``) with composable
 configs:
 
     mhc-downstream-eval method=xgboost
-    mhc-downstream-eval --multirun method=linear,mae,xgboost
-    mhc-downstream-eval method=mae data.data_dir=/path output.predictions_dir=preds/
+    mhc-downstream-eval --multirun method=linear,lsm2,xgboost
+    mhc-downstream-eval method=lsm2 data.data_dir=/path output.predictions_dir=preds/
 """
 
 from __future__ import annotations
@@ -81,6 +81,7 @@ def main(cfg: DictConfig) -> Any:
 
     results = openmhc.evaluate_prediction(
         model,
+        version=typed_cfg.data.version,
         tasks=typed_cfg.evaluation.tasks,
         data_dir=typed_cfg.data.data_dir,
         seed=typed_cfg.seed,

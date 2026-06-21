@@ -29,7 +29,7 @@ jackknife of S. Without predictions the BCa columns are NaN (percentile CI only)
 
 Usage::
 
-    PYTHONPATH=src python scripts/downstream_paper_results/aggregate_fairness_skill_score.py \
+    PYTHONPATH=src python scripts/paper_results/downstream/aggregate_fairness_skill_score.py \
         --draws results/paper/bootstrap_draws.parquet \
         --output results/paper/fairness_skill_score_bootstrap.csv \
         --baseline-method linear \
@@ -47,6 +47,7 @@ import numpy as np
 
 from downstream_evaluation.evaluation.bootstrap_skill_rank import (
     POINT_DRAW,
+    _attr_disparity_ratio_skill,
     _bca_interval,
     align_across_methods,
     jackknife_fairness_skill,
@@ -123,6 +124,15 @@ def main() -> int:
         "--output", type=Path, required=True, help="Output CSV (fairness_skill_score_bootstrap.csv)"
     )
     p.add_argument("--baseline-method", default="linear")
+    p.add_argument(
+        "--disparity-mode",
+        choices=("maxmin", "mean_pairwise"),
+        default="maxmin",
+        help="Subgroup disparity D: 'maxmin' (worst-case max−min = max pairwise |ΔE|, "
+        "default/current) or 'mean_pairwise' (mean unordered-pairwise |ΔE| — the Gini "
+        "mean difference). Threaded into both the draws path and the BCa jackknife so "
+        "they stay consistent.",
+    )
     p.add_argument("--clip-lower", type=float, default=1e-2)
     p.add_argument("--clip-upper", type=float, default=100.0)
     p.add_argument("--ci-level", type=float, default=0.95)
@@ -169,22 +179,14 @@ def main() -> int:
     }
 
     for (attr, b), g in sub.groupby(["subgroup_attr", "draw"]):
-        # disparity D_{r} per (task, method) = max−min of E across subgroup values
-        disp = g.groupby(["task", "method"])["E"].agg(lambda x: x.max() - x.min()).unstack("method")
-        if base not in disp.columns:
-            continue
-        d_base = disp[base]
-        for m in methods:
-            if m not in disp.columns:
-                continue
-            d_model = disp[m]
-            mask = (d_base > 0) & np.isfinite(d_base) & np.isfinite(d_model)
-            if mask.sum() == 0:
-                continue
-            ratios = np.clip(
-                (d_model[mask] / d_base[mask]).to_numpy(), args.clip_lower, args.clip_upper
-            )
-            sg[m][attr][int(b)] = 1.0 - float(np.exp(np.mean(np.log(ratios))))
+        # Disparity-ratio fairness skill per (task, method), reduced via the same
+        # function the BCa jackknife uses so the draws path and the jackknife stay
+        # consistent by construction (and the disparity mode applies to both).
+        scores = _attr_disparity_ratio_skill(
+            g, methods, base, args.clip_lower, args.clip_upper, disparity=args.disparity_mode
+        )
+        for m, s in scores.items():
+            sg[m][attr][int(b)] = s
 
     # Bootstrap draws + point estimate per (method, scope); scope = each sensitive
     # attribute plus the macro-average "overall".
@@ -228,6 +230,7 @@ def main() -> int:
                 base,
                 clip_lower=args.clip_lower,
                 clip_upper=args.clip_upper,
+                disparity=args.disparity_mode,
             )
             _warn_on_point_drift(jack_point, point_by_key)
 
