@@ -4,7 +4,6 @@ __all__ = [
     "ImputationEvaluator",
     "PairWriter",
     "aggregate_pairs",
-    "compute_scenario_metrics",
     "compute_per_draw_errors",
     "aggregate_skill_rank_fairness",
     "read_draws_parquet",
@@ -22,10 +21,6 @@ def __getattr__(name: str):
         from imputation_evaluation.evaluation.evaluator import ImputationEvaluator
 
         return ImputationEvaluator
-    elif name == "compute_scenario_metrics":
-        from imputation_evaluation.evaluation.metrics import compute_scenario_metrics
-
-        return compute_scenario_metrics
     elif name == "PairWriter":
         from imputation_evaluation.evaluation.pair_writer import PairWriter
 

@@ -100,7 +100,6 @@ def evaluate_imputation(
     seed: int = 42,
     *,
     n_days: int = 1,
-    bootstrap: bool | dict = False,
     max_samples: int | None = None,
     num_workers: int = 0,
     num_eval_workers: int = 1,
@@ -127,9 +126,6 @@ def evaluate_imputation(
             models). Set ``n_days=7`` for weekly models like
             ``LSM2WeeklySparseImputer`` or any 7-day PyPOTS variant; the
             imputer then receives tensors of shape ``(B, 19, n_days * 1440)``.
-        bootstrap: Opt-in participant-level cluster bootstrap. See
-            :func:`openmhc._evaluate.evaluate_imputation` for the full
-            shape of the option.
         max_samples: Limit samples per split for testing/debugging
             (None = no limit). Mirrors ``evaluate_forecasting``.
         num_workers: DataLoader worker processes (default ``0``). Raise toward
@@ -185,7 +181,6 @@ def evaluate_imputation(
         data_dir=data_dir,
         seed=seed,
         n_days=n_days,
-        bootstrap=bootstrap,
         max_samples=max_samples,
         num_workers=num_workers,
         num_eval_workers=num_eval_workers,

@@ -43,9 +43,7 @@ for M in "${METHODS[@]}"; do
     +masking.masks_file="${MASKS}" \
     data.num_eval_workers=6 \
     data.num_workers=8 \
-    evaluation.save_pairs=true \
     'evaluation.eval_splits=[test]' \
-    bootstrap=on \
     seed=42
 done
 

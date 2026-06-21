@@ -33,6 +33,4 @@ mhc-impute-eval \
   data.num_eval_workers=1 \
   method.inference_batch_size=32 \
   +method.lsm2.inference_dropout_removal_ratio=0.0 \
-  evaluation.save_pairs=true \
-  bootstrap=on \
   seed=42

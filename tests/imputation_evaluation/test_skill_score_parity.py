@@ -12,18 +12,13 @@ Locks in the alignment with forecasting Track 3 (commit ``79c8628``):
    is *not* dropped by the ``baseline > 0`` filter.
 4. Pooled binary parity: per-user AUC is scored once on the user's pooled
    rows (mirrors forecasting's "pooled binary metrics").
-5. Live = bootstrap identity: ``aggregate_pairs(..., aggregation="user_macro")``
-   equals the bootstrap identity-draw point estimate; an uneven-cell-count
-   fixture ensures user-macro ≠ cell-micro (the test wouldn't be vacuous).
-6. Cross-track estimand parity: a synthetic fixture scored through the
+5. Cross-track estimand parity: a synthetic fixture scored through the
    forecasting and imputation reducers yields the same skill score.
 """
 
 from __future__ import annotations
 
 import numpy as np
-import pyarrow as pa
-import pyarrow.parquet as pq
 import pytest
 
 from data.processing.hf_config import N_CHANNELS
@@ -37,7 +32,6 @@ from imputation_evaluation.evaluation.bootstrap_skill_rank import (
     _per_method_cell_paired_ratios,
     _per_user_log_ratio_column,
 )
-from imputation_evaluation.evaluation.pair_aggregator import aggregate_pairs
 
 # ---------------------------------------------------------------------------
 # Tiny synthetic CellStats builder
@@ -303,99 +297,3 @@ def test_cross_track_skill_parity_continuous():
     assert imp_skill == pytest.approx(fc_skill, rel=1e-12)
 
 
-# ---------------------------------------------------------------------------
-# 5. Live (aggregate_pairs user_macro) = bootstrap identity-draw point
-# ---------------------------------------------------------------------------
-
-
-def _write_uneven_cell_count_fixture(tmp_path):
-    """Write a tiny pairs/manifest tree where users have DIFFERENT cell counts.
-
-    Without uneven counts, user-macro ≡ cell-micro and the parity test
-    against cell-micro would be vacuous. Here users contribute 4 / 8 / 12
-    cells respectively on channel 0, with the same per-user mean absolute
-    error so the user-macro MAE is well-defined and differs from the
-    cell-pooled MAE.
-    """
-    users = ["uA", "uB", "uC"]
-    cells_per_user = [4, 8, 12]  # uneven
-    sample_records: list[dict] = []
-    cont_rows: list[dict] = []
-    sidx = 0
-    for u, uid in enumerate(users):
-        ncells = cells_per_user[u]
-        # Per-user errors are all the same scale, but heavy-cell users
-        # dominate a cell-pool mean — making user-macro ≠ cell-micro.
-        err_scale = 1.0 + 0.5 * u
-        for _ in range(ncells):
-            cont_rows.append(
-                {
-                    "sample_idx": sidx,
-                    "timestep": 0,
-                    "gt": 0.0,
-                    "pred": float(err_scale),  # constant error = err_scale per cell
-                }
-            )
-            sample_records.append(
-                {
-                    "sample_idx": sidx,
-                    "user_id": uid,
-                    "date": f"2024-01-{sidx + 1:02d}",
-                }
-            )
-            sidx += 1
-
-    manifest_tbl = pa.table(
-        {
-            "sample_idx": pa.array([r["sample_idx"] for r in sample_records], type=pa.int32()),
-            "user_id": pa.array([r["user_id"] for r in sample_records], type=pa.utf8()),
-            "date": pa.array([r["date"] for r in sample_records], type=pa.utf8()),
-        }
-    )
-    pq.write_table(manifest_tbl, tmp_path / "manifest_test.parquet")
-
-    split_dir = tmp_path / "scenarioA" / "test"
-    split_dir.mkdir(parents=True)
-    # Cast Python floats to np.float16 before handing to pa.array(type=float16) —
-    # the pyarrow build pinned here refuses the implicit Python-float coercion.
-    gt_arr = np.asarray([r["gt"] for r in cont_rows], dtype=np.float16)
-    pred_arr = np.asarray([r["pred"] for r in cont_rows], dtype=np.float16)
-    cont_tbl = pa.table(
-        {
-            "sample_idx": pa.array([r["sample_idx"] for r in cont_rows], type=pa.int32()),
-            "timestep": pa.array([r["timestep"] for r in cont_rows], type=pa.int16()),
-            "gt": pa.array(gt_arr, type=pa.float16()),
-            "pred": pa.array(pred_arr, type=pa.float16()),
-        }
-    )
-    pq.write_table(cont_tbl, split_dir / "pairs_ch00.parquet")
-
-    stds = np.ones(N_CHANNELS, dtype=np.float64)
-    np.save(tmp_path / "channel_stds.npy", stds)
-    return tmp_path, split_dir, stds, cells_per_user
-
-
-def test_aggregate_pairs_user_macro_differs_from_cell_micro(tmp_path):
-    """Uneven-cell-count fixture: user-macro headline ≠ cell-micro pool."""
-    _, split_dir, stds, cells_per_user = _write_uneven_cell_count_fixture(tmp_path)
-
-    user_macro = aggregate_pairs(split_dir, stds, aggregation="user_macro")
-    cell_micro = aggregate_pairs(split_dir, stds, aggregation="cell_micro")
-
-    assert user_macro["per_channel"]["ch_0"]["aggregation"] == "user_macro"
-    assert cell_micro["per_channel"]["ch_0"]["aggregation"] == "cell_micro"
-
-    user_mae = user_macro["per_channel"]["ch_0"]["mae"]
-    micro_mae = cell_micro["per_channel"]["ch_0"]["mae"]
-
-    # Per-user MAE = err_scale (constant per cell) = 1.0, 1.5, 2.0.
-    # user-macro = mean(1.0, 1.5, 2.0) = 1.5
-    assert user_mae == pytest.approx(1.5, rel=1e-3)
-
-    # cell-micro = weighted by counts: (4*1.0 + 8*1.5 + 12*2.0) / 24 = 1.6667
-    cells = cells_per_user
-    micro_expected = (cells[0] * 1.0 + cells[1] * 1.5 + cells[2] * 2.0) / sum(cells)
-    assert micro_mae == pytest.approx(micro_expected, rel=1e-3)
-
-    # And they're meaningfully different (otherwise the test is vacuous).
-    assert abs(user_mae - micro_mae) > 0.05

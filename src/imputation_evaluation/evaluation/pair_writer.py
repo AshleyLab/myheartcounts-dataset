@@ -337,3 +337,117 @@ def load_sample_manifest(
     if not manifest_path.exists():
         return None
     return pq.read_table(manifest_path)
+
+
+# ---------------------------------------------------------------------------
+# Fallback sidecar (model-capability counts, persisted alongside pairs)
+# ---------------------------------------------------------------------------
+
+
+def write_fallback_sidecar(
+    pairs_dir: str | Path,
+    split_name: str,
+    per_scenario_counts: dict[str, dict],
+) -> Path:
+    """Persist per-(scenario, split) fallback + applicability counts.
+
+    Writes ``{pairs_dir}/fallback_{split_name}.json``. The new sidecar
+    replaces the in-memory ``MetricAccumulator`` counters: the harness
+    streams everything to disk, and the canonical producer / aggregator
+    reads it back to populate ``overall_fallback_rate`` /
+    ``fallback_rate`` / ``n_total`` / ``n_applicable`` in the final
+    :class:`ImputationResults.scenarios` dict.
+
+    Args:
+        pairs_dir: The pairs root (sibling of ``manifest_{split}.parquet``).
+        split_name: Split name (e.g. ``"test"``).
+        per_scenario_counts: ``{scenario: {n_applicable, n_total,
+            fallback_substituted, fallback_asked}}`` where the two
+            ``fallback_*`` entries are per-channel ``(C,)`` int64 arrays
+            (or lists). Serialised as lists.
+
+    Returns:
+        Path to the written sidecar.
+    """
+    import json
+
+    pairs_dir = Path(pairs_dir)
+    pairs_dir.mkdir(parents=True, exist_ok=True)
+    out: dict[str, dict] = {}
+    for scenario, counts in per_scenario_counts.items():
+        sub = counts.get("fallback_substituted", [])
+        asked = counts.get("fallback_asked", [])
+        if hasattr(sub, "tolist"):
+            sub = sub.tolist()
+        if hasattr(asked, "tolist"):
+            asked = asked.tolist()
+        out[scenario] = {
+            "n_applicable": int(counts.get("n_applicable", 0)),
+            "n_total": int(counts.get("n_total", 0)),
+            "fallback_substituted": [int(x) for x in sub],
+            "fallback_asked": [int(x) for x in asked],
+        }
+    path = pairs_dir / f"fallback_{split_name}.json"
+    path.write_text(json.dumps(out, indent=2))
+    logger.info("Wrote fallback sidecar (%d scenarios) to %s", len(out), path)
+    return path
+
+
+def read_fallback_sidecar(
+    pairs_dir: str | Path,
+    split_name: str,
+) -> dict[str, dict] | None:
+    """Read the fallback sidecar for a split.
+
+    Returns ``None`` when the sidecar is missing (e.g. an older
+    pre-Phase-A pairs dir). Callers populate fallback fields as
+    ``0.0`` / ``None`` in that case to preserve the historical contract.
+    """
+    import json
+
+    path = Path(pairs_dir) / f"fallback_{split_name}.json"
+    if not path.exists():
+        return None
+    return json.loads(path.read_text())
+
+
+def merge_counts_and_fallback(
+    sidecar: dict | None,
+    *,
+    n_channels: int,
+) -> dict:
+    """Derive ``overall_fallback_rate`` / ``fallback_rate`` / ``n_*`` from a sidecar.
+
+    Port of the arithmetic the old ``MetricAccumulator.compute`` did on
+    its in-memory counters. Returns a dict with the four fields
+    :class:`ImputationResults.scenarios` exposes today, ready to merge
+    with the producer's display-metrics dict.
+
+    Missing-sidecar fallback: zero counts, zero rates — matches what the
+    legacy path emitted when ``fallback_fill`` was ``None``.
+    """
+    if sidecar is None:
+        return {
+            "n_applicable": 0,
+            "n_total": 0,
+            "overall_fallback_rate": 0.0,
+            "fallback_rate": {f"ch_{ch}": 0.0 for ch in range(n_channels)},
+        }
+    n_applicable = int(sidecar.get("n_applicable", 0))
+    n_total = int(sidecar.get("n_total", 0))
+    sub = list(sidecar.get("fallback_substituted") or [])
+    asked = list(sidecar.get("fallback_asked") or [])
+    asked_total = sum(int(x) for x in asked)
+    sub_total = sum(int(x) for x in sub)
+    overall = (sub_total / asked_total) if asked_total > 0 else 0.0
+    per_ch: dict[str, float] = {}
+    for ch in range(n_channels):
+        a = int(asked[ch]) if ch < len(asked) else 0
+        s = int(sub[ch]) if ch < len(sub) else 0
+        per_ch[f"ch_{ch}"] = (s / a) if a > 0 else 0.0
+    return {
+        "n_applicable": n_applicable,
+        "n_total": n_total,
+        "overall_fallback_rate": overall,
+        "fallback_rate": per_ch,
+    }

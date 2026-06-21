@@ -109,33 +109,38 @@ Computed in `evaluation/metrics.py`.
 
 ### Bootstrap (optional)
 
-For confidence intervals and standard errors, opt into a **participant-level cluster bootstrap** (`evaluation/bootstrap.py`). Resamples are taken over users, not rows — masked positions within a user are highly correlated, so a row-level bootstrap would produce artificially tight CIs.
-
-Implementation: per-user additive sufficient statistics for RMSE / MSE / MAE / balanced accuracy (O(|U|) per iteration); a cluster-weighted Mann-Whitney U trick for ROC AUC (non-decomposable). Default `n_boot=1000`, `ci_level=0.95`, `seed=42`. Output for each metric: `{point, bootstrap_mean, bootstrap_se, ci_lo, ci_hi, n_valid_boot}`.
-
-Python API:
+Confidence intervals / standard errors come from the **paper pipeline's
+participant-level cluster bootstrap** (`scripts/paper_results/imputation/bootstrap_imputation_draws.py`,
+formulated against the canonical per-method `per_user_errors.parquet` artifact —
+see §1 / §8.2 of [`METRICS.md`](METRICS.md)). The public API does **not** run a
+bootstrap inline anymore; pairs are always written, the canonical producer
+reduces them to per-user errors, and downstream callers feed those errors
+through the bootstrap as a separate step. Disable bootstrapping by simply not
+running the bootstrap script.
 
 ```python
-results = openmhc.evaluate_imputation(my_imputer, bootstrap=True)
-# Or override fields:
+# Public API: point estimates + paired skill scores against a frozen baseline.
 results = openmhc.evaluate_imputation(
-    my_imputer,
-    bootstrap={"n_boot": 500, "ci_level": 0.9, "include_auc": False},
+    my_imputer, version="full",
+    output_dir="/tmp/run",
+    baseline_errors="src/openmhc/data/baselines/imputation_locf_per_user_errors.parquet",
+    method_name="my_method",
 )
-results.to_dataframe()  # gains sibling columns *_ci_lo, *_ci_hi, *_bootstrap_se
+results.per_user_errors        # DataFrame (also persisted to output_dir/per_user_errors.parquet)
+results.skill_scores           # DataFrame (also persisted to output_dir/skill_scores.csv)
+results.scenarios              # display metrics (user-macro)
 ```
 
-When `bootstrap=True`, raw `(gt, pred)` pairs are written to a temporary directory that is cleaned up before `evaluate_imputation` returns. Disabled (`False`) is the default and preserves byte-identical results.
-
-Hydra CLI:
+For CIs across the resampled cohort, feed the per-method
+`per_user_errors.parquet` files into the bootstrap CLI:
 
 ```bash
-mhc-impute-eval method=mean bootstrap=on
-# Override individual fields:
-mhc-impute-eval method=mean bootstrap=on bootstrap.n_boot=500 bootstrap.include_auc=false
+python scripts/paper_results/imputation/bootstrap_imputation_draws.py \
+  --per-user-errors-dir <dir of *.parquet> \
+  --method-dirs configs/paper/bootstrap_method_dirs.json \
+  --output bootstrap_draws.parquet \
+  --n-boot 1000 --seed 42 --splits test
 ```
-
-Under the Hydra CLI, the runner forces `save_pairs=true` when `bootstrap.enabled=true`, writes the per-channel structured CI dict to `<output.results_dir>/bootstrap_metrics.json`, and merges sibling fields (`<metric>_ci_lo`, `<metric>_ci_hi`, `<metric>_bootstrap_se`, `<metric>_bootstrap_mean`, `<metric>_n_valid_boot`) into the existing `results.json`.
 
 ### Results object
 
@@ -195,7 +200,7 @@ Config presets live at `configs/imputation/` (repo root), composed via the
 | `masking/` | `all_six` (default), `sleep_gap_only`, `workout_gap_only`, `random_noise_only` | Which masking scenarios are enabled |
 | `method/` | `mean`, `mode`, `linear`, `locf`, `temporal_mean`, `temporal_mode`, `brits`, `timesnet`, `dlinear`, `fedformer`, `lsm2`, `lsm2_weekly_sparse` | Imputation method + arch / runtime kwargs |
 | `output/` | `default` | `results_dir`, optional experiment name |
-| `evaluation/` | `default` | `compute_metrics`, `save_pairs` |
+| `evaluation/` | `default` | `eval_splits` (the harness always writes pairs + runs the canonical producer) |
 | `visualization/` | `off`, `on` | Visualization toggle (see Known gaps below) |
 | `sensitivity/` | `off`, `on` | Demographic subgroup metrics |
 | `bootstrap/` | `off`, `on` | Participant-level cluster bootstrap CIs (see Bootstrap section above) |
@@ -324,19 +329,18 @@ perfect-AUC user contributes a finite paired ratio instead of being
 dropped by the `baseline > 0` filter. Baseline = LOCF on the same cell.
 The paper-pipeline point estimate
 (`scripts/paper_results/compute_imputation_paper_metrics.py`, which calls
-`evaluation/pair_aggregator.py::aggregate_pairs(..., aggregation="user_macro")`)
+the canonical producer
+[`evaluation/per_user_errors.py::build_per_user_errors`](evaluation/per_user_errors.py))
 matches the n_boot=1 bootstrap identity-draw point by construction.
-The live `mhc-impute-eval` CLI's `results.json` is still cell-micro
-via the streaming `MetricAccumulator`; that path doesn't feed the
-leaderboard — maintainers re-derive skill from the absolute per-channel
-MAE / AUC values pasted in the submission, running the same reducer on
-their side.
+The live `mhc-impute-eval` CLI's `results.json` is also user-macro after
+Phase A — the runner uses the same producer downstream from pair writes,
+so the published leaderboard numbers and the in-process CLI numbers
+agree by construction.
 
 ```bash
 # Phase 0: sweep all 12 methods (each writes a pairs/ subdir)
 mhc-impute-eval --multirun \
-  method=mean,mode,locf,linear,temporal_mean,temporal_mode,lsm2,lsm2_weekly_sparse,brits,timesnet,dlinear,fedformer \
-  evaluation.save_pairs=true
+  method=mean,mode,locf,linear,temporal_mean,temporal_mode,lsm2,lsm2_weekly_sparse,brits,timesnet,dlinear,fedformer
 
 # Phase 1: paired participant-level bootstrap → bootstrap_draws.parquet
 python scripts/paper_results/imputation/bootstrap_imputation_draws.py \
@@ -422,9 +426,11 @@ it automatically; if you skip the driver, write it yourself:
 ```
 
 Each `pairs/` directory must contain `manifest_<split>.parquet`,
-`channel_stds.npy` and a per-scenario tree `<scenario>/<split>/pairs_ch{NN}.parquet`
-— exactly what [`pair_writer.py`](evaluation/pair_writer.py) writes when
-`evaluation.save_pairs=true`.
+`channel_stds.npy`, a per-split `fallback_<split>.json` sidecar, and a
+per-scenario tree `<scenario>/<split>/pairs_ch{NN}.parquet` — exactly
+what [`pair_writer.py`](evaluation/pair_writer.py) writes (pair-writing
+is unconditional after Phase A; the producer needs the files for every
+downstream reducer).
 
 ### Outputs (in `--output-dir`)
 
@@ -519,7 +525,7 @@ class ImputationEvalConfig:
     masking: MaskingConfig      # mask_seed + per-scenario sub-configs (RandomNoiseConfig, …)
     method: MethodConfig        # type + nested MAE/PyPOTS configs (see Known gaps)
     output: OutputConfig        # results_dir, experiment_name
-    evaluation: EvalConfig      # compute_metrics, save_pairs
+    evaluation: EvalConfig      # eval_splits (pairs are always written)
     visualization: VisualizationConfig   # see Known gaps — currently no consumer
     sensitivity: SensitivityConfig       # demographic subgroup analysis (age + sex)
     wandb: WandbConfig          # optional W&B logging
