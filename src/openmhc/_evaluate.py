@@ -43,12 +43,28 @@ _MAX91D_MASKS_DIR = (
     _REPO_ROOT / "data" / "imputation" / "masks" / "sharable_users_seed42_2026_max91d"
 )
 _XS_MASKS_DIR = _REPO_ROOT / "data" / "imputation" / "masks" / "sharable_users_seed42_2026_xs"
+_LFS_POINTER_STUB_MAX_BYTES = 4096
 
 
 _SPLIT_FILENAMES: dict[str, str] = {
     "full": "sharable_users_seed42_2026.json",
     "xs": "sharable_users_seed42_2026_xs.json",
 }
+
+
+def _raise_if_lfs_pointer_masks(mask_dir: Path) -> None:
+    sample_npz = next(mask_dir.glob("**/*.npz"), None)
+    if sample_npz is None:
+        return
+    sample_size = sample_npz.stat().st_size
+    if sample_size >= _LFS_POINTER_STUB_MAX_BYTES:
+        return
+    raise RuntimeError(
+        f"Mask file {sample_npz} is {sample_size} bytes — it looks like a "
+        "git-lfs pointer stub. Full-dataset evaluation requires the real "
+        "precomputed masks for reproducible leaderboard scores. Run `git lfs pull` "
+        "and retry."
+    )
 
 
 @dataclass
@@ -619,7 +635,7 @@ def evaluate_imputation(
     keep_pairs: bool = False,
     method_name: str = "custom",
 ) -> ImputationResults:
-    """Run imputation evaluation with a custom imputer.
+    r"""Run imputation evaluation with a custom imputer.
 
     The imputer is responsible for its own setup (loading checkpoints,
     computing training statistics, building per-user state) — typically
@@ -789,21 +805,8 @@ def evaluate_imputation(
                 "missing, re-clone or check that `data/imputation/masks/` was not "
                 "excluded by a sparse-checkout or .gitignore rule."
             )
-        # Guard against git-lfs pointer stubs (a few hundred bytes each). When
-        # the user never ran `git lfs pull` the directory exists but the .npz
-        # files are pointer texts that np.load chokes on. Fall through to
-        # on-the-fly mask generation (deterministic at seed=42, ~20 min slower).
-        sample_npz = next(_MAX91D_MASKS_DIR.glob("**/*.npz"), None)
-        if sample_npz is not None and sample_npz.stat().st_size < 4096:
-            logger.warning(
-                "Mask file %s is %d bytes — looks like a git-lfs pointer stub. "
-                "Falling through to on-the-fly mask generation (run `git lfs "
-                "pull` to use the precomputed masks).",
-                sample_npz,
-                sample_npz.stat().st_size,
-            )
-        else:
-            masking_cfg.masks_file = str(_MAX91D_MASKS_DIR)
+        _raise_if_lfs_pointer_masks(_MAX91D_MASKS_DIR)
+        masking_cfg.masks_file = str(_MAX91D_MASKS_DIR)
     elif (
         paths.version == "xs"
         and seed == 42

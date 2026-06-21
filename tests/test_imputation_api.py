@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from openmhc import Imputer
-from openmhc._evaluate import _ImputerMethodAdapter
+from openmhc._evaluate import _ImputerMethodAdapter, _raise_if_lfs_pointer_masks
 
 N_CHANNELS = 19
 SEQ_LEN = 1440
@@ -212,6 +212,23 @@ class TestAdapterHardBreak:
 
         with pytest.raises(TypeError, match="impute"):
             _ImputerMethodAdapter(OldStyle())
+
+
+class TestFullMaskSetupValidation:
+    """Validation for full-run precomputed mask setup errors."""
+
+    def test_lfs_pointer_stub_mask_raises(self, tmp_path):
+        """A tiny .npz file is treated as a git-lfs pointer setup error."""
+        mask_file = tmp_path / "test" / "random_noise.npz"
+        mask_file.parent.mkdir()
+        mask_file.write_text(
+            "version https://git-lfs.github.com/spec/v1\n"
+            "oid sha256:0123456789abcdef\n"
+            "size 123456\n"
+        )
+
+        with pytest.raises(RuntimeError, match="git-lfs pointer stub"):
+            _raise_if_lfs_pointer_masks(tmp_path)
 
 
 class _RecordingImputer:
@@ -833,5 +850,4 @@ class TestApplyFallbackSubstitution:
         assert int(sub.sum()) == 20
         # Asked counts: 10 per channel (target spans 10 timesteps on every channel).
         np.testing.assert_array_equal(asked, np.full(N_CHANNELS, 10, dtype=np.int64))
-
 

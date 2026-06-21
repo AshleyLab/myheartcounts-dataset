@@ -42,7 +42,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-
+import pyarrow as pa
 import pyarrow.parquet as pq
 
 from imputation_evaluation.evaluation.bootstrap_skill_rank import (
@@ -373,14 +373,37 @@ def main() -> int:
         )
 
         # Manifests (canonical user ordering — parity contract).
-        method_manifests: dict = {}
-        for method, root in method_dirs.items():
-            for split in args.splits:
+        # The legacy from-pairs path rebuilds canonical user ordering per split,
+        # so the fast path must keep manifests split-scoped as well.
+        method_manifests_by_split: dict[str, dict[str, pa.Table]] = {
+            split: {} for split in args.splits
+        }
+        for split in args.splits:
+            for method, root in method_dirs.items():
                 manifest_path = Path(root) / f"manifest_{split}.parquet"
                 if manifest_path.exists():
-                    method_manifests[method] = pq.read_table(manifest_path)
-                    break  # one manifest per method suffices for ordering
-        if not method_manifests:
+                    method_manifests_by_split[split][method] = pq.read_table(manifest_path)
+                elif args.strict:
+                    logger.error(
+                        "[strict] missing manifest for method=%s split=%s: %s",
+                        method,
+                        split,
+                        manifest_path,
+                    )
+                    return 2
+                else:
+                    logger.warning(
+                        "missing manifest for method=%s split=%s: %s",
+                        method,
+                        split,
+                        manifest_path,
+                    )
+        method_manifests_by_split = {
+            split: manifests
+            for split, manifests in method_manifests_by_split.items()
+            if manifests
+        }
+        if not method_manifests_by_split:
             logger.error(
                 "No manifests found under method_dirs for ordering — aborting"
             )
@@ -394,7 +417,7 @@ def main() -> int:
 
         df = compute_per_draw_errors_from_per_user_errors(
             per_user_input,
-            method_manifests,
+            method_manifests_by_split,
             n_boot=args.n_boot,
             seed=args.seed,
         )

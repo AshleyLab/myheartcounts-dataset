@@ -1,4 +1,4 @@
-"""Upload the bootstrap reference artifact to the OpenMHC leaderboard dataset.
+r"""Upload the bootstrap reference artifact to the OpenMHC leaderboard dataset.
 
 Companion to ``upload_leaderboard_substrate.py``. Where that tool uploads
 per-method substrate parquets (one file per method, under
@@ -57,6 +57,7 @@ _FILES: list[tuple[str, str, bool]] = [
 
 
 def main() -> None:
+    """Upload bootstrap draw artifacts to the leaderboard dataset."""
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument(
         "--dir",

@@ -135,9 +135,9 @@ class ImputationResults:
             Schema: ``[method, scenario, split, channel, channel_type,
             subgroup_attr, subgroup_value, user_id, E_per_user]`` — the
             same long format consumed by the paper Phase 2 aggregators
-            and the BCa LOO jackknife. ``None`` unless ``output_dir`` or
-            ``baseline_errors`` was passed to ``evaluate_imputation``.
-            When ``output_dir`` is set this frame is also written to
+            and the BCa LOO jackknife. Populated by
+            ``evaluate_imputation``; when ``output_dir`` is set this frame
+            is also written to
             ``<output_dir>/per_user_errors.parquet``.
         skill_scores: Optional ``DataFrame`` of paired-R skill scores
             against the baseline supplied via ``baseline_errors``.
@@ -148,8 +148,7 @@ class ImputationResults:
     """
 
     scenarios: dict = field(repr=False)
-    # Optional additive fields populated when evaluate_imputation is called
-    # with output_dir or baseline_errors. None when the caller did not opt in.
+    # Optional additive fields populated by evaluate_imputation when available.
     per_user_errors: pd.DataFrame | None = field(default=None, repr=False)
     skill_scores: pd.DataFrame | None = field(default=None, repr=False)
 

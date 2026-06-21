@@ -60,6 +60,7 @@ def find_parquet(dir_path: Path, method: str) -> Path:
 
 
 def main() -> None:
+    """Upload one method substrate parquet to the leaderboard dataset."""
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument(
         "--dir", required=True, type=Path, help="Directory containing the method's substrate parquet."

@@ -109,7 +109,7 @@ def evaluate_imputation(
     keep_pairs: bool = False,
     method_name: str = "custom",
 ) -> ImputationResults:
-    """Run imputation evaluation with a custom imputer.
+    r"""Run imputation evaluation with a custom imputer.
 
     Args:
         imputer: Object implementing the Imputer protocol.

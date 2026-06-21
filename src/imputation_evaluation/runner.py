@@ -196,7 +196,7 @@ def run_eval(
         n_days=config.data.n_days,
         pairs_dir=pairs_dir,
     )
-    counts_results = evaluator.run(
+    evaluator.run(
         val_loader=eval_val_loader,
         test_loader=eval_test_loader,
         mask_cache=mask_cache,

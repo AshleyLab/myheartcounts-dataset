@@ -1638,6 +1638,24 @@ def _build_canonical_user_index_from_manifests(
     return all_user_ids, canonical_user_index
 
 
+def _manifests_for_split(
+    method_manifests: dict[str, pa.Table] | dict[str, dict[str, pa.Table]],
+    split: str,
+) -> dict[str, pa.Table]:
+    """Return the per-method manifests for one split.
+
+    ``compute_per_draw_errors_from_per_user_errors`` historically accepted a
+    flat ``{method: manifest}`` mapping because the fast path was usually run
+    for one split. Multi-split callers pass ``{split: {method: manifest}}`` so
+    the canonical user ordering can match the legacy from-pairs path per split.
+    """
+    first = next(iter(method_manifests.values()))
+    if isinstance(first, dict):
+        by_split = method_manifests  # type: ignore[assignment]
+        return dict(by_split.get(split, {}))
+    return method_manifests  # type: ignore[return-value]
+
+
 def _build_per_user_E_matrix(
     df_cell_method: pd.DataFrame,
     *,
@@ -1835,7 +1853,7 @@ def _emit_draws_for_cell(
 
 def compute_per_draw_errors_from_per_user_errors(
     per_user_df: pd.DataFrame,
-    method_manifests: dict[str, pa.Table],
+    method_manifests: dict[str, pa.Table] | dict[str, dict[str, pa.Table]],
     *,
     n_boot: int,
     seed: int,
@@ -1855,11 +1873,13 @@ def compute_per_draw_errors_from_per_user_errors(
         methods in the bootstrap pool. Each method's rows already carry
         the canonical user_id + subgroup labels (the producer applied
         the EXCLUDE_BINARY_SCENARIOS row filter).
-      * ``method_manifests`` — ``{method: pa.Table}`` of the original
-        manifests, in the SAME dict insertion order as the bootstrap's
-        ``method_dirs``. Used **only** to reconstruct the canonical user
-        ordering so ``boot_idx`` resamples the same cohort as the legacy
-        path → byte-equal bootstrap_draws.parquet given the same seed.
+      * ``method_manifests`` — either ``{method: pa.Table}`` for one-split
+        callers or ``{split: {method: pa.Table}}`` for multi-split callers.
+        The per-split method dict must preserve the SAME insertion order as
+        the bootstrap's ``method_dirs``. Used **only** to reconstruct the
+        canonical user ordering so ``boot_idx`` resamples the same cohort as
+        the legacy path → byte-equal bootstrap_draws.parquet given the same
+        seed.
 
     Output schema is identical to :func:`compute_per_draw_errors`'s draws
     frame (:data:`DRAWS_PARQUET_COLUMNS`). The §3 parity test asserts
@@ -1873,7 +1893,8 @@ def compute_per_draw_errors_from_per_user_errors(
         baseline_method: Method used as paired-ratio denominator. Defaults
             to :data:`BASELINE_CONTINUOUS`.
         binary_error_floor: ε applied to binary E before the ratio.
-        clip_lower / clip_upper: Bounds on the per-user ratio.
+        clip_lower: Lower bound on the per-user ratio.
+        clip_upper: Upper bound on the per-user ratio.
         progress_logger: Callable for progress messages.
 
     Returns:
@@ -1908,13 +1929,16 @@ def compute_per_draw_errors_from_per_user_errors(
         .to_dict()
     )
 
-    method_order = list(method_manifests.keys())
-
     all_rows: list[dict] = []
     for split in sorted(df["split"].unique()):
         df_split = df[df["split"] == split]
+        split_manifests = _manifests_for_split(method_manifests, split)
+        if not split_manifests:
+            progress_logger(f"[split={split}] no manifests available; skipping")
+            continue
+        method_order = list(split_manifests.keys())
         all_user_ids, canonical_user_index = _build_canonical_user_index_from_manifests(
-            method_manifests
+            split_manifests
         )
         U = len(all_user_ids)
         split_seed = _seed_for_split(seed, split)

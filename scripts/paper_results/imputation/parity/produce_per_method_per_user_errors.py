@@ -22,11 +22,11 @@ from pathlib import Path
 
 import pandas as pd
 
+from imputation_evaluation.evaluation.pair_writer import load_sample_manifest
 from imputation_evaluation.evaluation.per_user_errors import (
     build_per_user_errors,
     write_per_user_errors_parquet,
 )
-from imputation_evaluation.evaluation.pair_writer import load_sample_manifest
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +84,7 @@ def _build_subgroup_mapping(
 
 
 def main() -> int:
+    """Build one method's per-user errors artifact from saved pairs."""
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--method", required=True, help="Method name (key in method_dirs JSON)")
     p.add_argument("--method-dirs", type=Path, default=DEFAULT_METHOD_DIRS)

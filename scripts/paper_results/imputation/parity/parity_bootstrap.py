@@ -51,6 +51,7 @@ def _normalise(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def parity_check(new: pd.DataFrame, gt: pd.DataFrame) -> int:
+    """Compare new bootstrap draws against the reference artifact."""
     new = _normalise(new)
     gt = _normalise(gt)
     logger.info("new: %d rows | gt: %d rows", len(new), len(gt))
@@ -106,6 +107,7 @@ def parity_check(new: pd.DataFrame, gt: pd.DataFrame) -> int:
 
 
 def main() -> int:
+    """Run the bootstrap parity checker CLI."""
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--new", type=Path, required=True, help="new bootstrap_draws.parquet")
     p.add_argument("--gt", type=Path, required=True, help="ground-truth bootstrap_draws.parquet")

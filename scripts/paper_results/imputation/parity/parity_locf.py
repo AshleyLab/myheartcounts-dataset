@@ -39,12 +39,12 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from imputation_evaluation.evaluation.pair_writer import load_sample_manifest
 from imputation_evaluation.evaluation.per_user_errors import (
     PER_USER_ERRORS_PARQUET_COLUMNS,
     build_per_user_errors,
     write_per_user_errors_parquet,
 )
-from imputation_evaluation.evaluation.pair_writer import load_sample_manifest
 
 logger = logging.getLogger(__name__)
 
@@ -208,6 +208,7 @@ def parity_check(new: pd.DataFrame, gt: pd.DataFrame) -> int:
 
 
 def main() -> int:
+    """Run the LOCF per-user error parity checker CLI."""
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--locf-pairs", type=Path, default=DEFAULT_LOCF_PAIRS)
     p.add_argument("--gt-parquet", type=Path, default=DEFAULT_GT_PARQUET)

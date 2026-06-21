@@ -203,7 +203,6 @@ Config presets live at `configs/imputation/` (repo root), composed via the
 | `evaluation/` | `default` | `eval_splits` (the harness always writes pairs + runs the canonical producer) |
 | `visualization/` | `off`, `on` | Visualization toggle (see Known gaps below) |
 | `sensitivity/` | `off`, `on` | Demographic subgroup metrics |
-| `bootstrap/` | `off`, `on` | Participant-level cluster bootstrap CIs (see Bootstrap section above) |
 | `wandb/` | `off`, `on` | W&B logging |
 
 The schema is the dataclass tree in [`config.py`](config.py) (`ImputationEvalConfig`); Hydra validates every override against it.

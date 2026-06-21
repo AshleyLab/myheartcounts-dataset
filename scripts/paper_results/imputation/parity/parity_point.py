@@ -183,6 +183,7 @@ def _diff_within_se(
 
 
 def main() -> int:
+    """Run point-estimate parity checks across output directories."""
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--new", type=Path, required=True, help="B3 output dir (--per-user-errors)")
     p.add_argument("--pairs", type=Path, required=True, help="from-pairs output dir (legacy)")
