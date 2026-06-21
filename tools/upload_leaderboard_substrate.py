@@ -76,6 +76,11 @@ def main() -> None:
     p.add_argument("--name", default=None, help="Display name (writes a <method>.meta.json sidecar).")
     p.add_argument("--type", dest="mtype", default=None, help="Method type, e.g. 'Deep Learning' (sidecar).")
     p.add_argument("--submitter", default=None, help="Submitter / team for attribution (sidecar).")
+    p.add_argument(
+        "--subtrack",
+        default=None,
+        help="Sub-track for grouping: 'single-day' or 'long-context' (sidecar).",
+    )
     args = p.parse_args()
 
     src = find_parquet(args.dir, args.method)
@@ -93,11 +98,12 @@ def main() -> None:
     print(f"Uploaded {src}  ->  {args.repo_id}:{dest}")
     print(f"  https://huggingface.co/datasets/{args.repo_id}/blob/main/{dest}")
 
-    if args.name or args.mtype or args.submitter:
+    if args.name or args.mtype or args.submitter or args.subtrack:
         meta = {
             "display_name": args.name or args.method,
             "type": args.mtype or "—",
             "submitter": args.submitter or "—",
+            "subtrack": args.subtrack or "other",
         }
         meta_dest = f"{args.track}/{args.method}.meta.json"
         api.upload_file(
