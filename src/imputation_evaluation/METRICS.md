@@ -346,14 +346,19 @@ Implemented in `_per_attribute_skill_keyed` at
 `:624-708`; bootstrapped by
 [`scripts/paper_results/aggregate_fairness_skill_score.py`](../../scripts/paper_results/aggregate_fairness_skill_score.py).
 
-**Per-task per-attribute disparity:**
+**Per-task per-attribute disparity (mean absolute pairwise difference):**
 
 ```
-D_{m, r, G}  =  max_g  E_{m, r, g}  −  min_g  E_{m, r, g}
+D_{m, r, G}  =  ( 2 / |G|(|G|-1) )  ·  Σ_{g, g' ∈ G, g ≠ g'}  | E_{m, r, g}  −  E_{m, r, g'} |
 ```
 
 where `g` ranges over the levels of attribute `G ∈ {age_group, sex}`
-(see `DEFAULT_FAIRNESS_ATTRS` at `paper_metrics_core.py:35`).
+(see `DEFAULT_FAIRNESS_ATTRS` at `paper_metrics_core.py:35`). The sum
+runs over unordered pairs; the coefficient `2 / |G|(|G|-1)` averages
+across the `|G|(|G|-1)/2` pairs. For `|G| = 2` (sex) this collapses to
+`|E_a − E_b|`, matching the historical max-min formulation; for `|G|
+≥ 3` (age_group with 5 buckets → 10 pairs) MAPD smooths over every
+pair instead of only the two extremes.
 
 **Per-task disparity ratio vs. baseline:**
 
@@ -464,7 +469,7 @@ n_boot      =  count of finite draws in this cell
 
 CI level is 0.95 by default (set in `sweep_methods.yaml:ci_level`).
 Pairing via the shared resample matrix controls sampling covariance, but it
-does **not** correct the shape bias of the `max_g E − min_g E` disparity
+does **not** correct the shape bias of the mean-pairwise-difference disparity
 ratio that powers the fairness skill score. Fairness rows therefore
 additionally carry a deterministic `point` estimate plus a BCa
 (bias-corrected & accelerated) CI alongside the percentile columns
@@ -691,9 +696,11 @@ get 1000 values of `S^{task,(b)}`, report
 
 ## §S7. BCa (bias-corrected & accelerated) CIs for fairness skill
 
-**Why.** The fairness skill score reduces a per-task max-min disparity
-ratio `D_{r}^{(G)} = max_g E_{r}^{(g)} − min_g E_{r}^{(g)}` clipped and
-geomean-averaged across tasks. `max − min` is a skewed, downward-biased
+**Why.** The fairness skill score reduces a per-task mean absolute
+pairwise difference (MAPD) disparity ratio `D_{r}^{(G)} =
+(2/|G|(|G|-1)) · Σ_{g≠g'} |E_{r}^{(g)} − E_{r}^{(g')}|` clipped and
+geomean-averaged across tasks. The pairwise-difference disparity is a
+skewed, downward-biased
 statistic: the bootstrap mean `mean_b S^{(G),(b)}` sits below the
 deterministic point estimate `Ŝ^{(G)}`, and the plain percentile CI
 brackets 0 for most mid-pack methods. The shared-resample-matrix

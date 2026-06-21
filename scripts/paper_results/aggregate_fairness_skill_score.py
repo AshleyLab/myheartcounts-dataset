@@ -9,10 +9,18 @@ overall score, all with mean / SE / percentile CI across draws.
 Formulation (mirrors the regular skill score machinery):
 
     For each task r = (scenario, channel) and attribute G ∈ {sex, age_group}:
-        D_{r,j}^{(G)}  =  max_g E_{r,j}^{(g)}  −  min_g E_{r,j}^{(g)}
-        D_{r,b}^{(G)}  =  max_g E_{r,b}^{(g)}  −  min_g E_{r,b}^{(g)}    (b = LOCF)
+        D_{r,j}^{(G)}  =  (2 / |G|(|G|-1)) · Σ_{g, g' ∈ G, g ≠ g'}
+                                  | E_{r,j}^{(g)}  −  E_{r,j}^{(g')} |
+        D_{r,b}^{(G)}  =  same, for the baseline method b (= LOCF).
         drop r from this (G) aggregation if  D_{r,b}^{(G)} ≤ 0  or NaN.
         ratio_r        =  clip( D_{r,j}^{(G)} / D_{r,b}^{(G)},  ℓ,  u )
+
+    The disparity is the mean absolute pairwise difference (MAPD) over
+    the common subgroup set — averaged across the n(n-1)/2 unordered
+    (g, g') pairs. For |G| = 2 (e.g. sex) this collapses to
+    ``|E_a − E_b|``, matching the historical max-min formulation; for
+    |G| ≥ 3 (e.g. age_group with 5 buckets) MAPD smooths over every
+    pair instead of only the two extremes.
 
     Per attribute:
         S^{(G)}_j      =  1  −  GeometricMean_r(ratio_r)
@@ -22,7 +30,8 @@ Formulation (mirrors the regular skill score machinery):
         S_fair_j       =  (1 / |A|) · Σ_{G ∈ A} S^{(G)}_j
 
 The ``unknown`` bucket is preserved as a structural subgroup per the
-appendix; it contributes to the per-task max-min like any other subgroup.
+appendix; it contributes to the per-task pairwise differences like any
+other subgroup.
 
 Bootstrapping: per-draw D_j and D_b share the same resampled cohort (the
 ``draw`` axis), so pairing is preserved. Summary statistics aggregate
