@@ -1,27 +1,30 @@
-"""Upload the bootstrap reference artifacts to the OpenMHC leaderboard dataset.
+"""Upload the bootstrap reference artifact to the OpenMHC leaderboard dataset.
 
 Companion to ``upload_leaderboard_substrate.py``. Where that tool uploads
 per-method substrate parquets (one file per method, under
 ``<track>/<method>.parquet``), this one uploads the **bootstrap reference**
-for a track — the artifacts that are derivative-of, not unique-per-, method:
+for a track — the Phase-1 long-format per-(method, scenario, channel, draw)
+E / R / rank frame that drives skill / rank / fairness CIs:
 
-  * ``bootstrap_draws.parquet`` + ``.meta.json`` — the Phase-1 long-format
-    per-(method, scenario, channel, draw) E / R / rank frame that drives
-    skill / rank / fairness CIs.
-  * ``per_user_errors.parquet`` + ``.meta.json`` — the pooled (all-method)
-    per-user errors substrate consumed by the BCa LOO jackknife.
+  * ``bootstrap_draws.parquet`` + ``.meta.json``
 
 Layout in the HF dataset:
 
     <track>/bootstrap/draws.parquet
     <track>/bootstrap/draws.meta.json
-    <track>/bootstrap/per_user_errors.parquet
-    <track>/bootstrap/per_user_errors.meta.json
 
 (The ``bootstrap/`` subdir keeps these grouped and clearly separate from the
 sibling ``<track>/<method>.parquet`` substrate files. The ``bootstrap_``
 prefix is dropped from the destination names since the subdir already
 implies it.)
+
+Note: the pooled ``per_user_errors.parquet`` (the BCa LOO substrate) is
+deliberately **not** uploaded — it is the concatenation of the per-method
+``<track>/<method>.parquet`` files already on HF (``2,376,160 rows =
+148,510 rows/method × 16 methods``), so any consumer that needs it can
+reconstitute it with one ``pd.concat`` over the per-method files. The
+same provenance (seed, n_boot, method list, git commit) lives in
+``draws.meta.json`` already.
 
 Requires the ``[hf]`` extra (``pip install -e ".[hf]"``) for the
 ``huggingface_hub`` dependency. Authentication uses the standard
@@ -44,14 +47,12 @@ from huggingface_hub import HfApi
 DEFAULT_REPO_ID = "MyHeartCounts/OpenMHC-leaderboard-data"
 
 
-# (source filename in --dir, destination filename in repo)
-# The two parquet files are required; the .meta.json sidecars are uploaded
-# if present and skipped (with a warning) if absent.
+# (source filename in --dir, destination filename in repo, required)
+# The parquet file is required; the .meta.json sidecar is uploaded if
+# present and skipped (with a warning) if absent.
 _FILES: list[tuple[str, str, bool]] = [
     ("bootstrap_draws.parquet", "draws.parquet", True),
     ("bootstrap_draws.parquet.meta.json", "draws.meta.json", False),
-    ("per_user_errors.parquet", "per_user_errors.parquet", True),
-    ("per_user_errors.parquet.meta.json", "per_user_errors.meta.json", False),
 ]
 
 
@@ -61,8 +62,8 @@ def main() -> None:
         "--dir",
         required=True,
         type=Path,
-        help="Directory containing bootstrap_draws.parquet + per_user_errors.parquet "
-        "(plus their optional .meta.json sidecars).",
+        help="Directory containing bootstrap_draws.parquet (plus its optional "
+        ".meta.json sidecar).",
     )
     p.add_argument(
         "--track",
