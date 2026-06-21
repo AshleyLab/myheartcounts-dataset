@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
+import pandas as pd
 
 if TYPE_CHECKING:
     from openmhc._protocols import Encoder, Imputer
@@ -614,6 +615,10 @@ def evaluate_imputation(
     num_workers: int = 0,
     num_eval_workers: int = 1,
     pin_memory: bool = False,
+    output_dir: str | Path | None = None,
+    baseline_errors: str | Path | None = None,
+    keep_pairs: bool = False,
+    method_name: str = "custom",
 ) -> ImputationResults:
     """Run imputation evaluation with a custom imputer.
 
@@ -676,9 +681,64 @@ def evaluate_imputation(
         pin_memory: DataLoader ``pin_memory`` flag. Defaults to ``False``; set
             ``True`` to speed host→GPU transfer for a GPU imputer. Plumbs into
             ``DataConfig.pin_memory``.
+        output_dir: Optional persistent directory for the per-method
+            ``per_user_errors.parquet`` (and ``skill_scores.csv`` when
+            ``baseline_errors`` is set). When ``None`` (default) the harness
+            uses a tempdir and the additive artifacts live only in
+            ``ImputationResults.per_user_errors`` /
+            ``.skill_scores`` (in-memory). When set, the harness forces
+            ``save_pairs=True`` so the canonical producer can run against
+            the freshly written pair files; pair files are removed at the
+            end of the call unless ``keep_pairs=True``.
+        baseline_errors: Path to a single-method
+            ``per_user_errors.parquet`` file (typically the frozen LOCF
+            baseline shipped at
+            ``src/openmhc/data/baselines/imputation_locf_per_user_errors.parquet``).
+            When provided, the harness joins the imputer's per-user errors
+            against the baseline's and emits per-(scenario, channel, scope)
+            paired-R skill scores via
+            :func:`paper_metrics_core.compute_skill_scores` —
+            populating ``ImputationResults.skill_scores``. Single-method
+            scope only; for cross-method **ranks** see the CLI workflow
+            described below.
+        keep_pairs: When ``True`` and ``output_dir`` is set, retain the
+            ``output_dir/pairs/`` subdirectory after the call. Default
+            ``False`` deletes pairs as soon as the producer has reduced
+            them — desirable for the public API since pair files are
+            bulky and the per-user errors substrate is sufficient for any
+            downstream re-aggregation.
+        method_name: Label embedded in the ``method`` column of the
+            emitted ``per_user_errors`` rows. Defaults to ``"custom"``;
+            set to the canonical method identifier (e.g. ``"mean"``,
+            ``"lsm2"``) if you intend to concatenate the output with
+            another method's per-user errors for ranking.
 
     Returns:
-        An ImputationResults instance with per-scenario, per-split metrics.
+        An ImputationResults instance with per-scenario, per-split
+        metrics. When ``output_dir`` or ``baseline_errors`` is set,
+        ``per_user_errors`` and (if ``baseline_errors`` was provided)
+        ``skill_scores`` are populated.
+
+    Note:
+        **Cross-method rankings.** The public API runs one imputer at a
+        time, so ``avg_rankings.csv``-style cross-method ranks are not
+        produced here. The pattern is:
+
+        1. Run ``evaluate_imputation(method_a_imputer, …,
+           output_dir=outA, method_name="a")`` and the same for B / C / …
+           Each call emits ``<outX>/per_user_errors.parquet``.
+        2. Call the point CLI to rank across whichever subset you select:
+
+           .. code-block:: bash
+
+               python scripts/paper_results/compute_imputation_paper_metrics.py \\
+                   --per-user-errors <dir of those parquets> \\
+                   --methods locf mean linear brits \\
+                   --output-dir results/
+
+           The ``--methods`` filter restricts the ranking pool; the
+           ``--baseline-method`` (default ``locf``) must be in the
+           selected set.
 
     Raises:
         TypeError: If ``imputer`` does not implement ``impute``.
@@ -751,7 +811,21 @@ def evaluate_imputation(
                 "missing, re-clone or check that `data/imputation/masks/` was not "
                 "excluded by a sparse-checkout or .gitignore rule."
             )
-        masking_cfg.masks_file = str(_MAX91D_MASKS_DIR)
+        # Guard against git-lfs pointer stubs (a few hundred bytes each). When
+        # the user never ran `git lfs pull` the directory exists but the .npz
+        # files are pointer texts that np.load chokes on. Fall through to
+        # on-the-fly mask generation (deterministic at seed=42, ~20 min slower).
+        sample_npz = next(_MAX91D_MASKS_DIR.glob("**/*.npz"), None)
+        if sample_npz is not None and sample_npz.stat().st_size < 4096:
+            logger.warning(
+                "Mask file %s is %d bytes — looks like a git-lfs pointer stub. "
+                "Falling through to on-the-fly mask generation (run `git lfs "
+                "pull` to use the precomputed masks).",
+                sample_npz,
+                sample_npz.stat().st_size,
+            )
+        else:
+            masking_cfg.masks_file = str(_MAX91D_MASKS_DIR)
     elif (
         paths.version == "xs"
         and seed == 42
@@ -784,9 +858,13 @@ def evaluate_imputation(
         max_samples_per_split=max_samples,
     )
 
+    # Pairs are required by the canonical producer (build_per_user_errors)
+    # for both output_dir persistence and skill-score computation against a
+    # frozen baseline. Force-on when the caller opts into either feature.
+    need_pairs = (output_dir is not None) or (baseline_errors is not None)
     eval_cfg = EvalConfig(
         compute_metrics=True,
-        save_pairs=False,
+        save_pairs=need_pairs,
     )
 
     adapter = _ImputerMethodAdapter(imputer)
@@ -808,20 +886,119 @@ def evaluate_imputation(
             wandb=WandbConfig(),
         )
 
-    if bootstrap_cfg.enabled:
-        # Bootstrap requires pair files on disk; stash them in a tempdir so the
-        # user's data root stays clean. The runner writes bootstrap_metrics.json
-        # under results_dir too — also lives + dies with the tempdir.
-        import tempfile
+    # When the caller opts into output_dir, baseline_errors, or bootstrap, the
+    # pipeline writes pair files. Otherwise pairs live in a tempdir that's
+    # cleaned up on exit. ``keep_pairs=True`` retains the pairs/ subdir at
+    # output_dir for downstream re-aggregation.
+    import shutil
+    import tempfile
 
-        with tempfile.TemporaryDirectory(prefix="openmhc_bootstrap_") as td:
-            cfg = _build_cfg(td)
-            results = run_eval(cfg, method=adapter)
+    if output_dir is not None:
+        results_dir_str = str(Path(output_dir).resolve())
+        Path(results_dir_str).mkdir(parents=True, exist_ok=True)
+        tempdir_ctx = None
+    elif bootstrap_cfg.enabled or need_pairs:
+        tempdir_ctx = tempfile.TemporaryDirectory(prefix="openmhc_eval_")
+        results_dir_str = tempdir_ctx.name
     else:
-        cfg = _build_cfg(OutputConfig().results_dir)
+        tempdir_ctx = None
+        results_dir_str = OutputConfig().results_dir
+
+    try:
+        cfg = _build_cfg(results_dir_str)
         results = run_eval(cfg, method=adapter)
 
-    return ImputationResults(scenarios=results.get("scenarios", results))
+        per_user_df = None
+        skill_df = None
+        if need_pairs:
+            from imputation_evaluation.evaluation.per_user_errors import (
+                build_per_user_errors,
+                write_per_user_errors_parquet,
+            )
+
+            pairs_dir = Path(results_dir_str) / "pairs"
+            if not pairs_dir.exists():
+                raise RuntimeError(
+                    f"output_dir/baseline_errors requested but pairs dir "
+                    f"{pairs_dir} was not written by the runner."
+                )
+
+            split_names = ["test"]  # default eval splits — matches paper config
+            per_user_df, _display = build_per_user_errors(
+                method_pairs_dir=pairs_dir,
+                method_name=method_name,
+                scenarios=scenario_list,
+                splits=split_names,
+                subgroup_mappings=None,  # global cell only; subgroup support deferred
+                include_auc=True,
+                exclude_unknown=False,
+            )
+
+            if output_dir is not None:
+                write_per_user_errors_parquet(
+                    per_user_df,
+                    Path(results_dir_str) / "per_user_errors.parquet",
+                )
+
+            if baseline_errors is not None:
+                from imputation_evaluation.evaluation.bootstrap_skill_rank import (
+                    compute_per_task_paired_R,
+                )
+                from imputation_evaluation.evaluation.paper_metrics_core import (
+                    compute_skill_scores,
+                )
+
+                baseline_df = pd.read_parquet(baseline_errors)
+                baseline_method = (
+                    str(baseline_df["method"].astype(str).unique()[0])
+                    if not baseline_df.empty
+                    else "locf"
+                )
+                # Slice the baseline to the same scenarios + the global cell.
+                baseline_df = baseline_df[
+                    baseline_df["scenario"].astype(str).isin(scenario_list)
+                    & baseline_df["split"].astype(str).isin(split_names)
+                    & (baseline_df["subgroup_attr"].astype(str) == "all")
+                    & (baseline_df["subgroup_value"].astype(str) == "all")
+                ].copy()
+
+                # Concat for the paired_R helper; rename E_per_user → E.
+                this_method_df = per_user_df[
+                    (per_user_df["subgroup_attr"].astype(str) == "all")
+                    & (per_user_df["subgroup_value"].astype(str) == "all")
+                ].copy()
+                combined = pd.concat(
+                    [this_method_df, baseline_df], ignore_index=True
+                )
+                combined = combined.rename(columns={"E_per_user": "E"})
+                for col in ("method", "scenario", "split", "channel", "channel_type", "user_id"):
+                    combined[col] = combined[col].astype(str)
+
+                R_per_task = compute_per_task_paired_R(
+                    combined,
+                    baseline_method=baseline_method,
+                )
+                if not R_per_task.empty:
+                    skill_df = compute_skill_scores(R_per_task, mode="paired")
+                    if output_dir is not None:
+                        skill_df.to_csv(
+                            Path(results_dir_str) / "skill_scores.csv",
+                            index=False,
+                            float_format="%.6f",
+                        )
+
+            # Optionally clean up pairs.
+            if not keep_pairs and output_dir is not None:
+                shutil.rmtree(pairs_dir, ignore_errors=True)
+
+        return ImputationResults(
+            scenarios=results.get("scenarios", results),
+            per_user_errors=per_user_df,
+            skill_scores=skill_df,
+        )
+    finally:
+        if tempdir_ctx is not None:
+            tempdir_ctx.cleanup()
 
 
 _N_CHANNELS = 19

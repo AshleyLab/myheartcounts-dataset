@@ -41,6 +41,21 @@ cluster bootstrap over users.
 Per-task per-user errors are produced upstream by
 [`pair_aggregator.aggregate_pairs(..., return_per_user=True)`](evaluation/pair_aggregator.py).
 
+> **Canonical artifact.** `per_user_errors.parquet` — one file per
+> method, schema `PER_USER_ERRORS_PARQUET_COLUMNS` (see
+> [`evaluation/bootstrap_skill_rank.py`](evaluation/bootstrap_skill_rank.py)).
+> Emitted by
+> [`evaluation/per_user_errors.py::build_per_user_errors`](evaluation/per_user_errors.py),
+> which is the single canonical producer the public API, the
+> `mhc-impute-eval` runner, and the paper Phase-0 driver all share.
+> The file's content equals the per-(user, channel, cell) E this
+> section defines — `_per_user_errors_for_cell` /
+> `_per_user_collapsed_errors_for_cell` of the bootstrap path emit
+> exactly the same values (parity vs the on-disk paper artifact is
+> pinned by
+> `scripts/paper_results/imputation/parity/parity_locf.py`).
+> §8.2 covers the Phase B fast paths that consume it directly.
+
 **Continuous channels (`ch_0..ch_6`, 7 channels)**
 
 ```
@@ -534,6 +549,84 @@ run.
    doesn't include every method the renderer expects, either edit the
    dicts to match the subset, or invoke the renderer with a different
    working directory whose registry matches.
+
+### 8.2 Phase B fast paths — consuming `per_user_errors.parquet` directly
+
+The canonical per-method `per_user_errors.parquet` artifact (§1) lets
+both Phase 1 and the point-estimate flow skip the pair re-scan. Same
+math; ~10× wall-time saving on a full 16-method run because the slow
+step is reading per-channel pair files.
+
+**Phase 1 (bootstrap) fast path** — `bootstrap_imputation_draws.py`
+gains a `--per-user-errors-dir <dir>` flag that loads each method's
+file from `<dir>/<method>.parquet` and feeds
+[`compute_per_draw_errors_from_per_user_errors`](evaluation/bootstrap_skill_rank.py)
+instead of the pair-loading path:
+
+```bash
+python scripts/paper_results/imputation/bootstrap_imputation_draws.py \
+  --method-dirs configs/paper/bootstrap_method_dirs.json \
+  --per-user-errors-dir <dir> \
+  --methods locf mean linear brits \
+  --output results/paper-fast/bootstrap_draws.parquet \
+  --n-boot 1000 --seed 42 --splits test
+```
+
+`--method-dirs` is still required so manifests can reconstruct the
+canonical user-id union (preserves `boot_idx` cohort ordering against
+the legacy path; same seed → same draws). `--methods` selects the
+**ranking pool** (avg-rank is taken across the selected methods) and
+the **skill-score pool** (the baseline must be in the selection — same
+guardrail as §8.1).
+
+**Point-estimate fast path** —
+`scripts/paper_results/compute_imputation_paper_metrics.py` gains a
+`--per-user-errors <dir>` switch that bypasses `_gather_registry`'s
+pair scan entirely:
+
+```bash
+python scripts/paper_results/compute_imputation_paper_metrics.py \
+  --per-user-errors <dir> \
+  --methods locf mean linear brits \
+  --output-dir results/paper-fast-point/
+```
+
+Same `--methods` ranking-pool semantics. The script applies the
+fairness B.2 row-strip (drops per-channel binary `ch_7..ch_18`; keeps
+`cat_collapsed:{sleep,workouts}`) automatically when reducing
+`errors_sg` for the fair skill score, matching the bootstrap CSV's
+`point` column.
+
+**Public-API integration** — `openmhc.evaluate_imputation` accepts
+`output_dir=` (persists `per_user_errors.parquet`) and
+`baseline_errors=` (paired-R skill against a single frozen baseline,
+typically the LOCF file shipped at
+`src/openmhc/data/baselines/imputation_locf_per_user_errors.parquet`).
+Single-method scope only; cross-method ranks still require running the
+imputers separately and aggregating via the point CLI above. See
+`src/openmhc/_evaluate.py::evaluate_imputation`'s docstring for the
+full surface and the multi-method ranking pattern.
+
+**Known byte-level divergences from the legacy pair-based bootstrap**
+(§3 parity report):
+
+- `per_user_errors.parquet` stores `E_per_user` in **float32**; the
+  legacy bootstrap holds float64 until the final write. After
+  reduction the per-draw E can differ at the float32 ULP scale
+  (~1e-3 on large-magnitude `ch_6` ~10000 values; 4.9% of E rows
+  affected). The Phase 2 aggregate CSVs absorb this into bootstrap
+  noise (`§3` confirms `≤ 5 × SE`).
+- The legacy `_per_method_cell_paired_collapsed_ratios` applies
+  `BINARY_ERROR_FLOOR` **per-channel inside the nanmean** when
+  computing collapsed-binary R; the per-user-errors substrate stores
+  the **unfloored** value. This divergence shows up only on the
+  `unknown` subgroup of `cat_collapsed:sleep / mean / random_noise`
+  and is absorbed by the Phase 2 SE.
+- Strict byte-parity on `bootstrap_draws.parquet` would require
+  storing `E_per_user` in float64 (~doubles file size) and
+  reconstructing the per-channel-floored cat E inside
+  `_emit_draws_for_cell` (~30 lines). Headline numbers are
+  unaffected today.
 
 ## 9. Constants (verified canonical values)
 

@@ -350,6 +350,59 @@ python scripts/paper_results/imputation/aggregate_imputation_paper_metrics.py \
   --output-dir results/paper/
 ```
 
+### Phase B fast path — `per_user_errors.parquet` as the canonical intermediate
+
+`per_user_errors.parquet` is the single substrate every downstream
+reducer consumes. Schema = `PER_USER_ERRORS_PARQUET_COLUMNS` (see
+[`evaluation/bootstrap_skill_rank.py`](evaluation/bootstrap_skill_rank.py)):
+`[method, scenario, split, channel, channel_type, subgroup_attr, subgroup_value, user_id, E_per_user]`.
+
+The canonical producer
+[`evaluation/per_user_errors.py::build_per_user_errors`](evaluation/per_user_errors.py)
+reads one method's `pairs/` directory and emits that method's slice of
+the table — same formula as the bootstrap's
+`_per_user_errors_for_cell` / `_per_user_collapsed_errors_for_cell`
+(continuous = `sae / n`, binary = `1 − AUC` un-floored, collapsed =
+nanmean over category channels). Parity vs the on-disk paper artifact
+is pinned by `scripts/paper_results/imputation/parity/parity_locf.py`.
+
+**Bootstrap fast path** — Phase 1 can skip the pair re-scan when each
+method's per-user errors are already on disk:
+
+```bash
+python scripts/paper_results/imputation/bootstrap_imputation_draws.py \
+  --method-dirs configs/paper/bootstrap_method_dirs.json \
+  --per-user-errors-dir <dir of <method>.parquet files> \
+  --output results/paper/bootstrap_draws.parquet \
+  --n-boot 1000 --seed 42 --splits test
+```
+
+The `--method-dirs` JSON is still required so manifests can rebuild the
+canonical user-id union (preserves `boot_idx` ordering against the
+legacy pair-based path). Per-method files come from running
+`build_per_user_errors` once per method or from the fan-out script
+`scripts/paper_results/imputation/parity/produce_per_method_per_user_errors.py`.
+
+**Point-estimate fast path** — same idea, no pair scan:
+
+```bash
+python scripts/paper_results/compute_imputation_paper_metrics.py \
+  --per-user-errors <dir of <method>.parquet files> \
+  --methods locf mean linear brits \
+  --output-dir results/paper-fast/
+```
+
+`--methods` restricts both the **ranking pool** (ranks are taken
+across the selected methods only) and the **skill-score pool** (the
+baseline must be in the selection). Omitting `--methods` includes
+every parquet found in the directory.
+
+**Public-API integration** — `openmhc.evaluate_imputation` accepts
+`output_dir=` / `baseline_errors=` / `keep_pairs=` / `method_name=`
+and runs the producer in-process, populating
+`ImputationResults.per_user_errors` and `.skill_scores`. See
+`src/openmhc/_evaluate.py` for the full surface.
+
 Alternatively, the driver
 [`scripts/paper_results/imputation/run_paper_pipeline.py`](../../scripts/paper_results/imputation/run_paper_pipeline.py)
 chains all three phases from a single YAML sweep spec

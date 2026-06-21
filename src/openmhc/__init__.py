@@ -105,6 +105,10 @@ def evaluate_imputation(
     num_workers: int = 0,
     num_eval_workers: int = 1,
     pin_memory: bool = False,
+    output_dir: str | Path | None = None,
+    baseline_errors: str | Path | None = None,
+    keep_pairs: bool = False,
+    method_name: str = "custom",
 ) -> ImputationResults:
     """Run imputation evaluation with a custom imputer.
 
@@ -136,9 +140,41 @@ def evaluate_imputation(
             picklable (a class defined in a notebook cell can fail under the
             ``spawn`` start method; works under Linux ``fork``).
         pin_memory: DataLoader ``pin_memory`` flag (default ``False``).
+        output_dir: Optional persistent directory for
+            ``per_user_errors.parquet`` (and ``skill_scores.csv`` when
+            ``baseline_errors`` is set). When ``None`` artifacts live
+            in-memory on the returned ``ImputationResults`` only.
+        baseline_errors: Path to a frozen single-method
+            ``per_user_errors.parquet`` (typically the LOCF baseline
+            shipped at ``src/openmhc/data/baselines/imputation_locf_per_user_errors.parquet``).
+            Triggers paired-R skill-score computation against this
+            baseline; result lands on ``ImputationResults.skill_scores``.
+        keep_pairs: When ``True`` and ``output_dir`` is set, retain
+            ``output_dir/pairs/`` after the call. Default ``False``
+            deletes the pairs subdir once the producer has reduced it.
+        method_name: Label embedded in the ``method`` column of emitted
+            per-user errors. Defaults to ``"custom"``. Set to the
+            canonical method identifier if you intend to concatenate
+            with another method's file for downstream ranking via
+            ``scripts/paper_results/compute_imputation_paper_metrics.py``.
 
     Returns:
-        ImputationResults with per-scenario, per-split metrics.
+        ImputationResults with per-scenario, per-split metrics; the
+        additive ``per_user_errors`` / ``skill_scores`` fields are
+        populated when ``output_dir`` or ``baseline_errors`` is set.
+
+    Note:
+        Cross-method **ranks** are not produced by the single-imputer
+        public API. Run multiple ``evaluate_imputation(…,
+        output_dir=outX, method_name="x")`` calls and then aggregate
+        with::
+
+            python scripts/paper_results/compute_imputation_paper_metrics.py \\
+                --per-user-errors <dir of outX/per_user_errors.parquet files> \\
+                --methods locf mean linear brits
+
+        ``--methods`` selects the ranking pool; the baseline method must
+        be in the selection.
     """
     from openmhc._evaluate import evaluate_imputation as _eval
 
@@ -154,6 +190,10 @@ def evaluate_imputation(
         num_workers=num_workers,
         num_eval_workers=num_eval_workers,
         pin_memory=pin_memory,
+        output_dir=output_dir,
+        baseline_errors=baseline_errors,
+        keep_pairs=keep_pairs,
+        method_name=method_name,
     )
 
 
