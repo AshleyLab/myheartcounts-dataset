@@ -3,6 +3,11 @@
 Creates the HF dataset repo if it doesn't exist (private by default), then
 uploads the method's substrate to ``<track>/<method>.parquet``.
 
+Requires the ``[hf]`` extra (``pip install -e ".[hf]"``) for the
+``huggingface_hub`` dependency. Authentication uses the standard
+``huggingface_hub`` discovery (``HF_TOKEN`` env or a prior
+``huggingface-cli login``).
+
 Usage:
     python tools/upload_leaderboard_substrate.py \
         --dir src/openmhc/data/baselines \
@@ -23,12 +28,20 @@ DEFAULT_REPO_ID = "MyHeartCounts/OpenMHC-leaderboard-data"
 def find_parquet(dir_path: Path, method: str) -> Path:
     """Locate the substrate parquet for ``method`` inside ``dir_path``.
 
-    Prefers a file whose name contains the method; otherwise falls back to the
+    Prefers an exact stem match (e.g. ``method='mean'`` → ``mean.parquet``);
+    falls back to a substring match on the filename; finally falls back to the
     sole parquet in the directory. Errors if the choice is ambiguous.
+
+    The exact-stem step matters when method names share prefixes (e.g. ``mean``
+    is a substring of ``temporal_mean`` and ``personalized_mean``); a pure
+    substring match would mis-flag the lookup as ambiguous.
     """
     parquets = sorted(dir_path.glob("*.parquet"))
     if not parquets:
         raise SystemExit(f"No .parquet files in {dir_path}")
+    exact = [p for p in parquets if p.stem == method]
+    if len(exact) == 1:
+        return exact[0]
     named = [p for p in parquets if method in p.name]
     if len(named) == 1:
         return named[0]
