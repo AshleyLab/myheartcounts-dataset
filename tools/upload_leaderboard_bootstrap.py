@@ -105,6 +105,17 @@ def main() -> None:
     if missing_optional:
         print(f"Note: optional sidecar(s) missing, skipping: {missing_optional}")
 
+    # Documentation files (README.md, SCHEMA.md) co-located with the
+    # uploader in the code repo at
+    # ``tools/leaderboard_docs/<track>/bootstrap/``. Versioned in git and
+    # uploaded alongside the parquet so the HF directory is
+    # self-documenting. Missing docs are silently skipped — the parquet
+    # upload still works without them.
+    docs_dir = Path(__file__).resolve().parent / "leaderboard_docs" / args.track / "bootstrap"
+    if docs_dir.is_dir():
+        for doc in sorted(docs_dir.glob("*.md")):
+            plan.append((doc, f"{args.track}/bootstrap/{doc.name}"))
+
     print("Plan:")
     for src, dest in plan:
         size_mb = src.stat().st_size / 1024 / 1024
