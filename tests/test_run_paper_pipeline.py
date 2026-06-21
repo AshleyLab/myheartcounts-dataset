@@ -43,9 +43,11 @@ def test_phase0_sets_output_results_dir_per_method(tmp_path, captured_cmds):
     Both must point at the same per-method run directory.
     """
     runs_root = tmp_path / "runs"
+    # Phase A: pairs are always written; no override needed. Pass a different
+    # dummy override (seed) to verify common_overrides plumbing still works.
     cfg = {
         "runs_root": str(runs_root),
-        "common_overrides": ["evaluation.save_pairs=true"],
+        "common_overrides": ["seed=123"],
     }
     methods = [{"name": "mean"}, {"name": "locf"}]
 
@@ -59,8 +61,8 @@ def test_phase0_sets_output_results_dir_per_method(tmp_path, captured_cmds):
         assert f"output.results_dir={expected_dir}" in cmd
         # Sanity: the two overrides reference the same dir (Phase 1 expectation).
         seen_run_dirs.append(expected_dir)
-        # save_pairs override from common_overrides is still forwarded.
-        assert "evaluation.save_pairs=true" in cmd
+        # common_overrides entries are forwarded verbatim.
+        assert "seed=123" in cmd
 
     # Per-method dirs differ — no shared-pairs clobber.
     assert len(set(seen_run_dirs)) == len(seen_run_dirs)

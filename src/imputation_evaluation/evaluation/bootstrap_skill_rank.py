@@ -1600,6 +1600,407 @@ def compute_per_draw_errors(
 
 
 # --------------------------------------------------------------------------
+# Phase 1 — direct from per_user_errors (B1/B2)
+# --------------------------------------------------------------------------
+#
+# Bootstrap orchestrator that consumes the canonical per-method
+# ``per_user_errors.parquet`` artifact instead of re-aggregating from pair
+# files. Math is identical to :func:`compute_per_draw_errors` — both reduce
+# ``nanmean(per_user_E[boot_idx], axis=users)`` — so the output matches
+# byte-for-byte given the same seed and the same canonical user ordering.
+#
+# **User-ordering parity contract.** The existing path orders
+# ``all_user_ids`` by manifest iteration over ``method_dirs`` (insertion
+# order of the dict). Since ``boot_idx`` is the same matrix of integer
+# indices, a different user ordering would resample a different cohort →
+# different draws → no byte-equality. So this function takes manifests
+# separately for the ordering — the per_user_errors files only supply ``E``
+# values.
+
+
+def _build_canonical_user_index_from_manifests(
+    method_manifests: dict[str, pa.Table],
+) -> tuple[list[str], dict[str, int]]:
+    """Reproduce ``all_user_ids`` ordering from compute_per_draw_errors.
+
+    Iterate methods in dict-insertion order, accumulate the union of
+    ``manifest.user_id`` lists preserving first-seen order. This matches
+    L1287-1294 of :func:`compute_per_draw_errors` exactly.
+    """
+    all_user_ids: list[str] = []
+    seen: set[str] = set()
+    for manifest in method_manifests.values():
+        for uid in manifest.column("user_id").to_pylist():
+            if uid not in seen:
+                seen.add(uid)
+                all_user_ids.append(uid)
+    canonical_user_index = {u: i for i, u in enumerate(all_user_ids)}
+    return all_user_ids, canonical_user_index
+
+
+def _manifests_for_split(
+    method_manifests: dict[str, pa.Table] | dict[str, dict[str, pa.Table]],
+    split: str,
+) -> dict[str, pa.Table]:
+    """Return the per-method manifests for one split.
+
+    ``compute_per_draw_errors_from_per_user_errors`` historically accepted a
+    flat ``{method: manifest}`` mapping because the fast path was usually run
+    for one split. Multi-split callers pass ``{split: {method: manifest}}`` so
+    the canonical user ordering can match the legacy from-pairs path per split.
+    """
+    first = next(iter(method_manifests.values()))
+    if isinstance(first, dict):
+        by_split = method_manifests  # type: ignore[assignment]
+        return dict(by_split.get(split, {}))
+    return method_manifests  # type: ignore[return-value]
+
+
+def _build_per_user_E_matrix(
+    df_cell_method: pd.DataFrame,
+    *,
+    canonical_user_index: dict[str, int],
+    channels: list[str],
+) -> dict[str, np.ndarray]:
+    """Materialise one (n_users,) E array per channel for one (method, cell).
+
+    Users absent from this (method, cell) are NaN-padded. The result
+    feeds the bootstrap reduce kernel directly.
+    """
+    U = len(canonical_user_index)
+    out: dict[str, np.ndarray] = {}
+    for ch_label, sub_ch in df_cell_method.groupby("channel", observed=True):
+        if ch_label not in channels:
+            continue
+        arr = np.full(U, np.nan, dtype=np.float64)
+        user_idxs = sub_ch["user_id"].map(canonical_user_index).to_numpy()
+        # Drop users not in the canonical index (defensive — should not happen
+        # when manifests + per_user_errors come from the same paper run).
+        valid = ~pd.isna(user_idxs)
+        if not valid.all():
+            user_idxs = user_idxs[valid]
+            e_vals = sub_ch["E_per_user"].to_numpy()[valid]
+        else:
+            e_vals = sub_ch["E_per_user"].to_numpy()
+        arr[user_idxs.astype(np.int64)] = e_vals
+        out[ch_label] = arr
+    return out
+
+
+def _rank_across_methods_per_user(
+    per_user_E_by_method: dict[str, np.ndarray],
+    methods: list[str],
+) -> dict[str, np.ndarray]:
+    """Per-(user) cross-method rank for one task.
+
+    Stacks the method arrays into a ``(U, n_methods)`` matrix, ranks each
+    row across methods (ties → ``average``, lower E → rank 1), masks NaN
+    cells. Returns ``{method: (U,) per-user rank}``.
+
+    Mirrors the rank semantics of :func:`_rank_per_draw_for_cell` minus
+    the per-draw resample step (which the caller applies on top).
+    """
+    from scipy.stats import rankdata
+
+    n_methods = len(methods)
+    if n_methods < 2:
+        # Single method → no cross-method rank; emit NaNs.
+        if methods:
+            U = per_user_E_by_method[methods[0]].size
+            return {methods[0]: np.full(U, np.nan, dtype=np.float64)}
+        return {}
+
+    E_matrix = np.column_stack([per_user_E_by_method[m] for m in methods])
+    # rankdata with nan_policy='omit' isn't supported per-row in older scipy
+    # versions, so we mask manually: rank within each row, then set NaN cells
+    # back to NaN. Rows with all-NaN stay all-NaN.
+    ranks = np.full_like(E_matrix, np.nan, dtype=np.float64)
+    finite_row = np.isfinite(E_matrix).any(axis=1)
+    for i in np.flatnonzero(finite_row):
+        row = E_matrix[i]
+        mask = np.isfinite(row)
+        if mask.sum() < 1:
+            continue
+        row_ranks = rankdata(row[mask], method="average")
+        ranks[i, mask] = row_ranks
+    return {m: ranks[:, j] for j, m in enumerate(methods)}
+
+
+def _emit_draws_for_cell(
+    *,
+    per_method_E: dict[str, dict[str, np.ndarray]],  # method → channel → (U,) E
+    boot_idx: np.ndarray,  # (n_boot, U)
+    baseline_method: str,
+    channels: list[str],
+    channel_type_by_label: dict[str, str],
+    scenario: str,
+    split: str,
+    subgroup_attr: str,
+    subgroup_value: str,
+    binary_error_floor: float,
+    clip_lower: float,
+    clip_upper: float,
+) -> list[dict]:
+    """Bootstrap reduce one (scenario, split, cell) into per-draw rows.
+
+    All math mirrors :func:`compute_per_draw_errors`'s per-cell second pass
+    (L1336-1573) operating on pre-computed per-user E:
+
+    * ``E_per_draw[ch] = nanmean(E_per_user[ch][boot_idx], axis=users)``
+    * ``R_per_draw[ch] = exp(nanmean(log_ratio[ch][boot_idx]))`` where
+      ``log_ratio = log(clip(E_m / E_b, lo, hi))`` after flooring binary E.
+    * ``rank_per_draw[ch] = nanmean(per_user_rank[ch][boot_idx], axis=users)``
+      where per_user_rank is the cross-method rank within each user.
+    """
+    n_boot = boot_idx.shape[0]
+    methods_present = [m for m in per_method_E if any(np.isfinite(per_method_E[m].get(ch, np.array([np.nan]))).any() for ch in channels)]
+
+    # Pre-compute per-task cross-method ranks (per user, then resampled below).
+    rank_by_method: dict[str, dict[str, np.ndarray]] = {m: {} for m in methods_present}
+    for ch in channels:
+        methods_with_data = [m for m in methods_present if ch in per_method_E[m] and np.isfinite(per_method_E[m][ch]).any()]
+        if not methods_with_data:
+            continue
+        per_user_E_for_task = {m: per_method_E[m][ch] for m in methods_with_data}
+        ranks = _rank_across_methods_per_user(per_user_E_for_task, methods_with_data)
+        for m, arr in ranks.items():
+            rank_by_method[m][ch] = arr
+
+    baseline_arrays = per_method_E.get(baseline_method, {})
+
+    rows: list[dict] = []
+    for method in methods_present:
+        method_arrays = per_method_E[method]
+        for ch in channels:
+            if ch not in method_arrays:
+                continue
+            E_arr = method_arrays[ch]
+            if not np.isfinite(E_arr).any():
+                continue
+
+            ch_type = channel_type_by_label[ch]
+
+            # ---- per-draw E ----
+            sampled_E = E_arr[boot_idx]  # (n_boot, U)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", RuntimeWarning)
+                E_per_draw = np.nanmean(sampled_E, axis=1)
+
+            # ---- per-draw R (paired vs baseline) ----
+            if method == baseline_method:
+                R_per_draw = np.ones(n_boot, dtype=np.float64)
+            elif ch in baseline_arrays:
+                E_b = baseline_arrays[ch]
+                E_m = E_arr
+                if ch_type in ("binary", "binary_collapsed"):
+                    E_m = np.maximum(E_m, binary_error_floor)
+                    E_b = np.maximum(E_b, binary_error_floor)
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    ratios = np.where(
+                        np.isfinite(E_m) & np.isfinite(E_b) & (E_b > 0),
+                        np.clip(E_m / E_b, clip_lower, clip_upper),
+                        np.nan,
+                    )
+                log_ratios = np.where(
+                    np.isfinite(ratios) & (ratios > 0), np.log(ratios), np.nan
+                )
+                sampled_log = log_ratios[boot_idx]
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", RuntimeWarning)
+                    mean_log = np.nanmean(sampled_log, axis=1)
+                R_per_draw = np.exp(mean_log)
+            else:
+                R_per_draw = np.full(n_boot, np.nan, dtype=np.float64)
+
+            # ---- per-draw rank ----
+            rank_arr = rank_by_method.get(method, {}).get(ch)
+            if rank_arr is not None:
+                sampled_rank = rank_arr[boot_idx]
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", RuntimeWarning)
+                    rank_per_draw = np.nanmean(sampled_rank, axis=1)
+            else:
+                rank_per_draw = np.full(n_boot, np.nan, dtype=np.float64)
+
+            # ---- emit rows (drop draws where E is non-finite, matching
+            #      compute_per_draw_errors L1477-1478) ----
+            col_E = E_per_draw.astype(np.float32)
+            col_R = R_per_draw.astype(np.float32)
+            col_rank = rank_per_draw.astype(np.float32)
+            for b in range(n_boot):
+                val_E = col_E[b]
+                if not np.isfinite(val_E):
+                    continue
+                val_R = col_R[b]
+                val_rank = col_rank[b]
+                rows.append(
+                    {
+                        "method": method,
+                        "scenario": scenario,
+                        "split": split,
+                        "channel": ch,
+                        "channel_type": ch_type,
+                        "subgroup_attr": subgroup_attr,
+                        "subgroup_value": subgroup_value,
+                        "draw": int(b),
+                        "E": float(val_E),
+                        "R": float(val_R) if np.isfinite(val_R) else float("nan"),
+                        "rank": float(val_rank) if np.isfinite(val_rank) else float("nan"),
+                    }
+                )
+    return rows
+
+
+def compute_per_draw_errors_from_per_user_errors(
+    per_user_df: pd.DataFrame,
+    method_manifests: dict[str, pa.Table] | dict[str, dict[str, pa.Table]],
+    *,
+    n_boot: int,
+    seed: int,
+    baseline_method: str = BASELINE_CONTINUOUS,
+    binary_error_floor: float = BINARY_ERROR_FLOOR,
+    clip_lower: float = SKILL_CLIP_LOWER,
+    clip_upper: float = SKILL_CLIP_UPPER,
+    progress_logger: Callable[[str], None] = logger.info,
+) -> pd.DataFrame:
+    """Phase-1 bootstrap directly from per_user_errors (Phase B fast path).
+
+    Drop-in alternative to :func:`compute_per_draw_errors` that bypasses
+    the pair-loading / CellStats build. Inputs:
+
+      * ``per_user_df`` — long-format frame matching
+        :data:`PER_USER_ERRORS_PARQUET_COLUMNS`, concatenated across all
+        methods in the bootstrap pool. Each method's rows already carry
+        the canonical user_id + subgroup labels (the producer applied
+        the EXCLUDE_BINARY_SCENARIOS row filter).
+      * ``method_manifests`` — either ``{method: pa.Table}`` for one-split
+        callers or ``{split: {method: pa.Table}}`` for multi-split callers.
+        The per-split method dict must preserve the SAME insertion order as
+        the bootstrap's ``method_dirs``. Used **only** to reconstruct the
+        canonical user ordering so ``boot_idx`` resamples the same cohort as
+        the legacy path → byte-equal bootstrap_draws.parquet given the same
+        seed.
+
+    Output schema is identical to :func:`compute_per_draw_errors`'s draws
+    frame (:data:`DRAWS_PARQUET_COLUMNS`). The §3 parity test asserts
+    byte-equality against ``paper/bootstrap_draws.parquet``.
+
+    Args:
+        per_user_df: Concatenated per-method per_user_errors.
+        method_manifests: Manifests for canonical user/method ordering.
+        n_boot: Number of bootstrap draws.
+        seed: Master RNG seed; per-split derived via ``_seed_for_split``.
+        baseline_method: Method used as paired-ratio denominator. Defaults
+            to :data:`BASELINE_CONTINUOUS`.
+        binary_error_floor: ε applied to binary E before the ratio.
+        clip_lower: Lower bound on the per-user ratio.
+        clip_upper: Upper bound on the per-user ratio.
+        progress_logger: Callable for progress messages.
+
+    Returns:
+        Long-format DataFrame with :data:`DRAWS_PARQUET_COLUMNS`. The
+        ``per_user_errors`` output is the input — no second copy is
+        emitted (callers already have it).
+    """
+    if per_user_df.empty:
+        return pd.DataFrame(columns=DRAWS_PARQUET_COLUMNS)
+    if not method_manifests:
+        raise ValueError("method_manifests is empty")
+
+    # Coerce keys to plain str (categoricals don't merge / map cleanly).
+    df = per_user_df.copy()
+    for col in (
+        "method",
+        "scenario",
+        "split",
+        "channel",
+        "channel_type",
+        "subgroup_attr",
+        "subgroup_value",
+        "user_id",
+    ):
+        df[col] = df[col].astype(str)
+    df["E_per_user"] = df["E_per_user"].astype(np.float64)
+
+    # Map channel → channel_type once per split/scenario (constant across cells).
+    channel_type_by_label = (
+        df.drop_duplicates(["channel"])
+        .set_index("channel")["channel_type"]
+        .to_dict()
+    )
+
+    all_rows: list[dict] = []
+    for split in sorted(df["split"].unique()):
+        df_split = df[df["split"] == split]
+        split_manifests = _manifests_for_split(method_manifests, split)
+        if not split_manifests:
+            progress_logger(f"[split={split}] no manifests available; skipping")
+            continue
+        method_order = list(split_manifests.keys())
+        all_user_ids, canonical_user_index = _build_canonical_user_index_from_manifests(
+            split_manifests
+        )
+        U = len(all_user_ids)
+        split_seed = _seed_for_split(seed, split)
+        boot_idx = _bootstrap_indices(U, n_boot, split_seed)
+        progress_logger(f"[split={split}] U={U} n_boot={n_boot} (per_user_errors path)")
+
+        for scenario in sorted(df_split["scenario"].unique()):
+            df_sc = df_split[df_split["scenario"] == scenario]
+
+            # Cells: sentinel ("all","all") + every (attr, value) pair seen.
+            cells = sorted(
+                set(
+                    zip(
+                        df_sc["subgroup_attr"].tolist(),
+                        df_sc["subgroup_value"].tolist(),
+                    )
+                )
+            )
+
+            for attr, value in cells:
+                df_cell = df_sc[
+                    (df_sc["subgroup_attr"] == attr)
+                    & (df_sc["subgroup_value"] == value)
+                ]
+                if df_cell.empty:
+                    continue
+
+                # Method-major build of per_user_E[method][channel].
+                channels_in_cell = sorted(df_cell["channel"].unique())
+                per_method_E: dict[str, dict[str, np.ndarray]] = {}
+                for method in method_order:
+                    df_cm = df_cell[df_cell["method"] == method]
+                    if df_cm.empty:
+                        continue
+                    per_method_E[method] = _build_per_user_E_matrix(
+                        df_cm,
+                        canonical_user_index=canonical_user_index,
+                        channels=channels_in_cell,
+                    )
+
+                cell_rows = _emit_draws_for_cell(
+                    per_method_E=per_method_E,
+                    boot_idx=boot_idx,
+                    baseline_method=baseline_method,
+                    channels=channels_in_cell,
+                    channel_type_by_label=channel_type_by_label,
+                    scenario=scenario,
+                    split=split,
+                    subgroup_attr=attr,
+                    subgroup_value=value,
+                    binary_error_floor=binary_error_floor,
+                    clip_lower=clip_lower,
+                    clip_upper=clip_upper,
+                )
+                all_rows.extend(cell_rows)
+
+    if all_rows:
+        return pd.DataFrame(all_rows)
+    return pd.DataFrame(columns=DRAWS_PARQUET_COLUMNS)
+
+
+# --------------------------------------------------------------------------
 # Parquet IO
 # --------------------------------------------------------------------------
 

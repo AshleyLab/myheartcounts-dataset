@@ -1,6 +1,4 @@
 # @package evaluation
-compute_metrics: true
-save_pairs: true
 # Which splits to evaluate. Default ["val", "test"] preserves historical
 # behavior. For leaderboard-only reruns (paper pipeline reads --splits test
 # exclusively) pass ["test"] to skip val.

@@ -4,13 +4,14 @@ __all__ = [
     "ImputationEvaluator",
     "PairWriter",
     "aggregate_pairs",
-    "compute_scenario_metrics",
     "compute_per_draw_errors",
     "aggregate_skill_rank_fairness",
     "read_draws_parquet",
     "write_draws_parquet",
     "read_per_user_errors_parquet",
     "write_per_user_errors_parquet",
+    "build_per_user_errors",
+    "per_user_map_to_rows",
 ]
 
 
@@ -20,10 +21,6 @@ def __getattr__(name: str):
         from imputation_evaluation.evaluation.evaluator import ImputationEvaluator
 
         return ImputationEvaluator
-    elif name == "compute_scenario_metrics":
-        from imputation_evaluation.evaluation.metrics import compute_scenario_metrics
-
-        return compute_scenario_metrics
     elif name == "PairWriter":
         from imputation_evaluation.evaluation.pair_writer import PairWriter
 
@@ -64,4 +61,12 @@ def __getattr__(name: str):
         )
 
         return write_per_user_errors_parquet
+    elif name == "build_per_user_errors":
+        from imputation_evaluation.evaluation.per_user_errors import build_per_user_errors
+
+        return build_per_user_errors
+    elif name == "per_user_map_to_rows":
+        from imputation_evaluation.evaluation.per_user_errors import per_user_map_to_rows
+
+        return per_user_map_to_rows
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

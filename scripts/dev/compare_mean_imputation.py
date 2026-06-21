@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -231,9 +232,9 @@ pub_evaluator = ImputationEvaluator(
     scenarios=scenario_names,
     num_eval_workers=1,
     n_days=data_cfg.n_days,
-    compute_metrics=True,
-    save_pairs=False,
-    pairs_dir=None,
+    # Phase A: pairs are always written; supply a tempdir to avoid persisting
+    # them. The runner's canonical producer derives metrics from these pairs.
+    pairs_dir=tempfile.mkdtemp(prefix="compare_mean_pairs_"),
 )
 pub_results = pub_evaluator.run(
     val_loader=eval_val_loader,
@@ -289,9 +290,9 @@ priv_evaluator = ImputationEvaluator(
     scenarios=scenario_names,
     num_eval_workers=1,
     n_days=data_cfg.n_days,
-    compute_metrics=True,
-    save_pairs=False,
-    pairs_dir=None,
+    # Phase A: pairs are always written; supply a tempdir to avoid persisting
+    # them. The runner's canonical producer derives metrics from these pairs.
+    pairs_dir=tempfile.mkdtemp(prefix="compare_mean_pairs_"),
 )
 priv_results = priv_evaluator.run(
     val_loader=eval_val_loader,

@@ -25,12 +25,10 @@ manifest_path: ${SCRATCH_RUN_ROOT}/openmhc-imputation-eval/paper/bootstrap_metho
 # `run_paper_pipeline.py` invocation (without --skip-eval) would reproduce the
 # same runs. The per-method sbatches set these same overrides explicitly.
 common_overrides:
-  - evaluation.save_pairs=true
   - data.version=full
   - data.daily_hf_dir=${MHC_CACHE}/processed/daily_hf
   - data.split_file=${MHC_CACHE}/splits/sharable_users_seed42_2026.json
   - +masking.masks_file=${SCRATCH_RUN_ROOT}/openmhc-imputation-eval/masks/sharable_users_seed42_2026_max91d
-  - bootstrap=on
   - seed=42
 
 # Phase 1 (bootstrap_imputation_draws.py)

@@ -33,6 +33,4 @@ mhc-impute-eval \
   data.num_workers=8 \
   data.num_eval_workers=1 \
   method.inference_batch_size=16 \
-  evaluation.save_pairs=true \
-  bootstrap=on \
   seed=42

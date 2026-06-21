@@ -42,9 +42,12 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 
 from imputation_evaluation.evaluation.bootstrap_skill_rank import (
     compute_per_draw_errors,
+    compute_per_draw_errors_from_per_user_errors,
     write_draws_parquet,
     write_per_user_errors_parquet,
 )
@@ -103,6 +106,18 @@ def _parse_args() -> argparse.Namespace:
         help=(
             "Skip per-user errors emission. Phase 2 BCa will fall back to the "
             "percentile CI for any caller that requested --bca."
+        ),
+    )
+    p.add_argument(
+        "--per-user-errors-dir",
+        type=Path,
+        default=None,
+        help=(
+            "Phase B fast path: directory of per-method per_user_errors.parquet "
+            "files (file stem = method name). When set, skips the pair-reading + "
+            "CellStats build and feeds compute_per_draw_errors_from_per_user_errors "
+            "directly — much faster, and byte-equal to the from-pairs path given "
+            "the same seed (verified by §3 of the imputation-metrics refactor)."
         ),
     )
     p.add_argument(
@@ -282,8 +297,11 @@ def main() -> int:
 
     # Subgroup mapping: per-split, built from the first method's manifest
     # (manifests are scenario-independent and shared across methods).
+    # The Phase B fast path doesn't need this — per_user_errors rows already
+    # carry subgroup_attr / subgroup_value labels, so the demographic lookup
+    # is redundant (and would require MHC_DATA_DIR + labels/enrollment_info).
     subgroup_mappings: dict[str, dict[int, dict[str, str]]] = {}
-    if not args.no_fairness:
+    if not args.no_fairness and args.per_user_errors_dir is None:
         ref_method = next(iter(method_dirs))
         ref_dir = method_dirs[ref_method]
         for split in args.splits:
@@ -322,23 +340,108 @@ def main() -> int:
         )
 
     t0 = datetime.now()
-    result = compute_per_draw_errors(
-        method_dirs={m: Path(p) for m, p in method_dirs.items()},
-        scenarios=scenarios,
-        splits=args.splits,
-        n_boot=args.n_boot,
-        seed=args.seed,
-        subgroup_mappings=subgroup_mappings if subgroup_mappings else None,
-        channel_stds=channel_stds,
-        include_auc=not args.no_auc,
-        exclude_unknown=args.exclude_unknown,
-        emit_per_user_errors=emit_per_user,
-    )
-    if emit_per_user:
-        df, per_user_df = result
+    if args.per_user_errors_dir is not None:
+        # ---- B1/B2 fast path: per_user_errors files in, draws out ----
+        if not args.per_user_errors_dir.exists():
+            logger.error(
+                "--per-user-errors-dir does not exist: %s", args.per_user_errors_dir
+            )
+            return 2
+        logger.info(
+            "Phase B fast path — loading per-method per_user_errors from %s",
+            args.per_user_errors_dir,
+        )
+        parts: list[pd.DataFrame] = []
+        for method in method_dirs:
+            path = args.per_user_errors_dir / f"{method}.parquet"
+            if not path.exists():
+                msg = f"missing per_user_errors file for method={method}: {path}"
+                if args.strict:
+                    logger.error("[strict] %s — aborting", msg)
+                    return 2
+                logger.warning("%s — skipping", msg)
+                continue
+            parts.append(pd.read_parquet(path))
+        if not parts:
+            logger.error("No per_user_errors files loaded — aborting")
+            return 2
+        per_user_input = pd.concat(parts, ignore_index=True)
+        logger.info(
+            "Loaded per_user_errors: %d rows across %d methods",
+            len(per_user_input),
+            per_user_input["method"].nunique(),
+        )
+
+        # Manifests (canonical user ordering — parity contract).
+        # The legacy from-pairs path rebuilds canonical user ordering per split,
+        # so the fast path must keep manifests split-scoped as well.
+        method_manifests_by_split: dict[str, dict[str, pa.Table]] = {
+            split: {} for split in args.splits
+        }
+        for split in args.splits:
+            for method, root in method_dirs.items():
+                manifest_path = Path(root) / f"manifest_{split}.parquet"
+                if manifest_path.exists():
+                    method_manifests_by_split[split][method] = pq.read_table(manifest_path)
+                elif args.strict:
+                    logger.error(
+                        "[strict] missing manifest for method=%s split=%s: %s",
+                        method,
+                        split,
+                        manifest_path,
+                    )
+                    return 2
+                else:
+                    logger.warning(
+                        "missing manifest for method=%s split=%s: %s",
+                        method,
+                        split,
+                        manifest_path,
+                    )
+        method_manifests_by_split = {
+            split: manifests
+            for split, manifests in method_manifests_by_split.items()
+            if manifests
+        }
+        if not method_manifests_by_split:
+            logger.error(
+                "No manifests found under method_dirs for ordering — aborting"
+            )
+            return 2
+
+        # Filter per_user_input to the requested splits/scenarios so the
+        # cell iteration matches the legacy path's scope.
+        per_user_input = per_user_input[per_user_input["split"].isin(args.splits)]
+        if scenarios:
+            per_user_input = per_user_input[per_user_input["scenario"].isin(scenarios)]
+
+        df = compute_per_draw_errors_from_per_user_errors(
+            per_user_input,
+            method_manifests_by_split,
+            n_boot=args.n_boot,
+            seed=args.seed,
+        )
+        # The new path doesn't re-emit per_user_errors (input == output).
+        per_user_df = per_user_input.copy() if emit_per_user else None
     else:
-        df = result
-        per_user_df = None
+        # ---- Legacy from-pairs path ----
+        result = compute_per_draw_errors(
+            method_dirs={m: Path(p) for m, p in method_dirs.items()},
+            scenarios=scenarios,
+            splits=args.splits,
+            n_boot=args.n_boot,
+            seed=args.seed,
+            subgroup_mappings=subgroup_mappings if subgroup_mappings else None,
+            channel_stds=channel_stds,
+            include_auc=not args.no_auc,
+            exclude_unknown=args.exclude_unknown,
+            emit_per_user_errors=emit_per_user,
+        )
+        if emit_per_user:
+            df, per_user_df = result
+        else:
+            df = result
+            per_user_df = None
     t_elapsed = (datetime.now() - t0).total_seconds()
     logger.info("Per-draw errors: %d rows in %.1fs", len(df), t_elapsed)
     if per_user_df is not None:

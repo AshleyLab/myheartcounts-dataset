@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from openmhc import Imputer
-from openmhc._evaluate import _ImputerMethodAdapter
+from openmhc._evaluate import _ImputerMethodAdapter, _raise_if_lfs_pointer_masks
 
 N_CHANNELS = 19
 SEQ_LEN = 1440
@@ -212,6 +212,23 @@ class TestAdapterHardBreak:
 
         with pytest.raises(TypeError, match="impute"):
             _ImputerMethodAdapter(OldStyle())
+
+
+class TestFullMaskSetupValidation:
+    """Validation for full-run precomputed mask setup errors."""
+
+    def test_lfs_pointer_stub_mask_raises(self, tmp_path):
+        """A tiny .npz file is treated as a git-lfs pointer setup error."""
+        mask_file = tmp_path / "test" / "random_noise.npz"
+        mask_file.parent.mkdir()
+        mask_file.write_text(
+            "version https://git-lfs.github.com/spec/v1\n"
+            "oid sha256:0123456789abcdef\n"
+            "size 123456\n"
+        )
+
+        with pytest.raises(RuntimeError, match="git-lfs pointer stub"):
+            _raise_if_lfs_pointer_masks(tmp_path)
 
 
 class _RecordingImputer:
@@ -834,102 +851,3 @@ class TestApplyFallbackSubstitution:
         # Asked counts: 10 per channel (target spans 10 timesteps on every channel).
         np.testing.assert_array_equal(asked, np.full(N_CHANNELS, 10, dtype=np.int64))
 
-
-class TestMetricAccumulatorFallback:
-    """The accumulator's fallback fields must merge correctly and surface in compute()."""
-
-    def _make_acc(self):
-        from imputation_evaluation.evaluation.evaluator import MetricAccumulator
-
-        return MetricAccumulator(channel_stds=np.ones(N_CHANNELS, dtype=np.float32))
-
-    def test_compute_emits_zero_rate_when_no_substitutions(self):
-        """With no substitutions, overall and per-channel fallback rates are zero."""
-        acc = self._make_acc()
-        # Drive a single batch through the accumulator with finite values.
-        rng = np.random.default_rng(0)
-        gt = rng.standard_normal((2, N_CHANNELS, 10)).astype(np.float32)
-        imputed = gt.copy()
-        mask = np.ones_like(gt)
-        acc.update(gt, imputed, mask)
-        # Record the no-substitution accounting.
-        asked = mask.sum(axis=(0, 2)).astype(np.int64)
-        acc.add_fallback(np.zeros(N_CHANNELS, dtype=np.int64), asked)
-
-        metrics = acc.compute()
-        assert metrics["overall_fallback_rate"] == 0.0
-        for ch in range(N_CHANNELS):
-            assert metrics["fallback_rate"][f"ch_{ch}"] == 0.0
-
-    def test_compute_emits_nonzero_rate_when_substitutions_occur(self):
-        """Substitutions surface as matching overall and per-channel fallback rates."""
-        acc = self._make_acc()
-        rng = np.random.default_rng(1)
-        gt = rng.standard_normal((2, N_CHANNELS, 10)).astype(np.float32)
-        imputed = gt.copy()
-        mask = np.ones_like(gt)
-        acc.update(gt, imputed, mask)
-        asked = mask.sum(axis=(0, 2)).astype(np.int64)
-        # Pretend channel 0 had half its target cells substituted.
-        sub = np.zeros(N_CHANNELS, dtype=np.int64)
-        sub[0] = asked[0] // 2
-        acc.add_fallback(sub, asked)
-
-        metrics = acc.compute()
-        # Overall rate = sub.sum() / asked.sum() = (asked[0]/2) / (N_CHANNELS * asked[0])
-        expected_overall = float(sub.sum()) / float(asked.sum())
-        assert metrics["overall_fallback_rate"] == pytest.approx(expected_overall)
-        # Per-channel: ch_0 == 0.5, others == 0.0.
-        assert metrics["fallback_rate"]["ch_0"] == pytest.approx(0.5)
-        for ch in range(1, N_CHANNELS):
-            assert metrics["fallback_rate"][f"ch_{ch}"] == 0.0
-
-    def test_merge_sums_fallback_counters(self):
-        """Merging two accumulators sums their substituted and asked counters."""
-        acc_a = self._make_acc()
-        acc_b = self._make_acc()
-        sub_a = np.zeros(N_CHANNELS, dtype=np.int64)
-        sub_a[0] = 3
-        sub_b = np.zeros(N_CHANNELS, dtype=np.int64)
-        sub_b[0] = 5
-        asked_a = np.full(N_CHANNELS, 10, dtype=np.int64)
-        asked_b = np.full(N_CHANNELS, 10, dtype=np.int64)
-        acc_a.add_fallback(sub_a, asked_a)
-        acc_b.add_fallback(sub_b, asked_b)
-        acc_a.merge(acc_b)
-        assert int(acc_a.fallback_substituted[0]) == 8
-        assert int(acc_a.fallback_asked[0]) == 20
-
-    def test_parity_existing_metrics_unchanged_when_no_substitutions(self):
-        """A finite imputer (no fallback) must produce byte-identical existing metric values."""
-        acc_with_fb = self._make_acc()
-        acc_without_fb = self._make_acc()
-        rng = np.random.default_rng(0)
-        gt = rng.standard_normal((4, N_CHANNELS, 50)).astype(np.float32)
-        # Make binary channels actually binary so balanced_accuracy is well-defined.
-        gt[:, 7:, :] = (rng.random((4, 12, 50)) < 0.5).astype(np.float32)
-        imputed = gt + 0.1 * rng.standard_normal(gt.shape).astype(np.float32)
-        mask = np.ones_like(gt)
-        for acc in (acc_with_fb, acc_without_fb):
-            acc.update(gt, imputed, mask)
-        # Only one accumulator records the (zero) fallback counts.
-        asked = mask.sum(axis=(0, 2)).astype(np.int64)
-        acc_with_fb.add_fallback(np.zeros(N_CHANNELS, dtype=np.int64), asked)
-
-        m_with = acc_with_fb.compute()
-        m_without = acc_without_fb.compute()
-
-        # The new keys exist on m_with and not on m_without.
-        assert "overall_fallback_rate" in m_with
-        # Existing metric values must be identical (parity).
-        assert m_with["n_samples"] == m_without["n_samples"]
-        np.testing.assert_array_equal(
-            [m_with["continuous"]["mean_normalized_rmse"]],
-            [m_without["continuous"]["mean_normalized_rmse"]],
-        )
-        for ch in range(N_CHANNELS):
-            ch_w = m_with["per_channel"][f"ch_{ch}"]
-            ch_wo = m_without["per_channel"][f"ch_{ch}"]
-            # Every key present in the without-fb dict must match.
-            for k, v in ch_wo.items():
-                assert ch_w[k] == v or (isinstance(v, float) and np.isnan(v) and np.isnan(ch_w[k]))

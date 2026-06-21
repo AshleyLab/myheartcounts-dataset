@@ -73,8 +73,26 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument(
         "--method-dirs",
         type=Path,
-        required=True,
-        help="JSON manifest mapping {method: pairs_dir} (same shape as bootstrap_imputation_draws.py)",
+        required=False,
+        default=None,
+        help=(
+            "JSON manifest mapping {method: pairs_dir} (same shape as "
+            "bootstrap_imputation_draws.py). Required for the from-pairs path "
+            "(default); optional when --per-user-errors is set."
+        ),
+    )
+    p.add_argument(
+        "--per-user-errors",
+        type=Path,
+        default=None,
+        help=(
+            "Directory of per-method per_user_errors.parquet files (one per "
+            "method, file stem = method name). When set, the script bypasses "
+            "_gather_registry's pairs scan and derives (per_user_long, "
+            "errors_all, errors_sg) directly from these files — the canonical "
+            "Phase-B fast path. See B3 of the imputation-metrics refactor "
+            "plan for the parity contract."
+        ),
     )
     p.add_argument(
         "--output-dir",
@@ -499,73 +517,233 @@ def _build_errors_long(
     return errors_all, errors_sg
 
 
+def _gather_from_per_user_errors_dir(
+    per_user_dir: Path,
+    *,
+    methods: list[str] | None,
+    scenarios: list[str] | None,
+    splits: list[str],
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, list[str]]:
+    """B3 fast path: load per-method ``per_user_errors.parquet`` files.
+
+    Returns ``(per_user_long, errors_all, errors_sg, discovered_methods)``
+    matching the schemas of ``_gather_registry`` + ``_build_errors_long``
+    so the kernel calls in ``main`` need no further plumbing.
+
+    The producer
+    (:func:`imputation_evaluation.evaluation.per_user_errors.build_per_user_errors`)
+    already applies ``EXCLUDE_BINARY_SCENARIOS`` row filtering — so the
+    output here is consistent with the bootstrap's per-task scope, not
+    with the from-pairs path which leaves binary rows in for excluded
+    scenarios. See the B3 design notes for why this is the right side of
+    the trade-off (bootstrap is authoritative).
+    """
+    parts: list[pd.DataFrame] = []
+    discovered: list[str] = []
+    for path in sorted(per_user_dir.glob("*.parquet")):
+        method = path.stem
+        if methods and method not in methods:
+            continue
+        df = pd.read_parquet(path)
+        unique_methods = sorted(df["method"].astype(str).unique())
+        if unique_methods != [method]:
+            raise ValueError(
+                f"File {path} contains methods {unique_methods}; "
+                f"expected exactly [{method}] (file stem = method name convention)"
+            )
+        parts.append(df)
+        discovered.append(method)
+    if not parts:
+        raise FileNotFoundError(
+            f"No per_user_errors *.parquet files found under {per_user_dir}"
+        )
+    per_user = pd.concat(parts, ignore_index=True)
+    # Coerce categoricals to plain str — downstream merges / groupbys are
+    # more predictable on str dtype than on pandas Categoricals.
+    for col in (
+        "method",
+        "scenario",
+        "split",
+        "channel",
+        "channel_type",
+        "subgroup_attr",
+        "subgroup_value",
+        "user_id",
+    ):
+        per_user[col] = per_user[col].astype(str)
+    per_user["E_per_user"] = per_user["E_per_user"].astype(np.float64)
+
+    per_user = per_user[per_user["split"].isin(splits)]
+    if scenarios:
+        per_user = per_user[per_user["scenario"].isin(scenarios)]
+    if per_user.empty:
+        raise ValueError(
+            f"per_user_errors empty after filtering by splits={splits} "
+            f"scenarios={scenarios}"
+        )
+
+    pu_all = per_user[
+        (per_user["subgroup_attr"] == "all") & (per_user["subgroup_value"] == "all")
+    ]
+    per_user_long = (
+        pu_all.rename(columns={"E_per_user": "E"})[
+            ["method", "scenario", "split", "channel", "channel_type", "user_id", "E"]
+        ]
+        .reset_index(drop=True)
+    )
+
+    # errors_all / errors_sg drop ``cat_collapsed:*`` rows to match the
+    # schema _build_errors_long emits (which only iterates the raw 19
+    # channels). Collapsed-binary scopes are reduced separately at the
+    # skill-aggregation stage.
+    pu_all_raw = pu_all[~pu_all["channel"].str.startswith("cat_collapsed:")]
+    errors_all = (
+        pu_all_raw.groupby(
+            ["method", "scenario", "split", "channel", "channel_type"],
+            observed=True,
+        )["E_per_user"]
+        .mean()
+        .reset_index()
+        .rename(columns={"E_per_user": "E"})
+    )
+
+    # Fairness B.2 row-strip — matches aggregate_fairness_skill_score.py:387-396:
+    # drop per-channel binary rows (ch_7..ch_18 with channel_type=="binary") and
+    # KEEP cat_collapsed:{sleep,workouts}. The sleep / workouts buckets reach
+    # the fairness headline only via the collapsed rows; per-channel binary
+    # would double-count. This is the same rule the bootstrap fairness CSV's
+    # ``point`` column applies before computing the disparity score, so B3's
+    # output matches it byte-for-byte (modulo bootstrap resample noise on
+    # ``mean``).
+    is_per_channel_binary = (
+        per_user["channel"].astype(str).str.match(r"^ch_(?:[7-9]|1[0-8])$")
+        & (per_user["channel_type"].astype(str) == "binary")
+    )
+    pu_sg = per_user[(per_user["subgroup_attr"] != "all") & (~is_per_channel_binary)]
+    errors_sg = (
+        pu_sg.groupby(
+            [
+                "method",
+                "scenario",
+                "split",
+                "channel",
+                "channel_type",
+                "subgroup_attr",
+                "subgroup_value",
+            ],
+            observed=True,
+        )["E_per_user"]
+        .mean()
+        .reset_index()
+        .rename(columns={"E_per_user": "E"})
+    )
+
+    return per_user_long, errors_all, errors_sg, discovered
+
+
 def main() -> int:
     """CLI entry point — see module docstring for usage."""
     args = _parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
-    with args.method_dirs.open() as f:
-        raw_dirs = json.load(f)
-    method_dirs: dict[str, Path] = {m: Path(p) for m, p in raw_dirs.items()}
-    if args.methods:
-        method_dirs = {m: p for m, p in method_dirs.items() if m in args.methods}
-    if not method_dirs:
-        logger.error("No methods left after --methods filter")
-        return 2
-
-    for m, p in list(method_dirs.items()):
-        if not p.exists():
-            if args.strict:
-                logger.error(
-                    "[strict] method=%s: %s does not exist — aborting",
-                    m,
-                    p,
-                )
-                return 2
-            logger.warning("method=%s: %s does not exist — skipping", m, p)
-            method_dirs.pop(m)
-    if not method_dirs:
-        logger.error("All method dirs missing; aborting")
-        return 2
-
-    if args.scenarios:
-        scenarios = list(args.scenarios)
-    else:
-        scenarios = _discover_scenarios(method_dirs, args.splits[0])
-    if not scenarios:
-        logger.error("No scenarios discovered; aborting")
-        return 2
-    logger.info("Methods: %s", list(method_dirs.keys()))
-    logger.info("Scenarios: %s", scenarios)
-    logger.info("Splits: %s", args.splits)
-
-    # Rank is always per-user; skill is per-user when --skill-mode=paired.
-    # Either way we need the per-user long frame.
-    registry, per_user_long = _gather_registry(
-        method_dirs,
-        scenarios=scenarios,
-        splits=args.splits,
-        age_bins=args.age_bins,
-        exclude_unknown=args.exclude_unknown,
-        channel_stds_path=args.channel_stds_path,
-        strict=args.strict,
-        return_per_user=True,
-    )
-    logger.info("Registry rows: %d", len(registry))
-    if registry.empty:
-        logger.error("Registry is empty; aborting")
-        return 2
-    logger.info("Per-user rows: %d", len(per_user_long))
-    if per_user_long.empty:
-        logger.error(
-            "skill_mode=%s requested per-user data (rank always uses per-user), "
-            "but no per-user rows were emitted. Check pair_aggregator's "
-            "return_per_user threading.",
-            args.skill_mode,
+    if args.per_user_errors is not None:
+        # ---- B3 fast path: load per-method per_user_errors files ----
+        if not args.per_user_errors.exists():
+            logger.error("--per-user-errors dir does not exist: %s", args.per_user_errors)
+            return 2
+        if args.scenarios:
+            scenarios = list(args.scenarios)
+        else:
+            scenarios = None  # the producer files already pinned the scenario set
+        logger.info("Source: %s", args.per_user_errors)
+        try:
+            per_user_long, errors_all, errors_sg, discovered = _gather_from_per_user_errors_dir(
+                args.per_user_errors,
+                methods=args.methods,
+                scenarios=scenarios,
+                splits=args.splits,
+            )
+        except (FileNotFoundError, ValueError) as exc:
+            logger.error("Failed to load per_user_errors: %s", exc)
+            return 2
+        if scenarios is None:
+            scenarios = sorted(per_user_long["scenario"].unique().tolist())
+        logger.info("Methods: %s", discovered)
+        logger.info("Scenarios: %s", scenarios)
+        logger.info("Splits: %s", args.splits)
+        logger.info(
+            "Per-user rows: %d | errors_all rows: %d | errors_sg rows: %d",
+            len(per_user_long),
+            len(errors_all),
+            len(errors_sg),
         )
-        return 2
+    else:
+        # ---- Legacy from-pairs path (default — recomputes via aggregate_pairs) ----
+        if args.method_dirs is None:
+            logger.error(
+                "--method-dirs is required when --per-user-errors is not provided"
+            )
+            return 2
+        with args.method_dirs.open() as f:
+            raw_dirs = json.load(f)
+        method_dirs: dict[str, Path] = {m: Path(p) for m, p in raw_dirs.items()}
+        if args.methods:
+            method_dirs = {m: p for m, p in method_dirs.items() if m in args.methods}
+        if not method_dirs:
+            logger.error("No methods left after --methods filter")
+            return 2
 
-    errors_all, errors_sg = _build_errors_long(registry, splits=args.splits)
+        for m, p in list(method_dirs.items()):
+            if not p.exists():
+                if args.strict:
+                    logger.error(
+                        "[strict] method=%s: %s does not exist — aborting",
+                        m,
+                        p,
+                    )
+                    return 2
+                logger.warning("method=%s: %s does not exist — skipping", m, p)
+                method_dirs.pop(m)
+        if not method_dirs:
+            logger.error("All method dirs missing; aborting")
+            return 2
+
+        if args.scenarios:
+            scenarios = list(args.scenarios)
+        else:
+            scenarios = _discover_scenarios(method_dirs, args.splits[0])
+        if not scenarios:
+            logger.error("No scenarios discovered; aborting")
+            return 2
+        logger.info("Methods: %s", list(method_dirs.keys()))
+        logger.info("Scenarios: %s", scenarios)
+        logger.info("Splits: %s", args.splits)
+
+        registry, per_user_long = _gather_registry(
+            method_dirs,
+            scenarios=scenarios,
+            splits=args.splits,
+            age_bins=args.age_bins,
+            exclude_unknown=args.exclude_unknown,
+            channel_stds_path=args.channel_stds_path,
+            strict=args.strict,
+            return_per_user=True,
+        )
+        logger.info("Registry rows: %d", len(registry))
+        if registry.empty:
+            logger.error("Registry is empty; aborting")
+            return 2
+        logger.info("Per-user rows: %d", len(per_user_long))
+        if per_user_long.empty:
+            logger.error(
+                "skill_mode=%s requested per-user data (rank always uses per-user), "
+                "but no per-user rows were emitted. Check pair_aggregator's "
+                "return_per_user threading.",
+                args.skill_mode,
+            )
+            return 2
+
+        errors_all, errors_sg = _build_errors_long(registry, splits=args.splits)
 
     # ------------------------------------------------------------------
     # Skill score + average rank — per split, on the "all/all" cell.
