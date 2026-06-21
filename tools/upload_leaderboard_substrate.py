@@ -1,7 +1,10 @@
 """Upload one method's per-user substrate parquet to the OpenMHC leaderboard dataset.
 
 Creates the HF dataset repo if it doesn't exist (private by default), then
-uploads the method's substrate to ``<track>/<method>.parquet``.
+uploads the method's substrate to ``<track>/<method>.parquet``. When any of
+``--name`` / ``--type`` / ``--submitter`` is given, also writes a
+``<track>/<method>.meta.json`` display sidecar (name, type, submitter) that the
+leaderboard reads to render the row.
 
 Requires the ``[hf]`` extra (``pip install -e ".[hf]"``) for the
 ``huggingface_hub`` dependency. Authentication uses the standard
@@ -12,12 +15,15 @@ Usage:
     python tools/upload_leaderboard_substrate.py \
         --dir src/openmhc/data/baselines \
         --method locf \
-        --track imputation
+        --track imputation \
+        --name "LOCF (baseline)" --type Statistical --submitter "OpenMHC team"
 """
 
 from __future__ import annotations
 
 import argparse
+import io
+import json
 from pathlib import Path
 
 from huggingface_hub import HfApi
@@ -67,6 +73,9 @@ def main() -> None:
         default=True,
         help="Create the repo private (default: True).",
     )
+    p.add_argument("--name", default=None, help="Display name (writes a <method>.meta.json sidecar).")
+    p.add_argument("--type", dest="mtype", default=None, help="Method type, e.g. 'Deep Learning' (sidecar).")
+    p.add_argument("--submitter", default=None, help="Submitter / team for attribution (sidecar).")
     args = p.parse_args()
 
     src = find_parquet(args.dir, args.method)
@@ -83,6 +92,22 @@ def main() -> None:
     )
     print(f"Uploaded {src}  ->  {args.repo_id}:{dest}")
     print(f"  https://huggingface.co/datasets/{args.repo_id}/blob/main/{dest}")
+
+    if args.name or args.mtype or args.submitter:
+        meta = {
+            "display_name": args.name or args.method,
+            "type": args.mtype or "—",
+            "submitter": args.submitter or "—",
+        }
+        meta_dest = f"{args.track}/{args.method}.meta.json"
+        api.upload_file(
+            path_or_fileobj=io.BytesIO(json.dumps(meta, indent=2).encode("utf-8")),
+            path_in_repo=meta_dest,
+            repo_id=args.repo_id,
+            repo_type="dataset",
+            commit_message=f"Add/update {args.track} metadata: {args.method}",
+        )
+        print(f"Uploaded sidecar  ->  {args.repo_id}:{meta_dest}")
 
 
 if __name__ == "__main__":
