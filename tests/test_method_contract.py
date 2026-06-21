@@ -55,11 +55,11 @@ class TestMethodBoundaryGuard:
 
     def test_missing_predict_raises_typeerror(self):
         with pytest.raises(TypeError, match="does not satisfy openmhc.Method"):
-            openmhc.evaluate_prediction(_NoPredict())
+            openmhc.evaluate_prediction(_NoPredict(), version="full")
 
     def test_error_names_predict(self):
         with pytest.raises(TypeError, match="predict"):
-            openmhc.evaluate_prediction(_NoPredict())
+            openmhc.evaluate_prediction(_NoPredict(), version="full")
 
     def test_has_predict_satisfies_method(self):
         assert isinstance(_HasPredict(), openmhc.Method)

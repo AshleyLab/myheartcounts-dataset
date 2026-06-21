@@ -7,6 +7,7 @@ structured results.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import tempfile
@@ -19,10 +20,33 @@ import numpy as np
 if TYPE_CHECKING:
     from openmhc._protocols import Imputer, Method
 
-from openmhc._dataset import data_dir as _resolve_default_data_dir
+from openmhc._dataset import (
+    EXPECTED_N_USERS,
+    Version,
+    read_dataset_marker,
+)
+from openmhc._dataset import (
+    data_dir as _resolve_dataset_root,
+)
 from openmhc._results import ForecastingResults, ImputationResults, PredictionResults
 
 logger = logging.getLogger(__name__)
+
+# Pre-computed max91d masks shipped with this repo (val/ + test/ subdirs, one
+# .npz per scenario).  These are required for full-dataset evaluation because
+# regenerating masks on the fly produces a different random sample each run,
+# which would make leaderboard scores non-reproducible.
+_REPO_ROOT = Path(__file__).parent.parent.parent
+_MAX91D_MASKS_DIR = (
+    _REPO_ROOT / "data" / "imputation" / "masks" / "sharable_users_seed42_2026_max91d"
+)
+_XS_MASKS_DIR = _REPO_ROOT / "data" / "imputation" / "masks" / "sharable_users_seed42_2026_xs"
+
+
+_SPLIT_FILENAMES: dict[str, str] = {
+    "full": "sharable_users_seed42_2026.json",
+    "xs": "sharable_users_seed42_2026_xs.json",
+}
 
 
 @dataclass
@@ -32,6 +56,13 @@ class _DatasetPaths:
     All paths are derived from a single ``root`` so the API stays consistent
     with what :func:`openmhc.download_dataset` produces. The expected layout
     matches DATASET.md.
+
+    The resolver never falls back. The caller passes ``version`` explicitly,
+    the resolver cross-checks it against the root's ``dataset_version.json``
+    marker, and any mismatch between the requested version, the marker, and
+    the actual user count in the split file is raised. Use
+    :meth:`require` to validate the existence of just the sub-paths a given
+    track needs.
     """
 
     root: Path
@@ -39,41 +70,145 @@ class _DatasetPaths:
     daily_hf: Path
     window_index: Path
     weekly_labels_lookup: Path
-    daily_labels_lookup: Path
     splits_file: Path
     norm_stats: Path
+    clip_dates: Path
     labels_dir: Path
     hourly_trajectory: Path
     forecasting_sample_index_dir: Path
+    version: str = "full"  # "xs" or "full"
 
     @classmethod
-    def resolve(cls, override: str | Path | None = None) -> _DatasetPaths:
-        """Build the paths bundle from an explicit override or the default.
+    def resolve(
+        cls,
+        override: str | Path | None = None,
+        version: Version | None = None,
+    ) -> _DatasetPaths:
+        """Build the paths bundle for an explicit version + dataset root.
 
-        Resolution order matches :func:`openmhc.data_dir`:
+        Args:
+            override: Explicit dataset root. Falls back to ``MHC_DATA_DIR``
+                when ``None``. Never falls back to ``~/.cache/openmhc/data``.
+            version: ``"xs"`` or ``"full"``. Required — there is no
+                filename-based auto-detect. The version is cross-checked
+                against the root's ``dataset_version.json`` marker and
+                against the user count in the resolved split file.
 
-        1. ``override`` argument (if provided)
-        2. ``MHC_DATA_DIR`` env var
-        3. ``~/.cache/openmhc/data``
+        Raises:
+            ValueError: If ``version`` is not provided, is not one of
+                ``"xs"`` / ``"full"``, or disagrees with the marker /
+                split-file contents.
+            FileNotFoundError: If the dataset root is missing or has no
+                ``dataset_version.json`` marker (see
+                :func:`openmhc.write_dataset_marker` to backfill it).
         """
-        root = _resolve_default_data_dir(override)
+        if version is None:
+            raise ValueError(
+                "_DatasetPaths.resolve(version=...) is required. "
+                "Auto-detection by filename has been removed; pass "
+                "version='xs' or version='full' explicitly so the resolver "
+                "can cross-check it against the dataset_version.json marker."
+            )
+        if version not in EXPECTED_N_USERS:
+            raise ValueError(f"version must be one of {sorted(EXPECTED_N_USERS)}, got {version!r}")
+
+        root = _resolve_dataset_root(override)
+
+        marker = read_dataset_marker(root)
+        if marker["version"] != version:
+            raise ValueError(
+                f"Dataset at {root} is version {marker['version']!r} "
+                f"(per dataset_version.json) but the caller requested "
+                f"{version!r}. Point data_dir / MHC_DATA_DIR at the correct "
+                f"root, or pass version={marker['version']!r}."
+            )
+
+        splits_file = root / "splits" / _SPLIT_FILENAMES[version]
+        cls._validate_split_file(splits_file, version, marker)
+
         return cls(
             root=root,
             daily_hourly_hf=root / "processed" / "daily_hourly_hf",
             daily_hf=root / "processed" / "daily_hf",
             window_index=root / "processed" / "window_index_w7_s7_d5.parquet",
-            weekly_labels_lookup=root / "processed" / "weekly_labels_lookup_stride7_windowed.parquet",
-            daily_labels_lookup=root / "processed" / "daily_labels_lookup.parquet",
-            splits_file=root / "splits" / "sharable_users_seed42_2026.json",
+            weekly_labels_lookup=root / "processed" / "weekly_labels_lookup_stride7.parquet",
+            splits_file=splits_file,
             norm_stats=root / "processed" / "normalization_stats_hourly.json",
+            clip_dates=root / "labels" / "clip_dates.json",
             labels_dir=root / "labels",
             hourly_trajectory=root / "hourly_trajectory",
             forecasting_sample_index_dir=root / "forecasting_sample_index",
+            version=version,
         )
+
+    @staticmethod
+    def _validate_split_file(splits_file: Path, version: str, marker: dict) -> None:
+        """Verify the split file exists and its user count matches the marker."""
+        if not splits_file.exists():
+            raise FileNotFoundError(
+                f"Split file for version {version!r} not found:\n  {splits_file}\n\n"
+                f"Expected layout under the dataset root: "
+                f"splits/{_SPLIT_FILENAMES[version]}"
+            )
+        try:
+            payload = json.loads(splits_file.read_text())
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"malformed split file {splits_file}: {exc}") from exc
+        n_users = sum(len(v) for v in payload.values() if isinstance(v, (list, set, tuple)))
+        expected = marker.get("n_users", EXPECTED_N_USERS[version])
+        if n_users != expected:
+            raise ValueError(
+                f"Split file {splits_file} contains {n_users} users, but version "
+                f"{version!r} expects {expected}. The split file appears to be "
+                f"from a different release. Re-download with "
+                f"openmhc.download_dataset(version={version!r}) or replace the "
+                f"split file with the correct one."
+            )
+
+    def require(self, *attr_names: str) -> None:
+        """Assert that the named sub-paths exist; raise a combined error if not.
+
+        Each track only needs a subset of the resolved paths — Track 1 needs
+        ``daily_hourly_hf`` + ``window_index`` + ``weekly_labels_lookup``,
+        Track 2 needs ``daily_hf``, Track 3 needs ``hourly_trajectory`` +
+        ``forecasting_sample_index_dir``. Call this from the corresponding
+        ``evaluate_*`` function so a missing artifact is reported up front
+        with a single error listing every missing piece.
+
+        Args:
+            *attr_names: Names of attributes on ``self`` whose paths must
+                exist.
+
+        Raises:
+            FileNotFoundError: If any of the named paths is missing. The
+                message lists every missing path at once.
+        """
+        missing: list[tuple[str, Path]] = []
+        for name in attr_names:
+            path = getattr(self, name)
+            if not path.exists():
+                missing.append((name, path))
+        if missing:
+            lines = "\n".join(f"  {n}: {p}" for n, p in missing)
+            raise FileNotFoundError(
+                f"Dataset at {self.root} (version={self.version!r}) is missing "
+                f"required files:\n{lines}\n\n"
+                "Re-run openmhc.download_dataset() or restore the dataset "
+                "from the upstream release."
+            )
+
+
+_LABELS_PAYLOAD_ENV_FILES = {
+    "LABELS_DATA_PATH": "last_labels.json",
+    "CONTEXT_LABELS_PATH": "context_labels.json",
+    "ENROLLMENT_DATA_PATH": "enrollment_info.json",
+    "LABEL_VALIDITY_PATH": "label_validity.json",
+    "HEALTHKIT_DAILY_PATH": "healthkit_daily.json",
+}
 
 
 def _ensure_labels_env(labels_dir: Path) -> None:
-    """Point the bundled `labels.api` module at the downloaded labels dir.
+    """Point `labels.api` at a resolved dataset root for large label payloads.
 
     `labels.api` reads its data-file paths from env vars at import time and
     caches them in module-level Path constants. We set each var if the user
@@ -85,17 +220,10 @@ def _ensure_labels_env(labels_dir: Path) -> None:
     silently load as empty — breaking the imputation sensitivity pathway and
     the default ``return_valid_only=True`` behaviour of ``get_labels``.
     """
-    env_files = {
-        "LABELS_DATA_PATH": "last_labels.json",
-        "CONTEXT_LABELS_PATH": "context_labels.json",
-        "ENROLLMENT_DATA_PATH": "enrollment_info.json",
-        "LABEL_VALIDITY_PATH": "label_validity.json",
-        "HEALTHKIT_DAILY_PATH": "healthkit_daily.json",
-    }
     changed = False
-    for var, filename in env_files.items():
-        if not os.getenv(var):
-            os.environ[var] = str(labels_dir / filename)
+    for env_var, filename in _LABELS_PAYLOAD_ENV_FILES.items():
+        if not os.getenv(env_var):
+            os.environ[env_var] = str(labels_dir / filename)
             changed = True
 
     if changed:
@@ -113,6 +241,7 @@ def _ensure_labels_env(labels_dir: Path) -> None:
 
 def evaluate_prediction(
     model: Method,
+    version: Version,
     tasks: str | list[str] = "all",
     data_dir: str | Path | None = None,
     seed: int = 42,
@@ -130,12 +259,14 @@ def evaluate_prediction(
             (channels 0-18 raw values with NaN at missing, 19-37 the mask).
             Encoder-style models run the uniform :class:`~openmhc.LinearProbe`
             inside ``fit`` / ``predict``; end-to-end models own their head.
+        version: ``"xs"`` (593-user reviewer subset) or ``"full"``
+            (11,894-user leaderboard split). Required — cross-checked against
+            the dataset root's ``dataset_version.json`` marker.
         tasks: "all" to run the 32 benchmark tasks, or a list of task name strings.
         data_dir: Override for the dataset root (the same root that
-            ``download_dataset`` writes to). ``None`` uses the default
-            (``MHC_DATA_DIR`` env var or ``~/.cache/openmhc/data``). All
-            sub-paths (`processed/daily_hourly_hf/`, `splits/`, `labels/`,
-            etc.) are derived from this root.
+            ``download_dataset`` writes to). If omitted, ``MHC_DATA_DIR`` must
+            be set. All sub-paths (`processed/daily_hourly_hf/`, `splits/`,
+            `labels/`, etc.) are derived from this root.
         seed: Random seed for classifiers and splits.
         predictions_dir: when set, write per-(method, task) test predictions +
             a shared ``_subgroups.json`` here — the input the paper-metrics
@@ -156,7 +287,7 @@ def evaluate_prediction(
             "predict(self, data) is required. See openmhc.Method for the contract."
         )
 
-    paths = _DatasetPaths.resolve(data_dir)
+    paths = _DatasetPaths.resolve(data_dir, version=version)
     _ensure_labels_env(paths.labels_dir)
 
     from downstream_evaluation.data.splits import load_split_file
@@ -202,14 +333,16 @@ def evaluate_prediction(
         for metric_name, value in task_metrics.items():
             if metric_name == "n_test":
                 continue
-            records.append({
-                "task": task_name,
-                "task_type": task_type,
-                "classifier": probe_by_type.get(task_type),
-                "metric": metric_name,
-                "value": value,
-                "n_test": n_test,
-            })
+            records.append(
+                {
+                    "task": task_name,
+                    "task_type": task_type,
+                    "classifier": probe_by_type.get(task_type),
+                    "metric": metric_name,
+                    "value": value,
+                    "n_test": n_test,
+                }
+            )
     return PredictionResults(records=records)
 
 
@@ -220,32 +353,89 @@ def evaluate_prediction(
 
 def evaluate_imputation(
     imputer: Imputer,
+    version: Version,
     masking_scenarios: str | list[str] = "all",
     data_dir: str | Path | None = None,
     seed: int = 42,
+    *,
+    n_days: int = 1,
+    bootstrap: bool | dict = False,
+    max_samples: int | None = None,
+    num_workers: int = 0,
+    num_eval_workers: int = 1,
+    pin_memory: bool = False,
 ) -> ImputationResults:
     """Run imputation evaluation with a custom imputer.
 
-    Fits the imputer on training data, then evaluates on validation and test
-    sets using up to 6 masking scenarios.
+    The imputer is responsible for its own setup (loading checkpoints,
+    computing training statistics, building per-user state) — typically
+    in ``__init__``. The harness only calls ``impute`` and never asks
+    the imputer to train or fit.
 
     Args:
-        imputer: Object with `fit(data, masks)` and
-            `impute(data, observed_mask, target_mask)` methods.
-        masking_scenarios: "all" to run all 6 scenarios, or a list of scenario
-            name strings.
+        imputer: Object implementing ``impute(data, observed_mask,
+            target_mask, *, sample_indices=None, user_ids=None,
+            dates=None, day_offsets=None)`` per the ``Imputer`` protocol.
+            ``day_offsets`` is only forwarded when ``n_days > 1``; it carries
+            per-window calendar-day deltas (``-1`` for padded slots) for
+            calendar-aware models (e.g. RoPE day embeddings).
+        version: ``"full"`` (11,894-user leaderboard split) or ``"xs"``
+            (593-user reviewer subset). Required — cross-checked against
+            the dataset root's ``dataset_version.json`` marker.
+        masking_scenarios: "all" to run all 6 scenarios, or a list of
+            scenario name strings.
         data_dir: Override for the dataset root (the same root that
-            ``download_dataset`` writes to). ``None`` uses the default
-            (``MHC_DATA_DIR`` env var or ``~/.cache/openmhc/data``). All
-            sub-paths (`processed/daily_hf/`, `splits/`, `labels/`, etc.)
-            are derived from this root.
-        seed: Random seed for mask generation.
+            ``download_dataset`` writes to). If omitted, ``MHC_DATA_DIR`` must
+            be set. All sub-paths (`processed/daily_hf/`, `splits/`, `labels/`,
+            etc.) are derived from this root.
+        seed: Random seed for mask generation (XS only; full always uses
+            pre-computed masks).
+        n_days: Number of consecutive days per evaluation window (1-7).
+            Defaults to ``1`` (single-day windows — matches the historical
+            behavior and all daily models). Setting ``n_days=7`` enables
+            multi-day windows required by weekly models like
+            ``LSM2WeeklySparseImputer`` and any 7-day PyPOTS variant. The
+            internal harness assembles non-overlapping per-user windows from
+            the daily HF dataset; the imputer receives tensors of shape
+            ``(B, 19, n_days * 1440)``.
+        bootstrap: Opt-in participant-level cluster bootstrap. ``False``
+            (default) skips it. ``True`` enables with defaults
+            (``n_boot=1000, ci_level=0.95, seed=42, include_auc=True``).
+            Pass a dict to override fields, e.g.
+            ``{"n_boot": 500, "include_auc": False}``. When enabled, raw
+            (gt, pred) pairs are written to a temporary directory that is
+            cleaned up before this function returns; CI/SE fields appear as
+            sibling columns in ``ImputationResults.to_dataframe()``.
+        max_samples: Limit samples per split for testing/debugging (None =
+            no limit). Mirrors ``evaluate_forecasting``. Plumbs into
+            ``DataConfig.max_samples_per_split``.
+        num_workers: DataLoader worker processes for loading, mask generation,
+            and the one train pass that computes metric-normalization stats.
+            Defaults to ``0`` (synchronous; notebook-safe). Raise toward your
+            CPU count to overlap I/O with compute. Plumbs into
+            ``DataConfig.num_workers``.
+        num_eval_workers: Parallel processes for the evaluation loop. Defaults
+            to ``1`` (sequential). With ``> 1`` the harness evaluates batches
+            concurrently via ``ProcessPoolExecutor`` (batch-level, all
+            scenarios per worker) — dramatically faster on the full split, with
+            results numerically identical to the sequential path. Caveat: the
+            imputer is pickled to each worker, so it must be importable; a class
+            defined in a notebook cell can fail under the ``spawn`` start method
+            (works under Linux ``fork``). Plumbs into
+            ``DataConfig.num_eval_workers``.
+        pin_memory: DataLoader ``pin_memory`` flag. Defaults to ``False``; set
+            ``True`` to speed host→GPU transfer for a GPU imputer. Plumbs into
+            ``DataConfig.pin_memory``.
 
     Returns:
         An ImputationResults instance with per-scenario, per-split metrics.
 
     Raises:
-        ValueError: If an unknown masking scenario name is provided.
+        TypeError: If ``imputer`` does not implement ``impute``.
+        ValueError: If an unknown masking scenario name or version is provided.
+        FileNotFoundError: If no dataset is found, or if the full dataset is
+            selected but the pre-computed max91d masks are missing from the
+            repository.
     """
     from openmhc._constants import MASKING_SCENARIOS
 
@@ -261,25 +451,36 @@ def evaluate_imputation(
     for s in scenario_list:
         if s not in MASKING_SCENARIOS:
             raise ValueError(
-                f"Unknown masking scenario: {s!r}. "
-                f"Valid scenarios: {MASKING_SCENARIOS}"
+                f"Unknown masking scenario: {s!r}. Valid scenarios: {MASKING_SCENARIOS}"
             )
 
-    paths = _DatasetPaths.resolve(data_dir)
+    paths = _DatasetPaths.resolve(data_dir, version=version)
+    paths.require("daily_hf", "splits_file", "labels_dir")
     _ensure_labels_env(paths.labels_dir)
 
     from imputation_evaluation.config import (
+        BootstrapConfig,
         DataConfig,
         EvalConfig,
         ImputationEvalConfig,
         MaskingConfig,
-        MethodConfig,
         OutputConfig,
         SensitivityConfig,
         VisualizationConfig,
         WandbConfig,
     )
     from imputation_evaluation.runner import run_eval
+
+    if bootstrap is False or bootstrap is None:
+        bootstrap_cfg = BootstrapConfig()
+    elif bootstrap is True:
+        bootstrap_cfg = BootstrapConfig(enabled=True)
+    elif isinstance(bootstrap, dict):
+        overrides = dict(bootstrap)
+        overrides.setdefault("enabled", True)
+        bootstrap_cfg = BootstrapConfig(**overrides)
+    else:
+        raise TypeError(f"bootstrap must be bool or dict, got {type(bootstrap).__name__}")
 
     masking_cfg = MaskingConfig(mask_seed=seed)
     masking_cfg.random_noise.enabled = "random_noise" in scenario_list
@@ -289,99 +490,212 @@ def evaluate_imputation(
     masking_cfg.workout_gap.enabled = "workout_gap" in scenario_list
     masking_cfg.intensity_failure.enabled = "intensity_failure" in scenario_list
 
+    if paths.version == "full":
+        if not _MAX91D_MASKS_DIR.exists():
+            raise FileNotFoundError(
+                f"Pre-computed masks not found at:\n  {_MAX91D_MASKS_DIR}\n\n"
+                "Full-dataset evaluation requires the max91d masks to ensure "
+                "reproducible leaderboard scores across runs. The masks ship with "
+                "this repository — make sure you cloned it with `git clone` and "
+                "installed with `pip install -e .`. If the masks directory is "
+                "missing, re-clone or check that `data/imputation/masks/` was not "
+                "excluded by a sparse-checkout or .gitignore rule."
+            )
+        masking_cfg.masks_file = str(_MAX91D_MASKS_DIR)
+    elif (
+        paths.version == "xs"
+        and seed == 42
+        and n_days == 1
+        and max_samples is None
+        and _XS_MASKS_DIR.exists()
+    ):
+        # XS ships precomputed masks too (mirrors `full`), but only for the
+        # canonical full-split config they were generated for: seed 42,
+        # single-day windows, all XS val+test samples. A scenario subset still
+        # loads fine (the cache holds all six). Other seed / n_days, or a
+        # max_samples-bounded run, fall through to on-the-fly generation below:
+        # the cache spans the full split, so its applicable indices would
+        # overrun a max_samples-limited dataset — and bounded generation is
+        # cheap anyway (it only masks the small subset). On-the-fly over the
+        # full split is the slow case (~20 min) this cache exists to avoid.
+        masking_cfg.masks_file = str(_XS_MASKS_DIR)
+    # else (xs with a non-canonical config, max_samples set, or cache absent):
+    # masks_file stays None → runner generates masks on the fly.
+
     data_cfg = DataConfig(
         daily_hf_dir=str(paths.daily_hf),
         split_file=str(paths.splits_file),
         split_seed=seed,
         batch_size=5000,
-        num_workers=4,
-        num_eval_workers=1,
+        num_workers=num_workers,
+        num_eval_workers=num_eval_workers,
+        pin_memory=pin_memory,
+        n_days=n_days,
+        max_samples_per_split=max_samples,
     )
 
     eval_cfg = EvalConfig(
-        include_ks=False,
-        include_wasserstein=False,
         compute_metrics=True,
         save_pairs=False,
     )
 
-    cfg = ImputationEvalConfig(
-        seed=seed,
-        data=data_cfg,
-        masking=masking_cfg,
-        method=MethodConfig(type="mean"),  # placeholder; not used (custom adapter below)
-        output=OutputConfig(),
-        evaluation=eval_cfg,
-        visualization=VisualizationConfig(),
-        sensitivity=SensitivityConfig(),
-        wandb=WandbConfig(),
-    )
-
     adapter = _ImputerMethodAdapter(imputer)
     logger.info("Running imputation eval with custom imputer...")
-    results = run_eval(cfg, method=adapter)
+
+    def _build_cfg(output_dir: str) -> ImputationEvalConfig:
+        # ``method`` is omitted: ``ImputationEvalConfig`` defaults it to a stock
+        # ``MethodConfig``, and ``run_eval`` ignores ``cfg.method`` entirely when
+        # we pass our own ``method=adapter`` below.
+        return ImputationEvalConfig(
+            seed=seed,
+            data=data_cfg,
+            masking=masking_cfg,
+            output=OutputConfig(results_dir=output_dir),
+            evaluation=eval_cfg,
+            visualization=VisualizationConfig(),
+            sensitivity=SensitivityConfig(),
+            bootstrap=bootstrap_cfg,
+            wandb=WandbConfig(),
+        )
+
+    if bootstrap_cfg.enabled:
+        # Bootstrap requires pair files on disk; stash them in a tempdir so the
+        # user's data root stays clean. The runner writes bootstrap_metrics.json
+        # under results_dir too — also lives + dies with the tempdir.
+        import tempfile
+
+        with tempfile.TemporaryDirectory(prefix="openmhc_bootstrap_") as td:
+            cfg = _build_cfg(td)
+            results = run_eval(cfg, method=adapter)
+    else:
+        cfg = _build_cfg(OutputConfig().results_dir)
+        results = run_eval(cfg, method=adapter)
+
     return ImputationResults(scenarios=results.get("scenarios", results))
+
+
+_N_CHANNELS = 19
 
 
 class _ImputerMethodAdapter:
     """Adapt a user's Imputer to the internal ImputationMethod interface.
 
-    This adapter collects batched training data, computes channel standard
-    deviations for normalized metrics, and translates argument names between
-    the public Imputer protocol and the internal evaluation pipeline.
+    Responsibilities:
 
-    Attributes:
-        name: Name of the imputation method (defaults to "custom_imputer").
-        channel_stds: Per-channel standard deviations computed during fit,
-            or None before fit is called.
+    1. **Stream the train split once** to compute per-channel standard
+       deviations for metric normalization (this is the harness's
+       concern, never the user's).
+    2. **Cache per-split user_id and date arrays** in
+       :meth:`prepare_split` so they can be sliced per batch.
+    3. **Filter forwarded kwargs** by inspecting the user's ``impute``
+       signature so methods that only declare three positional args
+       still work, and personalized methods receive ``user_ids`` /
+       ``dates`` / ``sample_indices``.
+    4. **Compute a channel-aware global fallback fill** during the same
+       train pass: per-channel observed mean for continuous channels
+       (0–6) and per-channel majority class for binary channels
+       (7–18). Exposed via :attr:`fallback_fill` so the harness can
+       substitute NaN cells the user's ``impute`` failed to produce.
     """
 
     def __init__(self, imputer: Imputer) -> None:
-        """Initialize the adapter.
-
-        Args:
-            imputer: Object implementing the Imputer protocol.
-        """
+        if not hasattr(imputer, "impute"):
+            raise TypeError(
+                "Imputer must define an `impute(data, observed_mask, "
+                "target_mask, ...)` method. The fit-based API was removed; "
+                "see openmhc.imputers for ready-to-use baselines."
+            )
         self._imputer = imputer
         self._channel_stds: np.ndarray | None = None
+        self._fallback_fill: np.ndarray | None = None
+        # Per-split metadata, populated by prepare_split.
+        self._current_user_ids: list[str] | None = None
+        self._current_dates: list[str] | None = None
+
+        # Inspect the user's impute signature once.
+        import inspect as _inspect
+
+        try:
+            params = _inspect.signature(imputer.impute).parameters
+            accepts_anything = any(
+                p.kind == _inspect.Parameter.VAR_KEYWORD for p in params.values()
+            )
+            self._fwd_sample_indices = accepts_anything or "sample_indices" in params
+            self._fwd_user_ids = accepts_anything or "user_ids" in params
+            self._fwd_dates = accepts_anything or "dates" in params
+            self._fwd_day_offsets = accepts_anything or "day_offsets" in params
+        except (TypeError, ValueError):
+            # Built-in or C-extension impute: forward everything.
+            self._fwd_sample_indices = True
+            self._fwd_user_ids = True
+            self._fwd_dates = True
+            self._fwd_day_offsets = True
 
     @property
     def name(self) -> str:
-        """Return the method name."""
         return getattr(self._imputer, "name", "custom_imputer")
 
     @property
     def channel_stds(self) -> np.ndarray | None:
-        """Return per-channel standard deviations from training data."""
         return self._channel_stds
 
-    def fit(self, train_loader) -> None:
-        """Collect training data from the loader and call the user's fit.
+    @property
+    def fallback_fill(self) -> np.ndarray | None:
+        """Per-channel global fill used to substitute NaN cells the imputer fails to produce."""
+        return self._fallback_fill
 
-        Args:
-            train_loader: DataLoader yielding batches of training data with
-                "values" and "mask" keys.
+    def fit(self, train_loader) -> None:
+        """Stream the train loader once to compute per-channel stds and a fallback fill.
+
+        Does not invoke any user method — all imputer setup happens
+        in the user's ``__init__``. The same single pass produces both
+        ``channel_stds`` (metric normalization) and ``fallback_fill``
+        (channel-aware global substitution for non-finite imputed cells).
         """
-        all_data = []
-        all_masks = []
+        from data.processing.hf_config import (
+            BINARY_CHANNEL_INDICES,
+            CONTINUOUS_CHANNEL_INDICES,
+        )
+
+        sums = np.zeros(_N_CHANNELS, dtype=np.float64)
+        sq_sums = np.zeros(_N_CHANNELS, dtype=np.float64)
+        counts = np.zeros(_N_CHANNELS, dtype=np.float64)
         for batch in train_loader:
             data = batch["values"] if isinstance(batch, dict) else batch[0]
             mask = batch["mask"] if isinstance(batch, dict) else batch[1]
-            all_data.append(np.asarray(data, dtype=np.float32))
-            all_masks.append(np.asarray(mask, dtype=np.float32))
+            data = np.asarray(data, dtype=np.float32)
+            mask = np.asarray(mask, dtype=np.float32)
+            obs = (mask > 0.5) & np.isfinite(data)
+            data_obs = np.where(obs, data, 0.0)
+            sums += data_obs.sum(axis=(0, 2))
+            sq_sums += (data_obs**2).sum(axis=(0, 2))
+            counts += obs.sum(axis=(0, 2))
+        safe = np.maximum(counts, 1)
+        means = np.where(counts > 0, sums / safe, 0.0)
+        variance = np.where(counts > 0, (sq_sums / safe) - means**2, 0.0)
+        stds = np.sqrt(np.maximum(variance, 0.0))
+        stds = np.where(counts > 1, stds, 1.0)
+        self._channel_stds = np.maximum(stds, 1e-6).astype(np.float32)
 
-        data = np.concatenate(all_data, axis=0)
-        masks = np.concatenate(all_masks, axis=0)
+        # Fallback fill: continuous channels → mean, binary channels → majority class.
+        fallback = np.zeros(_N_CHANNELS, dtype=np.float32)
+        for ch in CONTINUOUS_CHANNEL_INDICES:
+            fallback[ch] = float(means[ch])
+        for ch in BINARY_CHANNEL_INDICES:
+            fallback[ch] = 1.0 if means[ch] > 0.5 else 0.0
+        self._fallback_fill = fallback
 
-        # Compute channel stds for normalized metrics.
-        observed = masks > 0.5
-        stds = []
-        for c in range(data.shape[1]):
-            vals = data[:, c, :][observed[:, c, :]]
-            stds.append(float(np.std(vals)) if len(vals) > 1 else 1.0)
-        self._channel_stds = np.array(stds, dtype=np.float32)
+    def prepare_split(self, hf_dataset, split_indices, zero_to_nan_transform) -> None:
+        """Cache per-split user_id and date arrays.
 
-        self._imputer.fit(data, masks)
+        Called once per eval split by the internal evaluator before
+        batches are processed. Storing both columns up front avoids
+        per-batch HF row reads.
+        """
+        all_user_ids = list(hf_dataset["user_id"])
+        all_dates = list(hf_dataset["date"])
+        self._current_user_ids = [all_user_ids[i] for i in split_indices]
+        self._current_dates = [all_dates[i] for i in split_indices]
 
     def impute(
         self,
@@ -390,21 +704,25 @@ class _ImputerMethodAdapter:
         artificial_masks: np.ndarray,
         **kwargs,
     ) -> np.ndarray:
-        """Delegate to the user's impute, translating argument names.
-
-        Internal callers may pass extra kwargs (``sample_indices``,
-        ``day_offsets``) used by personalized / RoPE-aware methods. The
-        public ``Imputer`` protocol doesn't expose those, so we discard
-        them silently.
-        """
-        return self._imputer.impute(
-            data=data,
-            observed_mask=original_masks,
-            target_mask=artificial_masks,
-        )
-
-    def prepare_split(self, *args, **kwargs) -> None:
-        """No-op; some internal methods use this hook."""
+        """Forward to the user's impute, filtering kwargs by signature."""
+        forward: dict = {
+            "data": data,
+            "observed_mask": original_masks,
+            "target_mask": artificial_masks,
+        }
+        sample_indices = kwargs.get("sample_indices")
+        if self._fwd_sample_indices and sample_indices is not None:
+            forward["sample_indices"] = np.asarray(sample_indices)
+        if sample_indices is not None and self._current_user_ids is not None:
+            si = np.asarray(sample_indices)
+            if self._fwd_user_ids:
+                forward["user_ids"] = [self._current_user_ids[int(i)] for i in si]
+            if self._fwd_dates:
+                forward["dates"] = [self._current_dates[int(i)] for i in si]
+        day_offsets = kwargs.get("day_offsets")
+        if self._fwd_day_offsets and day_offsets is not None:
+            forward["day_offsets"] = np.asarray(day_offsets)
+        return self._imputer.impute(**forward)
 
 
 # ---------------------------------------------------------------------------
@@ -414,30 +732,47 @@ class _ImputerMethodAdapter:
 
 def evaluate_forecasting(
     forecaster,
+    version: Version,
     forecasting_length: int = 24,
     data_dir: str | Path | None = None,
     seed: int = 42,
     max_samples: int | None = None,
+    *,
+    num_workers: int = 4,
 ) -> ForecastingResults:
     """Run forecasting evaluation (Track 3) with a custom forecaster.
 
     Args:
-        forecaster: Object satisfying the :class:`Forecaster` protocol —
-            has ``predict(history, horizon)`` returning a ``(n_channels,
-            horizon)`` array.
+        forecaster: Object satisfying the :class:`Forecaster` protocol — has
+            ``predict(history, horizon)`` returning a ``(n_channels, horizon)``
+            point forecast (optionally a ``(point, quantiles)`` tuple).
+            ``history`` is the full-prefix window; emit ``NaN`` for any cell the
+            model cannot predict and the harness substitutes the Seasonal-Naive
+            baseline (reported via ``ForecastingResults.overall_fallback_rate``).
+        version: ``"xs"`` or ``"full"``. Required — cross-checked against
+            the dataset root's ``dataset_version.json`` marker.
         forecasting_length: Forecast horizon in hours. Defaults to 24
             (matching the paper's Track 3 sub-task).
-        data_dir: Override for the dataset root. ``None`` uses the default
-            (``MHC_DATA_DIR`` env var or ``~/.cache/openmhc/data``).
+        data_dir: Override for the dataset root. If omitted,
+            ``MHC_DATA_DIR`` must be set.
         seed: Random seed.
         max_samples: Limit prediction samples per user (debugging).
+        num_workers: DataLoader worker processes for loading trajectories.
+            Defaults to ``4``. The forecasting evaluator is sequential-only
+            (no parallel-eval mode), so this only affects data loading;
+            ``max_samples`` remains the main lever for keeping a run fast.
+            Plumbs into ``DataConfig.num_workers``.
 
     Returns:
         :class:`ForecastingResults` with per-channel metrics.
     """
-    from openmhc._results import ForecastingResults
-
-    paths = _DatasetPaths.resolve(data_dir)
+    paths = _DatasetPaths.resolve(data_dir, version=version)
+    paths.require(
+        "hourly_trajectory",
+        "forecasting_sample_index_dir",
+        "splits_file",
+        "labels_dir",
+    )
     _ensure_labels_env(paths.labels_dir)
 
     from forecasting_evaluation.config import (
@@ -451,8 +786,14 @@ def evaluate_forecasting(
     )
     from forecasting_evaluation.runner import run_eval
 
-    # Pick a sample-index file matching the requested forecasting horizon.
-    sample_index_file = paths.forecasting_sample_index_dir / "sample_index_raw.json"
+    # Pick the paper/Hydra-default sample-index file for the requested horizon:
+    # the quality-filtered set (M = target day retained, H_7_3 = >=3 of prior 7
+    # days retained, S_100 = <=100 start days/user, seed 42). Matches
+    # configs/forecasting/data/default.yaml so the public API is paper-parity.
+    sample_index_file = (
+        paths.forecasting_sample_index_dir
+        / f"sample_index_P_{forecasting_length}_M_H_7_3_S_100.json"
+    )
 
     data_cfg = DataConfig(
         trajectory_hf_dir=str(paths.hourly_trajectory),
@@ -460,6 +801,7 @@ def evaluate_forecasting(
         day_remain_mask=str(paths.forecasting_sample_index_dir / "day_remain_mask.json"),
         sample_index_file=str(sample_index_file),
         split_seed=seed,
+        num_workers=num_workers,
         max_samples=max_samples,
     )
     forecasting_cfg = ForecastingConfig(forecasting_length=forecasting_length)
@@ -476,40 +818,15 @@ def evaluate_forecasting(
             evaluator=EvaluatorConfig(),
             output=OutputConfig(results_dir=tmp_results),
         )
-        adapter = _build_forecaster_adapter(forecaster)
-        result = run_eval(cfg, model=adapter)
+        # The user's forecaster satisfies the unified Forecaster contract
+        # (``predict(history, horizon, *optional kwargs)``); the evaluator
+        # invokes it directly through its duck-typed call path — no adapter.
+        result = run_eval(cfg, model=forecaster)
 
     return ForecastingResults(
         per_channel=result.get("per_channel", {}),
         run_dir=str(result.get("run_dir", "")),
         n_samples=int(result.get("n_samples", 0)),
+        overall_fallback_rate=float(result.get("overall_fallback_rate", 0.0)),
+        fallback_rate=dict(result.get("fallback_rate", {})),
     )
-
-
-def _build_forecaster_adapter(forecaster):
-    """Wrap a user's ``Forecaster`` as an internal ``BasePredictionModel``.
-
-    Subclasses ``BasePredictionModel`` so we inherit ``predict_wrapper`` (which
-    adds timing + memory tracking around the user's ``predict()`` call).
-    """
-    from forecasting_evaluation.models.base import BasePredictionModel
-
-    class _ForecasterAdapter(BasePredictionModel):
-        model_name = "openmhc_custom_forecaster"
-        quantile_levels = None
-        uses_standard_scaler = False
-        scaler_stats = None
-
-        def __init__(self, forecaster):
-            self._forecaster = forecaster
-
-        def predict(self, inputs):
-            """Translate ``SubTrajectoryInput`` → user's ``predict(history, horizon)``."""
-            point = self._forecaster.predict(inputs.history, inputs.prediction_hours)
-            return np.asarray(point, dtype=np.float32), None
-
-        def reset(self):
-            if hasattr(self._forecaster, "reset"):
-                self._forecaster.reset()
-
-    return _ForecasterAdapter(forecaster)
