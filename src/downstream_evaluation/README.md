@@ -38,6 +38,9 @@ Quality gating happens once, upstream, when `daily_hourly_hf` is built; eligibil
 | Regression | Pearson r  | age, BMI_values, WeightKilograms      |
 
 
+**Missing predictions.** A model may leave part of the cohort unscored — WBM, for one, only embeds participants with a full weekly window. When `predict` returns non-finite values for some participants, the harness scores those against the `linear` baseline (fit on the same train cohort) before metrics, so every participant counts exactly once. This needs the model to expose the segments and `fit` the baseline requires, so today WBM is the only bundled model that triggers it; the substituted fraction is reported as `PredictionResults.overall_fallback_rate` (per task in `.fallback_rate`).
+
+
 ## Reproduce the paper results
 
 Three steps: data, baselines, paper pipeline.
@@ -64,7 +67,7 @@ done
 | xgboost         | gradient-boosted trees on minute-level features | CPU; needs `daily_hf`          |
 | mae             | masked-autoencoder embeddings                   | GPU on cache miss; `daily_hf`  |
 | toto / chronos2 | time-series foundation-model embeddings         | GPU on cache miss              |
-| wbm             | self-supervised weekly encoder + Linear hybrid  | GPU on cache miss              |
+| wbm             | self-supervised weekly encoder; linear fallback | GPU on cache miss              |
 
 
 **3. Run the paper pipeline** (bootstrap CIs, skill/rank/fairness aggregates) — one config drives every phase:
@@ -78,8 +81,9 @@ PYTHONPATH=src python scripts/paper_results/downstream/run_paper_pipeline.py \
 
 ### Reference checkpoint (WBM on the Hub)
 
-The reported **WBM** model (Mamba2 contrastive encoder + Linear fallback) loads a
-released checkpoint bundle via `from_release(...)` — a local dir or an `hf://`
+The reported **WBM** model (Mamba2 contrastive encoder + the uniform PCA-50 probe;
+the harness scores participants without a weekly window via the linear baseline)
+loads a released checkpoint bundle via `from_release(...)` — a local dir or an `hf://`
 URI — exactly like the forecasting / imputation reference models:
 
 ```python
