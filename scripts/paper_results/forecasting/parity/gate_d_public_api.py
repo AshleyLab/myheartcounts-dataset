@@ -34,8 +34,13 @@ from forecasting_evaluation.models.naive.seasonal_naive import SeasonalNaiveMode
 
 def main() -> int:
     """Run the public-API path for seasonal_naive and assert self-skill ~0."""
+    # Distinct from the baseline model name ("seasonal_naive") so the paired skill
+    # score has two distinct models; the forecaster IS seasonal_naive, so self-skill
+    # should be ~0.
     model = SeasonalNaiveModel(seed=42)
-    res = openmhc.evaluate_forecasting(model, version="full", method_name="seasonal_naive")
+    res = openmhc.evaluate_forecasting(
+        model, version="full", method_name="seasonal_naive_selfcheck"
+    )
 
     print(f"n_samples={res.n_samples}  overall_fallback_rate={res.overall_fallback_rate:.4f}")
     if res.per_user_errors is None or res.per_user_errors.empty:
@@ -46,7 +51,7 @@ def main() -> int:
         return 1
 
     sk = res.skill_scores
-    row = sk[sk["model"].astype(str) == "seasonal_naive"]
+    row = sk[sk["model"].astype(str) == "seasonal_naive_selfcheck"]
     score_cols = [c for c in sk.columns if c.endswith("_score")]
     overall = float(row["overall_score"].iloc[0])
     max_abs = float(np.nanmax(np.abs(row[score_cols].to_numpy(dtype=float))))

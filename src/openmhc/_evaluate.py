@@ -992,6 +992,11 @@ def evaluate_forecasting(
     baseline_path = Path(baseline_errors) if baseline_errors is not None else shipped_baseline
     if baseline_errors is not None and not baseline_path.exists():
         raise FileNotFoundError(f"baseline_errors not found: {baseline_path}")
+    if method_name == _fc_spec.PAPER_BASELINE and baseline_path.exists():
+        raise ValueError(
+            f"method_name={method_name!r} collides with the skill baseline model name; "
+            "pass a distinct method_name (a paired skill score needs two distinct models)."
+        )
 
     if output_dir is not None:
         results_dir = str(Path(output_dir).resolve())
