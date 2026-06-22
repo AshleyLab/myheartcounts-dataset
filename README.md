@@ -258,8 +258,11 @@ Submissions are pull requests on the Hugging Face leaderboard dataset
 A submission adds two files under the track's subdirectory:
 
 - `<track>/<method>.parquet` — the per-user substrate from your evaluation run
-  (Track 2: `per_user_errors.parquet`, written when you pass `output_dir=` to
-  `evaluate_imputation`).
+  (Track 2: `per_user_errors.parquet`, written when you pass `output_dir=` and
+  `method_name="<method>"` to `evaluate_imputation`). The `method_name` sets the
+  parquet's `method` column and **must match the `<method>` filename stem** — it
+  defaults to `"custom"`, and the leaderboard groups submissions by that column,
+  so an unset name collides with every other default submission.
 - `<track>/<method>.meta.json` — the display sidecar
   (`display_name`, `type`, `submitter`, `subtrack`).
 
@@ -280,6 +283,11 @@ packet = results.to_submission_yaml(
 )
 print(packet)
 ```
+
+Note the two distinct `method_name` arguments: the one above is the **display
+label** rendered in `meta.json` and can be free-form (`"My Method"`). The one you
+pass to `evaluate_imputation` sets the parquet's `method` column and **must equal
+the `<method>` filename stem** the leaderboard groups by.
 
 Lay the two files out under the track subdirectory and open the PR with the
 Hugging Face Hub client (`pip install -e ".[hf]"`):

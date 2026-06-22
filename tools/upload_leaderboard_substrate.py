@@ -59,6 +59,26 @@ def find_parquet(dir_path: Path, method: str) -> Path:
     )
 
 
+def validate_method_column(parquet_path: Path, method: str) -> None:
+    """Fail loudly unless the parquet's ``method`` column is exactly ``method``.
+
+    The leaderboard concatenates every ``imputation/*.parquet`` and groups by the
+    ``method`` column, so a substrate whose column disagrees with its upload name
+    is mislabeled or collides with another method. The column defaults to
+    ``"custom"`` when ``evaluate_imputation`` is run without ``method_name=``;
+    this guard turns that silent footgun into an upfront error.
+    """
+    import pandas as pd
+
+    values = sorted(pd.read_parquet(parquet_path, columns=["method"])["method"].astype(str).unique())
+    if values != [method]:
+        raise SystemExit(
+            f"{parquet_path} has method column {values}, expected ['{method}']. "
+            f"Re-run evaluate_imputation(..., method_name='{method}') so the parquet's "
+            f"`method` column matches the upload name; the leaderboard groups by that column."
+        )
+
+
 def main() -> None:
     """Upload one method substrate parquet to the leaderboard dataset."""
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -85,6 +105,8 @@ def main() -> None:
     args = p.parse_args()
 
     src = find_parquet(args.dir, args.method)
+    if args.track == "imputation":
+        validate_method_column(src, args.method)
     dest = f"{args.track}/{args.method}.parquet"
 
     api = HfApi()

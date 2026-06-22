@@ -9,12 +9,20 @@ imputation/<method>.parquet      # per-user substrate (this file)
 imputation/<method>.meta.json    # display sidecar (below)
 ```
 
-The parquet is produced by the evaluation run — pass `output_dir=` to
-`openmhc.evaluate_imputation` and it writes `per_user_errors.parquet`. Upload
+The parquet is produced by the evaluation run — pass both `output_dir=` and
+`method_name="<method>"` to `openmhc.evaluate_imputation` and it writes
+`per_user_errors.parquet` with the `method` column set to `<method>`. Upload
 that file verbatim (renamed to `<method>.parquet`); do not hand-author it. The
 maintainers concatenate every `imputation/*.parquet` and recompute paired skill,
 fair skill, and average rank against the `locf` baseline during ingestion, so
 the columns and dtypes below must match exactly.
+
+> **`method_name` is required and must equal your `<method>` stem.** It defaults
+> to `"custom"`, and ingestion **groups rows by the `method` column** — so a
+> submission left at the default collides with every other default submission
+> and is scored under the wrong identity. This is the `method_name` argument to
+> `evaluate_imputation` (which sets the parquet column), *not* the cosmetic
+> `to_submission_yaml(method_name=...)` display name.
 
 > For the separate **bootstrap reference** frame (per-draw CIs, not the
 > submission file), see [`bootstrap/SCHEMA.md`](bootstrap/SCHEMA.md).
@@ -27,7 +35,7 @@ subgroup_value, user_id)`. Single Parquet, dictionary-encoded string columns,
 
 | column | type | description |
 |---|---|---|
-| `method` | string (dict) | your method identifier; the same stem as the filename |
+| `method` | string (dict) | your method identifier; **must equal the `<method>` filename stem** — set it via `evaluate_imputation(method_name="<method>")` (defaults to `"custom"`) |
 | `scenario` | string (dict) | masking scenario (6): `random_noise`, `temporal_slice`, `signal_slice`, `sleep_gap`, `workout_gap`, `intensity_failure` |
 | `split` | string (dict) | data split — `test` |
 | `channel` | string (dict) | `ch_0`..`ch_18` (19 sensor channels), or `cat_collapsed:sleep` / `cat_collapsed:workouts` (collapsed-binary tasks) |
