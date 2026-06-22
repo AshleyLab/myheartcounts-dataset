@@ -1,0 +1,3 @@
+# @package evaluation
+# "all" runs the 32 benchmark tasks; or give an explicit list, e.g. [age, Diabetes].
+tasks: all

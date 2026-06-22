@@ -1,0 +1,46 @@
+# Downstream paper-metrics pipeline config — the single record of how the
+# published downstream numbers are produced. Consumed by
+# scripts/paper_results/downstream/run_paper_pipeline.py.
+#
+# NOTE: this is a params / provenance file, not a method "sweep". Phase 0 can run the
+# eval per method (run_eval.py) into predictions_dir + csvs_dir, but the published
+# numbers come from logged SLURM eval jobs — so the everyday invocation passes
+# --skip-eval and starts from the frozen predictions below.
+
+# Phase 0 (eval) — dataset root + release. data_dir: null -> MHC_DATA_DIR.
+data_dir: null
+version: full
+
+# Inputs — eval predictions + their metric CSVs (frozen, or written by phase 0).
+predictions_dir: results/eval/final/predictions
+csvs_dir: results/eval/final
+output_dir: results/paper
+
+# The canonical benchmark methods (single source of truth for the paper run).
+methods:
+  - linear
+  - multirocket
+  - lsm2
+  - toto
+  - chronos2
+  - xgboost
+  - wbm
+  - gru_d
+
+# Phase 1 — paired bootstrap (bootstrap_downstream_draws.py).
+n_bootstrap: 1000
+seed: 42
+fairness_attributes: [age_group, sex]
+
+# Phase 2 — skill / rank / fairness aggregation (aggregate_*).
+baseline_method: linear
+clip_lower: 0.01          # robustness clamp on the per-task error ratio before the geomean
+clip_upper: 100.0
+lambda_fairness: 0.5      # S - lambda*D weight (feeds fairness_summary's adjusted column)
+fairness_combine: linear_penalty
+ci_level: 0.95
+disparity_fns: []         # empty = all registered disparity functions
+# Skill/rank are near-unbiased, so their percentile CI is normally enough and BCa
+# is off by default. Set true to also emit bca_lo/bca_hi for skill_scores +
+# avg_rankings (runs the leave-one-user-out jackknife over predictions_dir).
+bca_skill_rank: false

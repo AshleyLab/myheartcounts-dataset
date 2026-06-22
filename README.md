@@ -37,21 +37,44 @@ openmhc.download_dataset(version="xs")
 
 Then evaluate a model. Models implement one of three duck-typed protocols — no inheritance required.
 
-### Track 1 — outcome prediction (`Encoder`)
+### Track 1 — outcome prediction (`Method`)
 
 ```python
 import numpy as np
 import openmhc
 
-class MeanPoolEncoder:
-    def encode(self, weekly_tensors: np.ndarray) -> np.ndarray:
-        # weekly_tensors: (B, 168, 38). Return (B, D) embeddings.
-        return weekly_tensors[:, :, :19].mean(axis=1).astype(np.float32)
+class MeanPoolMethod:
+    def _encode(self, data: np.ndarray) -> np.ndarray:
+        # data: (n_days, 24, 38) — one participant's eligible days
+        # (channels 0-18 raw values with NaN at missing, 19-37 the mask).
+        x = np.nan_to_num(data).reshape(-1, 38)
+        return np.concatenate([x.mean(0), x.std(0)])
 
-results = openmhc.evaluate_prediction(MeanPoolEncoder(), version="xs")
+    def fit(self, data, labels, task_type):
+        emb = np.stack([self._encode(x) for x in data])
+        self._probe = openmhc.LinearProbe(task_type).fit(emb, labels)
+
+    def predict(self, data):
+        return self._probe.predict(np.stack([self._encode(x) for x in data]))
+
+results = openmhc.evaluate_prediction(MeanPoolMethod())
 print(results.summary())
-print("global score (mean AUROC over binary tasks):", results.global_score)
 ```
+
+`predict` is the only required method; `fit` is optional — a zero-shot / pretrained
+model omits it and is scored as-is.
+
+For reproducible runs (config provenance, sweeps, cluster dispatch), the
+`mhc-downstream-eval` Hydra CLI runs the bundled baselines from composable configs
+at `configs/downstream/`:
+
+```bash
+mhc-downstream-eval method=xgboost
+mhc-downstream-eval --multirun method=linear,mae,xgboost
+```
+
+The full Track-1 guide (data contract, baselines, CLI, paper reproduction) is in
+[`src/downstream_evaluation/README.md`](src/downstream_evaluation/README.md).
 
 ### Track 2 — imputation (`Imputer`)
 
@@ -147,7 +170,7 @@ print(body)
 
 `to_submission_yaml` returns a paste-ready body matching the textareas in the [submission issue template](../../issues/new?template=submission.yml). Skill scores, fair skill scores, and average ranks are filled in by the maintainers from `raw_metrics` during ingestion for **all three tracks** (Track 1 vs Linear, Track 2 vs LOCF, Track 3 vs Seasonal Naive). The maintainer-side reducer is a paired per-user geomean of clipped error ratios — MAE for continuous channels, `max(1 − AUC_u, 0.005)` for binary — matching the formula in `forecasting_evaluation/metrics/skill_score_summary.py::compute_skill_from_errors` so the same word means the same thing across tracks. Submitters only paste the absolute per-channel MAE / AUC. The HuggingFace Space ingests merged submissions and the public leaderboard rebuilds automatically.
 
-Submissions must follow the standard evaluation protocol — same split file, masking config, and label-validity criterion as the paper. The submission template enforces required fields.
+Submissions must follow the standard evaluation protocol — same split file, masking config, and benchmark task list as the paper. The submission template enforces required fields.
 
 ## Repo layout
 

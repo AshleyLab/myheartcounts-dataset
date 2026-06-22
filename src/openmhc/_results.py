@@ -19,20 +19,17 @@ class PredictionResults:
 
     Attributes:
         records: List of per-task metric records. Each record is a dict with
-            keys: task, task_type, classifier, metric, value, n_train, n_test.
-        global_score: Primary ranking metric (mean test AUROC across binary
-            tasks).
+            keys: task, task_type, classifier, metric, value, n_test.
     """
 
     records: list[dict] = field(repr=False)
-    global_score: float = 0.0
 
     def to_dataframe(self) -> pd.DataFrame:
         """Convert results to a pandas DataFrame.
 
         Returns:
             DataFrame with columns: task, task_type, classifier, metric,
-            value, n_train, n_test.
+            value, n_test.
         """
         return pd.DataFrame(self.records)
 
@@ -111,7 +108,7 @@ class PredictionResults:
 
     def __repr__(self) -> str:
         n = len(self.records)
-        return f"PredictionResults({n} records, global_score={self.global_score:.4f})"
+        return f"PredictionResults({n} records)"
 
 
 @dataclass
