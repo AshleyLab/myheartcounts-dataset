@@ -83,12 +83,13 @@ def test_predict_only_model_skips_fit_and_never_builds_train():
     train_td = _TD(["u_x"], [_ExplodingSeg()], np.array([1]), split="train")
     test_td = _test_td()
 
-    y_true, y_pred = DownstreamEvaluator()._eval_task(
+    y_true, y_pred, n_fallback = DownstreamEvaluator()._eval_task(
         model, "Diabetes", train_td, test_td, spec=None
     )
 
     np.testing.assert_array_equal(y_true, [0, 1])
     assert len(y_pred) == 2  # one prediction per test participant, no crash on fit
+    assert n_fallback == 0  # finite predictions → no fallback substitution
 
 
 def test_model_with_fit_still_fits_on_train():
@@ -97,7 +98,7 @@ def test_model_with_fit_still_fits_on_train():
     train_td = _TD(["u_x"], [_Seg(train_arr)], np.array([1]), split="train")
     test_td = _test_td()
 
-    y_true, y_pred = DownstreamEvaluator()._eval_task(
+    y_true, y_pred, n_fallback = DownstreamEvaluator()._eval_task(
         model, "Diabetes", train_td, test_td, spec=None
     )
 
@@ -106,3 +107,4 @@ def test_model_with_fit_still_fits_on_train():
     assert len(model.fit_data) == 1
     np.testing.assert_array_equal(model.fit_data[0], train_arr)
     assert len(y_pred) == 2
+    assert n_fallback == 0

@@ -153,7 +153,7 @@ class _DatasetPaths:
             daily_hourly_hf=root / "processed" / "daily_hourly_hf",
             daily_hf=root / "processed" / "daily_hf",
             window_index=root / "processed" / "window_index_w7_s7_d5.parquet",
-            weekly_labels_lookup=root / "processed" / "weekly_labels_lookup_stride7.parquet",
+            weekly_labels_lookup=root / "processed" / "weekly_labels_lookup_stride7_windowed.parquet",
             daily_labels_lookup=root / "processed" / "daily_labels_lookup.parquet",
             splits_file=root / "splits" / _SPLIT_FILENAMES[version],
             norm_stats=root / "processed" / "normalization_stats_hourly.json",
@@ -287,6 +287,9 @@ def evaluate_prediction(
     data_dir: str | Path | None = None,
     seed: int = 42,
     predictions_dir: str | Path | None = None,
+    *,
+    output_dir: str | Path | None = None,
+    method_name: str | None = None,
 ) -> PredictionResults:
     """Run health-prediction evaluation with a custom model.
 
@@ -312,9 +315,20 @@ def evaluate_prediction(
         predictions_dir: when set, write per-(method, task) test predictions +
             a shared ``_subgroups.json`` here — the input the paper-metrics
             bootstrap paired-resamples for skill / rank / fairness CIs.
+        output_dir: when set, write the per-method leaderboard substrate
+            ``<output_dir>/<method>.parquet`` (the raw per-user prediction pairs,
+            subgroup-expanded) + a ``.meta.json`` provenance sidecar, and populate
+            ``PredictionResults.per_user_pairs``. The per-(method, task)
+            predictions + ``_subgroups.json`` are written here too (unless
+            ``predictions_dir`` points elsewhere), since the substrate is pooled
+            from them.
+        method_name: value for the substrate's ``method`` column and the
+            ``<method>.parquet`` filename — the leaderboard groups by it and the
+            upload filename must match. Defaults to ``model.name``.
 
     Returns:
-        A PredictionResults instance with per-task metrics.
+        A PredictionResults instance with per-task metrics. When ``output_dir``
+        is set, ``per_user_pairs`` holds the uploaded substrate frame.
 
     Raises:
         TypeError: If ``model`` does not satisfy the :class:`~openmhc.Method` contract
@@ -345,6 +359,16 @@ def evaluate_prediction(
 
     split_users = load_split_file(paths.splits_file)
 
+    # The substrate is pooled from the per-(method, task) prediction files, so when
+    # output_dir is set we ensure those are written — to predictions_dir if the
+    # caller gave one, else into output_dir itself.
+    if predictions_dir is not None:
+        preds_dir = str(predictions_dir)
+    elif output_dir is not None:
+        preds_dir = str(output_dir)
+    else:
+        preds_dir = None
+
     # External models and bundled baselines run through the one engine identically
     # (mirrors evaluate_imputation → run_eval). The cohort and per-task temporal
     # scope come from the lookup the engine selects.
@@ -353,7 +377,7 @@ def evaluate_prediction(
         split_users=split_users,
         tasks=task_list,
         seed=seed,
-        predictions_dir=str(predictions_dir) if predictions_dir is not None else None,
+        predictions_dir=preds_dir,
     )
     results = run_eval(cfg, model)
 
@@ -366,13 +390,25 @@ def evaluate_prediction(
         "regression": "linear_regression",
     }
     records: list[dict] = []
+    # Missing-prediction fallback: the engine reports, per task, how many test
+    # participants the model left non-finite (substituted with the Linear
+    # baseline before scoring). Pool them into an overall rate + a per-task map.
+    fallback_rate: dict[str, float] = {}
+    total_fallback = 0
+    total_test = 0
     for task_name, task_metrics in results.items():
         if task_name == "config":
             continue
         task_type = get_task_type(task_name)
         n_test = task_metrics.get("n_test")
+        n_fallback = task_metrics.get("n_fallback", 0)
+        if n_test:
+            total_test += int(n_test)
+            total_fallback += int(n_fallback)
+            if n_fallback:
+                fallback_rate[task_name] = n_fallback / n_test
         for metric_name, value in task_metrics.items():
-            if metric_name == "n_test":
+            if metric_name in ("n_test", "n_fallback"):
                 continue
             records.append(
                 {
@@ -384,7 +420,39 @@ def evaluate_prediction(
                     "n_test": n_test,
                 }
             )
-    return PredictionResults(records=records)
+    overall_fallback_rate = total_fallback / total_test if total_test else 0.0
+
+    # Leaderboard substrate: pool the per-(method, task) prediction pairs into one
+    # <method>.parquet (subgroup-expanded) for upload. Track 1 ships raw pairs (not a
+    # precomputed per-user error) because its ranking/correlation metrics don't
+    # decompose per user — the leaderboard recomputes skill server-side vs. Linear.
+    per_user_pairs = None
+    if output_dir is not None:
+        from downstream_evaluation.evaluation.per_user_pairs import (
+            build_per_user_pairs,
+            write_per_user_pairs_parquet,
+        )
+
+        out = Path(output_dir)
+        out.mkdir(parents=True, exist_ok=True)
+        method_dir = getattr(model, "name", type(model).__name__)
+        method = method_name or method_dir
+        per_user_pairs = build_per_user_pairs(preds_dir, method_dir, task_list, method_label=method)
+        meta = {
+            "method": method,
+            "track": "downstream",
+            "baseline": "linear",
+            "n_tasks": len(task_list),
+            "overall_fallback_rate": overall_fallback_rate,
+        }
+        write_per_user_pairs_parquet(per_user_pairs, out / f"{method}.parquet", meta=meta)
+
+    return PredictionResults(
+        records=records,
+        overall_fallback_rate=overall_fallback_rate,
+        fallback_rate=fallback_rate,
+        per_user_pairs=per_user_pairs,
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -107,20 +107,8 @@ def _phase2_aggregate(cfg: dict, draws: Path, out_dir: Path, methods: list[str],
         "--baseline-method", cfg["baseline_method"],
         "--clip-lower", str(cfg["clip_lower"]),
         "--clip-upper", str(cfg["clip_upper"]),
-        "--lambda-fairness", str(cfg["lambda_fairness"]),
-        "--fairness-combine", cfg["fairness_combine"],
         "--ci-level", str(cfg["ci_level"]),
     ]
-    for d in cfg.get("disparity_fns") or []:
-        agg += ["--disparity-fn", d]
-    # Opt-in BCa for the (near-unbiased) skill / rank tables; needs predictions.
-    if cfg.get("bca_skill_rank"):
-        agg += [
-            "--bca-skill-rank",
-            "--predictions_dir", str(cfg["predictions_dir"]),
-            "--csvs_dir", str(cfg["csvs_dir"]),
-            "--methods", *methods,
-        ]
     _run(agg, dry_run)
     # Pass the predictions through so the fairness reducer can run the leave-one-
     # user-out jackknife and emit the BCa interval alongside the percentile CI.

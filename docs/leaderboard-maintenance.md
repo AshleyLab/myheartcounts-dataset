@@ -15,9 +15,13 @@ standard `huggingface_hub` token discovery (`HF_TOKEN` env or
   self-renders HTML and computes the table in-process at startup. There is no
   static `leaderboard.json` and no `/api/data` endpoint.
 - **Dataset** `MyHeartCounts/OpenMHC-leaderboard-data` (`repo_type="dataset"`,
-  public) — the per-method error substrate: `imputation/<method>.parquet` plus
-  display sidecars `imputation/<method>.meta.json`
-  (`{display_name, type, submitter, subtrack}`). There is also an
+  public) — the per-method substrate: `<track>/<method>.parquet` plus display
+  sidecars `<track>/<method>.meta.json`
+  (`{display_name, type, submitter, subtrack[, overall_fallback_rate]}`). Track 2
+  ships `imputation/<method>.parquet` (per-user errors); Track 1 ships
+  `downstream/<method>.parquet` (per-user **prediction pairs** — its
+  ranking/correlation metrics don't decompose per user, see
+  `tools/leaderboard_docs/downstream/SCHEMA.md`). There is also an
   `imputation/bootstrap/` subdir (the per-draw CI reference frame) that is **not**
   used by the live point compute.
 
@@ -55,18 +59,30 @@ the reducer ignores `subgroup_attr == "all"` on its own.
 
 ## Adding / updating a method (no Space rebuild)
 
-1. Upload the substrate to the **dataset**:
+1. Upload the substrate to the **dataset** (`--track imputation` or `downstream`):
 
    ```bash
    python tools/upload_leaderboard_substrate.py \
        --dir <dir> --method <m> --track imputation \
-       --name "<Display>" --type "<Type>" --submitter "<Team>"
+       --name "<Display>" --type "<Type>" --submitter "<Team>" \
+       --fallback-rate <Results.overall_fallback_rate>
    ```
 
    This writes both `<m>.parquet` and the `<m>.meta.json` sidecar.
+   `--fallback-rate` records `overall_fallback_rate` in the sidecar (issue #39);
+   omit it and the value is read from the substrate's `<m>.parquet.meta.json`
+   provenance sidecar if present, else the row shows "n/a". The `method` column is
+   validated against `<m>` for `imputation` and `downstream`.
 2. The Space recomputes only on **restart** (in-process cache, no auto-refresh).
    Restart it to pick up the new/changed method. Uploading to the dataset does
    *not* trigger a Space rebuild; only pushing to the Space does.
+
+   > **Track 1 (downstream) Space-side work is not yet wired** (separate Space
+   > repo). The substrate is per-user *pairs*, so the Space's Track-1 recompute
+   > must run the downstream bootstrap reducers
+   > (`downstream_evaluation/evaluation/bootstrap_skill_rank.py`) on the pairs
+   > vs. the `linear` baseline, and surface the `overall_fallback_rate` column —
+   > it can't reuse the imputation per-cell-mean path verbatim.
 
 Dataset visibility, if needed:
 `HfApi().update_repo_settings(repo_id, private=False, repo_type="dataset")`

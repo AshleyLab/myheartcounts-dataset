@@ -14,10 +14,8 @@ from downstream_evaluation.evaluation.bootstrap_skill_rank import (
     POINT_DRAW,
     _attr_disparity_ratio_skill,
     _bca_interval,
-    aggregate_skill_rank_fairness,
     compute_per_draw_errors,
     jackknife_fairness_skill,
-    jackknife_skill_rank,
 )
 
 ATTRS = ("age_group", "sex")
@@ -137,7 +135,7 @@ def _draws_path_point(draws, methods, base):
     out, per_attr = {}, {m: {} for m in methods}
     for attr in ATTRS:
         g = sub[(sub["subgroup_attr"] == attr) & (sub["draw"] == POINT_DRAW)]
-        for m, s in _attr_disparity_ratio_skill(g, methods, base, CLIP_LO, CLIP_HI).items():
+        for m, s in _attr_disparity_ratio_skill(g, methods, base, CLIP_LO, CLIP_HI, DOMMAP).items():
             out[(m, attr)] = s
             per_attr[m][attr] = s
     for m in methods:
@@ -158,7 +156,7 @@ def test_jackknife_point_matches_draws_point():
     expected = _draws_path_point(draws, methods, base)
 
     jack, point = jackknife_fairness_skill(
-        aligned, subgroup_map, ATTRS, base, clip_lower=CLIP_LO, clip_upper=CLIP_HI
+        aligned, subgroup_map, ATTRS, base, clip_lower=CLIP_LO, clip_upper=CLIP_HI, domain_map=DOMMAP
     )
 
     assert set(point) == set(expected)
@@ -169,52 +167,3 @@ def test_jackknife_point_matches_draws_point():
     n_users = len({u for t in aligned["linear"] for u in aligned["linear"][t]["uids"]})
     for arr in jack.values():
         assert arr.shape == (n_users,)
-
-
-# --------------------------- skill / rank jackknife ---------------------------
-
-
-def test_jackknife_skill_rank_point_matches_draws_point():
-    """Skill/rank jackknife full-cohort points equal the draws POINT_DRAW values."""
-    aligned, subgroup_map, _ = _synthetic_cohort()
-    draws = compute_per_draw_errors(
-        aligned, n_bootstrap=4, seed=0, subgroup_map=subgroup_map,
-        subgroup_attributes=list(ATTRS), domain_map=DOMMAP,
-    )
-    tables = aggregate_skill_rank_fairness(
-        draws, baseline="linear", clip_lower=CLIP_LO, clip_upper=CLIP_HI, domain_map=DOMMAP
-    )
-    skill_jack, rank_jack, skill_pt, rank_pt = jackknife_skill_rank(
-        aligned, "linear", clip_lower=CLIP_LO, clip_upper=CLIP_HI, domain_map=DOMMAP
-    )
-    assert skill_pt and rank_pt  # sanity: the macro is actually defined
-    sk = tables["skill_scores"].set_index(["method", "scope"])["point"]
-    for key, value in skill_pt.items():
-        assert sk.loc[key] == pytest.approx(value, abs=1e-9), ("skill", key)
-    rk = tables["avg_rankings"].set_index(["method", "scope"])["point"]
-    for key, value in rank_pt.items():
-        assert rk.loc[key] == pytest.approx(value, abs=1e-9), ("rank", key)
-    n_users = len({u for t in aligned["linear"] for u in aligned["linear"][t]["uids"]})
-    for arr in list(skill_jack.values()) + list(rank_jack.values()):
-        assert arr.shape == (n_users,)
-
-
-def test_skill_rank_bca_columns_only_when_enabled():
-    """BCa columns appear only with bca_skill_rank=True; shared columns are unchanged."""
-    import pandas as pd
-
-    aligned, subgroup_map, _ = _synthetic_cohort()
-    draws = compute_per_draw_errors(
-        aligned, n_bootstrap=8, seed=0, subgroup_map=subgroup_map,
-        subgroup_attributes=list(ATTRS), domain_map=DOMMAP,
-    )
-    common = dict(baseline="linear", clip_lower=CLIP_LO, clip_upper=CLIP_HI, domain_map=DOMMAP)
-    off = aggregate_skill_rank_fairness(draws, **common)
-    on = aggregate_skill_rank_fairness(draws, **common, aligned=aligned, bca_skill_rank=True)
-
-    for tbl in ("skill_scores", "avg_rankings"):
-        assert "bca_lo" not in off[tbl].columns
-        assert {"bca_lo", "bca_hi"}.issubset(on[tbl].columns)
-        # turning BCa on must not perturb the percentile/point columns
-        shared = [c for c in off[tbl].columns]
-        pd.testing.assert_frame_equal(off[tbl][shared], on[tbl][shared])

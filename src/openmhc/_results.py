@@ -20,9 +20,37 @@ class PredictionResults:
     Attributes:
         records: List of per-task metric records. Each record is a dict with
             keys: task, task_type, classifier, metric, value, n_test.
+        overall_fallback_rate: Fraction of scored test predictions (pooled over
+            all tasks) that the model left non-finite and the harness replaced
+            with the Linear baseline before scoring. A high value means the
+            model could not produce a usable prediction for much of the cohort;
+            metrics should be read alongside this number. Mirrors
+            ``ForecastingResults``/``ImputationResults``.
+        fallback_rate: Per-task substitution fractions, keyed by task name —
+            only tasks with a non-zero rate are included. Empty for any model
+            whose predictions were all finite (every current baseline except
+            WBM, which routes participants without a weekly embedding to the
+            Linear baseline). Deliberately not surfaced in ``to_dataframe`` /
+            ``to_csv`` so ``eval_<method>.csv`` stays a pure metrics table.
+        per_user_pairs: Optional ``DataFrame`` of the per-user prediction-pair
+            substrate (the leaderboard upload file). Schema: ``[method, task,
+            task_type, subgroup_attr, subgroup_value, user_id, y_true, y_pred,
+            y_proba]``. Unlike Tracks 2/3 (which ship a precomputed
+            ``E_per_user``), Track 1 ships raw pairs because its
+            ranking/correlation metrics don't decompose per user; the
+            leaderboard recomputes skill / rank / fairness server-side vs. the
+            Linear baseline. Populated by ``evaluate_prediction`` when
+            ``output_dir`` is set (also written to ``<output_dir>/<method>.parquet``).
     """
 
     records: list[dict] = field(repr=False)
+    # Additive fallback fields (default 0.0 / empty): populated by
+    # evaluate_prediction from the harness substitution counts.
+    overall_fallback_rate: float = 0.0
+    fallback_rate: dict = field(default_factory=dict, repr=False)
+    # The per-user pairs substrate (the leaderboard upload file); populated when
+    # evaluate_prediction is given output_dir=.
+    per_user_pairs: pd.DataFrame | None = field(default=None, repr=False)
 
     def to_dataframe(self) -> pd.DataFrame:
         """Convert results to a pandas DataFrame.
@@ -109,7 +137,10 @@ class PredictionResults:
 
     def __repr__(self) -> str:
         n = len(self.records)
-        return f"PredictionResults({n} records)"
+        return (
+            f"PredictionResults({n} records, "
+            f"overall_fallback_rate={self.overall_fallback_rate:.4f})"
+        )
 
 
 @dataclass

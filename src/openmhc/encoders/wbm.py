@@ -1,7 +1,8 @@
 """Public WBM encoder wrapper (Track 1 — outcome prediction).
 
-The reported **WBM** model is the WBM-encoder-primary + Linear-fallback hybrid
-(see :mod:`downstream_evaluation.models.hybrid_wbm`). This module exposes it as a
+The reported **WBM** model is the WBM (Mamba2 contrastive SSL) encoder + the
+uniform PCA-50 probe; participants without a weekly embedding are scored by the
+harness's Linear-baseline fallback (issue #38). This module exposes it as a
 release-loadable :class:`~openmhc.Method` so a fresh user can fetch the published
 checkpoint and reproduce the leaderboard entry with a single call::
 
@@ -11,9 +12,9 @@ checkpoint and reproduce the leaderboard entry with a single call::
     >>> results = openmhc.evaluate_prediction(enc, version="full")
 
 ``from_release`` resolves the bundle's ``model.ckpt`` (the Mamba2 contrastive
-encoder weights) and ``normalization_stats.json``, then constructs the hybrid.
-The Mamba2 kernels (``mamba_ssm``) are CUDA-only, so running the encoder requires
-a GPU; loading/validating the bundle's manifest does not.
+encoder weights) and ``normalization_stats.json``, then constructs the encoder +
+probe. The Mamba2 kernels (``mamba_ssm``) are CUDA-only, so running the encoder
+requires a GPU; loading/validating the bundle's manifest does not.
 
 The published bundle lives at ``MyHeartCounts/openmhc-wbm-dp`` on the Hugging
 Face Hub.
@@ -29,17 +30,19 @@ __all__ = ["WBM", "Manifest", "load_manifest", "write_manifest"]
 
 
 class WBM(ReleaseLoadableMixin):
-    """Release-loadable wrapper for the reported WBM model (hybrid, full cohort).
+    """Release-loadable wrapper for the reported WBM model (full cohort).
 
     Implements the public :class:`~openmhc.Method` contract by delegating to
-    :class:`downstream_evaluation.models.hybrid_wbm.Hybrid`. The class attributes
-    mirror ``Hybrid`` so the evaluation engine routes the daily cohort and pools
-    raw daily segments for the Linear fallback branch.
+    :class:`downstream_evaluation.models.wbm.WBMProbe` (the WBM encoder + uniform
+    PCA-50 probe). Participants without a weekly embedding come back non-finite and
+    the harness substitutes the Linear baseline before scoring (issue #38). The
+    class attributes mirror ``WBMProbe`` so the engine routes the full daily cohort
+    and pools raw daily segments for that fallback.
     """
 
     model_name = "wbm"
-    # Mirror downstream_evaluation.models.hybrid_wbm.Hybrid so the engine drives
-    # this wrapper identically (full daily cohort + Linear-fallback segments).
+    # Mirror downstream_evaluation.models.wbm.WBMProbe so the engine drives this
+    # wrapper identically (full daily cohort + segments for the harness fallback).
     name = "wbm"
     input_granularity = "daily"
     needs_segments = True
@@ -58,7 +61,7 @@ class WBM(ReleaseLoadableMixin):
         proj_dim: int = 128,
         dropout: float = 0.223,
     ) -> None:
-        """Build the hybrid from a released checkpoint.
+        """Build the WBM encoder + probe from a released checkpoint.
 
         Args:
             model_path: Path (or resolved ``hf://``/``wandb:`` ref) to the
@@ -90,9 +93,9 @@ class WBM(ReleaseLoadableMixin):
         )
         # Lazy import keeps `from openmhc.encoders import WBM` light — the heavy
         # downstream_evaluation engine is pulled only when a model is built.
-        from downstream_evaluation.models.hybrid_wbm import Hybrid
+        from downstream_evaluation.models.wbm import WBMProbe
 
-        self._hybrid = Hybrid(
+        self._model = WBMProbe(
             data_dir=data_dir,
             checkpoint=str(model_path),
             seed=seed,
@@ -110,19 +113,19 @@ class WBM(ReleaseLoadableMixin):
                 f"{dict(_ARCH)}. The published checkpoint and wrapper are out of sync."
             )
 
-    # -- Method protocol: delegate to the hybrid ----------------------------- #
+    # -- Method protocol: delegate to WBMProbe ------------------------------- #
     def set_context(self, ctx) -> None:
-        """Forward the per-(task, split) cohort context to the hybrid."""
-        self._hybrid.set_context(ctx)
+        """Forward the per-(task, split) cohort context to the encoder + probe."""
+        self._model.set_context(ctx)
 
     def set_loader(self, loader) -> None:
-        """Forward the shared DataLoader to the hybrid's SSL branch."""
-        self._hybrid.set_loader(loader)
+        """Forward the shared DataLoader to the WBM encoder."""
+        self._model.set_loader(loader)
 
     def fit(self, data, labels, task_type) -> None:
-        """Fit both branches (SSL probe + Linear fallback)."""
-        self._hybrid.fit(data, labels, task_type)
+        """Fit the SSL probe (the Linear fallback is the harness's job, issue #38)."""
+        self._model.fit(data, labels, task_type)
 
     def predict(self, data) -> np.ndarray:
-        """Per-user routed predictions, aligned with the cohort order."""
-        return self._hybrid.predict(data)
+        """Per-user predictions; non-finite for users without a weekly embedding."""
+        return self._model.predict(data)

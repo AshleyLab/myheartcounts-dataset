@@ -262,19 +262,21 @@ Submissions are pull requests on the Hugging Face leaderboard dataset
 [`MyHeartCounts/OpenMHC-leaderboard-data`](https://huggingface.co/datasets/MyHeartCounts/OpenMHC-leaderboard-data).
 A submission adds two files under the track's subdirectory:
 
-- `<track>/<method>.parquet` — the per-user substrate from your evaluation run
-  (Track 2: `per_user_errors.parquet`, written when you pass `output_dir=` and
-  `method_name="<method>"` to `evaluate_imputation`). The `method_name` sets the
-  parquet's `method` column and **must match the `<method>` filename stem** — it
-  defaults to `"custom"`, and the leaderboard groups submissions by that column,
-  so an unset name collides with every other default submission.
+- `<track>/<method>.parquet` — the per-user substrate from your evaluation run,
+  written when you pass `output_dir=` and `method_name="<method>"` to the
+  evaluate function (Track 1: per-user prediction pairs from
+  `evaluate_prediction`; Track 2: `per_user_errors.parquet` from
+  `evaluate_imputation`). The `method_name` sets the parquet's `method` column and
+  **must match the `<method>` filename stem** — the leaderboard groups submissions
+  by that column, so an unset name collides with other submissions.
 - `<track>/<method>.meta.json` — the display sidecar
   (`display_name`, `type`, `submitter`, `subtrack`).
 
-Track 2 (imputation) is live today. The Track 1 and Track 3 subdirectory names
-and substrate formats are still being finalized — `to_submission_yaml` flags
-this in the rendered packet; confirm against `tools/leaderboard_docs/` before
-submitting to those tracks.
+Track 2 (imputation) is live today. Track 1 (downstream) uses the `downstream/`
+subdir with the per-user prediction-pair substrate (see its SCHEMA below). The
+Track 3 subdirectory name and substrate format are still being finalized —
+`to_submission_yaml` flags that in the rendered packet; confirm against
+`tools/leaderboard_docs/` before submitting to Track 3.
 
 `to_submission_yaml` renders the `meta.json` block plus the PR file checklist so
 you don't hand-write the sidecar:
@@ -322,8 +324,10 @@ Maintainers compute leaderboard-level skill scores, fair skill scores, and
 average ranks from the submitted substrate during ingestion. Track 1 is scored
 against the linear-probe baseline, Track 2 against LOCF, and Track 3 against
 Seasonal Naive. See
+[`tools/leaderboard_docs/downstream/SCHEMA.md`](tools/leaderboard_docs/downstream/SCHEMA.md)
+and
 [`tools/leaderboard_docs/imputation/SCHEMA.md`](tools/leaderboard_docs/imputation/SCHEMA.md)
-for the Track 2 per-method substrate columns and dtypes, and
+for the Track 1 / Track 2 per-method substrate columns and dtypes, and
 `tools/upload_leaderboard_substrate.py` for the maintainer upload path.
 
 ## Repo Layout
