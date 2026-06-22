@@ -23,6 +23,12 @@ aggregation_unit: user
 #   macro           = legacy unweighted mean of per-window means
 within_user_aggregation: micro
 
+# Build the canonical per-user substrate once (output_root/forecasting_per_user_errors.parquet)
+# and drive skill/rank/bootstrap/fairness from it instead of re-scanning the metric trees ~5x.
+# Requires micro/user (the modes the substrate represents). Set false to score straight from
+# the trees (e.g. a macro run).
+use_substrate: true
+
 # Phase 0 (mhc-forecast-eval) overrides applied to every model.
 common_overrides: []
 

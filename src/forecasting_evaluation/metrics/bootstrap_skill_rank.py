@@ -31,6 +31,7 @@ from forecasting_evaluation.metrics.grouped_metric_rank_summary import (
     _build_continuous_user_rows,
     _compute_all_ranks,
 )
+from forecasting_evaluation.metrics.per_user_errors import to_error_df, to_rank_user_df
 from forecasting_evaluation.metrics.skill_score_summary import (
     _build_error_table,
     _build_model_summary,
@@ -367,6 +368,8 @@ def bootstrap_skill_rank(
     min_pairs: int = 1,
     within_user_aggregation: str = "micro",
     bca_skill_rank: bool = False,
+    per_user_metrics: pd.DataFrame | None = None,
+    return_draws: bool = False,
 ) -> dict[str, pd.DataFrame]:
     """Paired user-bootstrap CIs for forecasting skill scores and mean ranks.
 
@@ -393,6 +396,14 @@ def bootstrap_skill_rank(
             scopes — skill ``overall_score`` + the 4 ``<category>_score``; rank
             ``overall`` + the 4 categories. Off by default (skill/rank are
             near-unbiased: bootstrap mean ≈ point, so the percentile CI suffices).
+        per_user_metrics: optional canonical substrate frame
+            (:func:`per_user_errors.build_per_user_metrics`). When given, the
+            per-user error/rank tables are reconstructed from it (micro/user only)
+            instead of re-scanning the metric trees.
+        return_draws: when True, also include the raw per-draw long frames
+            ``skill_draws`` (model, scope, draw, value) and ``rank_draws``
+            (model, scope, metric, draw, value) in the result — the bootstrap
+            reference shipped to the leaderboard dataset.
 
     Returns:
         ``{"skill_scores": df, "avg_rankings": df}`` where each row carries
@@ -413,26 +424,39 @@ def bootstrap_skill_rank(
     }
 
     # ---- Phase 0: build per-user tables ONCE (the only disk IO) ----
-    error_df = _build_error_table(
-        models=models,
-        metric_groups=metric_groups,
-        aggregation_unit="user",
-        within_user_aggregation=within_user_aggregation,
-    )
-    cont_user = _build_continuous_user_rows(
-        models=models,
-        metrics=[m.strip().lower() for m in continuous_metrics if m.strip()],
-        channel_indices=continuous_channel_indices,
-        within_user_aggregation=within_user_aggregation,
-    )
-    bin_user = _build_binary_user_rows(
-        models=models,
-        metrics=[m.strip().lower() for m in binary_metrics if m.strip()],
-        groups=binary_groups,
-        within_user_aggregation=within_user_aggregation,
-    )
-    rank_frames = [f for f in (cont_user, bin_user) if not f.empty]
-    rank_user_df = pd.concat(rank_frames, ignore_index=True) if rank_frames else pd.DataFrame()
+    # When the caller passes the canonical substrate, reconstruct both tables from
+    # it (micro/user only) instead of re-scanning the metric trees.
+    if per_user_metrics is not None:
+        if within_user_aggregation != "micro":
+            raise ValueError(
+                "per_user_metrics substrate supports only within_user_aggregation="
+                f"'micro'; got {within_user_aggregation!r}."
+            )
+        error_df = to_error_df(per_user_metrics, user_col="unit_id")
+        rank_user_df = to_rank_user_df(per_user_metrics, binary_groups=binary_groups)
+    else:
+        error_df = _build_error_table(
+            models=models,
+            metric_groups=metric_groups,
+            aggregation_unit="user",
+            within_user_aggregation=within_user_aggregation,
+        )
+        cont_user = _build_continuous_user_rows(
+            models=models,
+            metrics=[m.strip().lower() for m in continuous_metrics if m.strip()],
+            channel_indices=continuous_channel_indices,
+            within_user_aggregation=within_user_aggregation,
+        )
+        bin_user = _build_binary_user_rows(
+            models=models,
+            metrics=[m.strip().lower() for m in binary_metrics if m.strip()],
+            groups=binary_groups,
+            within_user_aggregation=within_user_aggregation,
+        )
+        rank_frames = [f for f in (cont_user, bin_user) if not f.empty]
+        rank_user_df = (
+            pd.concat(rank_frames, ignore_index=True) if rank_frames else pd.DataFrame()
+        )
 
     if error_df.empty and rank_user_df.empty:
         logger.warning("Bootstrap: no error/rank rows discovered; returning empty tables.")
@@ -553,7 +577,15 @@ def bootstrap_skill_rank(
                 key_cols=["model", "scope", "metric"],
             )
 
-    return {"skill_scores": skill_summary, "avg_rankings": rank_summary}
+    result = {"skill_scores": skill_summary, "avg_rankings": rank_summary}
+    if return_draws:
+        result["skill_draws"] = pd.DataFrame(
+            skill_records, columns=["model", "scope", "draw", "value"]
+        )
+        result["rank_draws"] = pd.DataFrame(
+            rank_records, columns=["model", "scope", "metric", "draw", "value"]
+        )
+    return result
 
 
 def _summary_table(records: list[dict], key_cols: list[str], ci_level: float) -> pd.DataFrame:

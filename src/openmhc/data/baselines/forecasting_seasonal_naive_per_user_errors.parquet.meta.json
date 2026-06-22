@@ -1,0 +1,12 @@
+{
+  "method": "seasonal_naive",
+  "source_metrics_root": "/simurgh/u/schuetzn/myheartcounts-dataset/results/forecasting_eval/simurgh/seasonal_naive/predictions/forecasting_full_20260609/seasonal_naive_metrics/forecasting_full_20260609",
+  "within_user_aggregation": "micro",
+  "aggregation_unit": "user",
+  "continuous_metrics": [
+    "mae"
+  ],
+  "binary_metrics": [
+    "auroc"
+  ]
+}

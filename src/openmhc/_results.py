@@ -306,6 +306,14 @@ class ForecastingResults:
             in-scope window set; metrics should be read alongside this number.
         fallback_rate: Per-channel Seasonal-Naive substitution fractions, keyed
             like ``per_channel`` (``ch_<i>``).
+        per_user_errors: Optional canonical per-(model, user, channel, metric)
+            substrate frame for this method
+            (:func:`forecasting_evaluation.metrics.per_user_errors.build_per_user_metrics`).
+            Populated when ``evaluate_forecasting`` is given ``output_dir`` or
+            ``baseline_errors``; persisted to ``<output_dir>/per_user_errors.parquet``.
+        skill_scores: Optional per-model skill-score summary vs the Seasonal-Naive
+            baseline (the forecasting reducer's model-summary table), populated when
+            a ``baseline_errors`` substrate is available. ``None`` otherwise.
     """
 
     per_channel: dict = field(repr=False)
@@ -313,6 +321,8 @@ class ForecastingResults:
     n_samples: int = 0
     overall_fallback_rate: float = 0.0
     fallback_rate: dict = field(default_factory=dict, repr=False)
+    per_user_errors: pd.DataFrame | None = field(default=None, repr=False)
+    skill_scores: pd.DataFrame | None = field(default=None, repr=False)
 
     def to_dataframe(self) -> pd.DataFrame:
         """Flatten per-channel metrics into a long DataFrame.

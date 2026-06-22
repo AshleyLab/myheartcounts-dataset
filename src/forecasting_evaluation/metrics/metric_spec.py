@@ -93,6 +93,19 @@ BINARY_GROUPS: tuple[tuple[str, tuple[int, ...]], ...] = tuple(
     (name, idxs) for name, idxs in CATEGORY_SCOPES if set(idxs) <= set(BINARY_CHANNELS)
 )
 
+# --- Paper-default scoring config -------------------------------------------
+# The baked defaults so a user running the public API (``openmhc.evaluate_forecasting``)
+# gets results identical to the paper CLI for the same method. These MIRROR
+# ``configs/paper/sweep_forecasting.yaml`` (baseline=seasonal_naive, scored
+# metrics mae/auroc, ratio clip [0.01, 100], micro/user aggregation) and are the
+# single source of truth for the public-API skill computation.
+PAPER_BASELINE = "seasonal_naive"
+PAPER_CONTINUOUS_METRICS: tuple[str, ...] = ("mae",)
+PAPER_BINARY_METRICS: tuple[str, ...] = ("auroc",)
+PAPER_CLIP_LOWER: float = 1e-2
+PAPER_CLIP_UPPER: float = 100.0
+PAPER_MIN_PAIRS: int = 1
+
 
 def category_scope_for_channel(channel_idx: int) -> str | None:
     """Return the sensor-category scope for a channel index, or None if unmapped."""

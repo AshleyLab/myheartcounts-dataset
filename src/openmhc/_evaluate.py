@@ -889,6 +889,9 @@ def evaluate_forecasting(
     max_samples: int | None = None,
     *,
     num_workers: int = 4,
+    output_dir: str | Path | None = None,
+    baseline_errors: str | Path | None = None,
+    method_name: str = "custom",
 ) -> ForecastingResults:
     """Run forecasting evaluation (Track 3) with a custom forecaster.
 
@@ -912,9 +915,25 @@ def evaluate_forecasting(
             (no parallel-eval mode), so this only affects data loading;
             ``max_samples`` remains the main lever for keeping a run fast.
             Plumbs into ``DataConfig.num_workers``.
+        output_dir: Optional persistent directory. When set, the eval runs there
+            (not a tempdir) and the canonical ``per_user_errors.parquet`` (plus
+            ``skill_scores.csv`` when a baseline is available) are written to it.
+            When ``None`` the run uses a tempdir; the substrate/skill are still
+            returned in-memory but not persisted to disk.
+        baseline_errors: Path to a single-method per-user substrate parquet (the
+            Seasonal-Naive baseline) used as the skill-score denominator. Defaults
+            to the frozen baseline shipped at
+            ``openmhc/data/baselines/forecasting_seasonal_naive_per_user_errors.parquet``;
+            skill is computed with the paper defaults (mae + auroc, clip
+            [0.01, 100], micro/user) so it matches the leaderboard. If the shipped
+            file is absent and none is passed, ``skill_scores`` stays ``None``.
+        method_name: Label for the ``model`` column of the emitted substrate (and
+            the row in ``skill_scores``). Defaults to ``"custom"``.
 
     Returns:
-        :class:`ForecastingResults` with per-channel metrics.
+        :class:`ForecastingResults` with per-channel metrics; ``per_user_errors``
+        (the canonical substrate) and ``skill_scores`` (vs the Seasonal-Naive
+        baseline) are populated when the substrate / baseline are available.
     """
     paths = _DatasetPaths.resolve(data_dir, version=version)
     paths.require(
@@ -956,7 +975,33 @@ def evaluate_forecasting(
     )
     forecasting_cfg = ForecastingConfig(forecasting_length=forecasting_length)
 
-    with tempfile.TemporaryDirectory(prefix="openmhc-fc-") as tmp_results:
+    from forecasting_evaluation.metrics import metric_spec as _fc_spec
+    from forecasting_evaluation.metrics.per_user_errors import (
+        build_per_user_metrics,
+        read_per_user_metrics_parquet,
+        write_per_user_metrics_parquet,
+    )
+    from forecasting_evaluation.metrics.skill_score_summary import compute_skill_score_tables
+
+    shipped_baseline = (
+        Path(__file__).resolve().parent
+        / "data"
+        / "baselines"
+        / "forecasting_seasonal_naive_per_user_errors.parquet"
+    )
+    baseline_path = Path(baseline_errors) if baseline_errors is not None else shipped_baseline
+    if baseline_errors is not None and not baseline_path.exists():
+        raise FileNotFoundError(f"baseline_errors not found: {baseline_path}")
+
+    if output_dir is not None:
+        results_dir = str(Path(output_dir).resolve())
+        Path(results_dir).mkdir(parents=True, exist_ok=True)
+        tmp_ctx = None
+    else:
+        tmp_ctx = tempfile.TemporaryDirectory(prefix="openmhc-fc-")
+        results_dir = tmp_ctx.name
+
+    try:
         cfg = ForecastingEvalConfig(
             seed=seed,
             experiment_name="openmhc_run",
@@ -966,17 +1011,75 @@ def evaluate_forecasting(
             model=ForecastingModelConfig(),  # ignored by _CustomModelEvaluator
             features=FeaturesConfig(),
             evaluator=EvaluatorConfig(),
-            output=OutputConfig(results_dir=tmp_results),
+            output=OutputConfig(results_dir=results_dir),
         )
         # The user's forecaster satisfies the unified Forecaster contract
         # (``predict(history, horizon, *optional kwargs)``); the evaluator
         # invokes it directly through its duck-typed call path — no adapter.
         result = run_eval(cfg, model=forecaster)
 
-    return ForecastingResults(
-        per_channel=result.get("per_channel", {}),
-        run_dir=str(result.get("run_dir", "")),
-        n_samples=int(result.get("n_samples", 0)),
-        overall_fallback_rate=float(result.get("overall_fallback_rate", 0.0)),
-        fallback_rate=dict(result.get("fallback_rate", {})),
-    )
+        # Canonical per-user substrate for THIS method, built from the metric
+        # trees BEFORE the tempdir is cleaned up. Paper-default scored set
+        # (mae + auroc) so the numbers match the paper CLI for the same method.
+        metrics_root = Path(result.get("metrics_dir", "")) / cfg.experiment_name
+        per_user_df = build_per_user_metrics(
+            models={method_name: {"path": str(metrics_root), "display_name": method_name}},
+            continuous_metrics=list(_fc_spec.PAPER_CONTINUOUS_METRICS),
+            binary_metrics=list(_fc_spec.PAPER_BINARY_METRICS),
+            continuous_channel_indices=_fc_spec.CONTINUOUS_CHANNELS,
+            binary_channel_indices=_fc_spec.BINARY_CHANNELS,
+        )
+
+        # Skill vs the (shipped) Seasonal-Naive baseline via the SAME forecasting
+        # reducer + paper defaults the leaderboard uses.
+        skill_df = None
+        if baseline_path.exists() and not per_user_df.empty:
+            baseline_df, _ = read_per_user_metrics_parquet(baseline_path)
+            combined = pd.concat([per_user_df, baseline_df], ignore_index=True)
+            models_two = {
+                method_name: {"path": "", "display_name": method_name},
+                _fc_spec.PAPER_BASELINE: {"path": "", "display_name": _fc_spec.PAPER_BASELINE},
+            }
+            _, skill_df, _ = compute_skill_score_tables(
+                models=models_two,
+                baseline_model=_fc_spec.PAPER_BASELINE,
+                continuous_metrics=list(_fc_spec.PAPER_CONTINUOUS_METRICS),
+                binary_metrics=list(_fc_spec.PAPER_BINARY_METRICS),
+                continuous_channel_indices=_fc_spec.CONTINUOUS_CHANNELS,
+                binary_channel_indices=_fc_spec.BINARY_CHANNELS,
+                clip_lower=_fc_spec.PAPER_CLIP_LOWER,
+                clip_upper=_fc_spec.PAPER_CLIP_UPPER,
+                min_pairs=_fc_spec.PAPER_MIN_PAIRS,
+                aggregation_unit="user",
+                within_user_aggregation="micro",
+                per_user_metrics=combined,
+            )
+
+        if output_dir is not None:
+            write_per_user_metrics_parquet(
+                per_user_df,
+                Path(results_dir) / "per_user_errors.parquet",
+                meta={
+                    "method": method_name,
+                    "within_user_aggregation": "micro",
+                    "aggregation_unit": "user",
+                    "continuous_metrics": list(_fc_spec.PAPER_CONTINUOUS_METRICS),
+                    "binary_metrics": list(_fc_spec.PAPER_BINARY_METRICS),
+                    "baseline": _fc_spec.PAPER_BASELINE,
+                },
+            )
+            if skill_df is not None:
+                skill_df.to_csv(Path(results_dir) / "skill_scores.csv", index=False)
+
+        return ForecastingResults(
+            per_channel=result.get("per_channel", {}),
+            run_dir=str(result.get("run_dir", "")),
+            n_samples=int(result.get("n_samples", 0)),
+            overall_fallback_rate=float(result.get("overall_fallback_rate", 0.0)),
+            fallback_rate=dict(result.get("fallback_rate", {})),
+            per_user_errors=per_user_df,
+            skill_scores=skill_df,
+        )
+    finally:
+        if tmp_ctx is not None:
+            tmp_ctx.cleanup()
