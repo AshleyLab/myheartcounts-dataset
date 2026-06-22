@@ -6,15 +6,14 @@
 [![Dataset](https://img.shields.io/badge/Dataset-Coming%20Soon-6c757d?style=flat-square)](#)
 [![Paper](https://img.shields.io/badge/Paper-Coming%20Soon-b31b1b?style=flat-square)](#)
 
-This is the official public repository and package of OpenMHC, which includes the evaluation harnesses to recreate the public leaderboards, contains a public API to run your own methods on the benchmark and create results files that can be submitted (see below for more details). The repo also comes with reference implementations of models presented in the OpenMHC paper, including reimplementations/adaptations of Google's LSM2 and Apple's WBM. 
+This is the official public repository and package of OpenMHC, an Apple HealthKit based mobile and wearable dataset and evaluation suite with over 60M hours of minute-level data from around 12k participants across multiple countries. This repository includes the evaluation harnesses to recreate the public leaderboards, contains a public API to run your own methods on the benchmark and create results files that can be submitted (see below for more details). The repo also comes with reference implementations of models presented in the OpenMHC paper, including reimplementations/adaptations of Google's LSM2 and Apple's WBM. 
 The research-grade codebased can be found here https://github.com/NarayanSchuetz/OpenMHC (particularly relevant for training infra, until we ported that properly).
 
 What can this repository and the OpenMHC dataset be useful for?
 - Experiment on the, to-date, largest fully public mobile/wearable health dataset. This space is vastly underexplored in the AI/ML world and will allow for many valuable contributions that could affect millions of users one day.
-- Leverage our pre-trained wearable foundation models on your own datasets (this could be from research or your own Apple HealthKit exports - we are working on adaptors for the latter but Claude/Codex can likely help prior to that).
+- Leverage our pre-trained wearable foundation models on your own datasets (this could be from research or your own Apple HealthKit exports - we are working on adaptors for the latter but Claude/Codex can likely help prior to that), or pre-train you models on our large-scale dataset.
 - Evaluate your own new method/model on our benchmark tasks, spanning dense downstream prediction across >30 tasks, 24h wearable data forecasting, a single day/multi-day minute level imputation and submit them to be displayed on the official leaderboard
 - Augment your own datasets, in mobile/wearable health studies we are often limite to small disease cohorts, OpenMHC can give you access to larger numbers of subjects to compare to.
-
 
 
 - **Dataset:** see [DATASET.md](DATASET.md)
@@ -352,5 +351,5 @@ release are available.
 
 ## License
 
-Code: MIT. Dataset: governed by a separate Data Use Agreement; see
-[DATASET.md](DATASET.md).
+Code: MIT. Dataset: governed by a separate Data Use Agreement (see
+[DATASET.md](DATASET.md)), Models OpenRAIL;

@@ -36,12 +36,21 @@ class Hybrid:
     needs_segments = True  # the Linear branch pools raw daily segments
 
     def __init__(
-        self, data_dir: str | None = None, checkpoint: str = DEFAULT_CHECKPOINT, seed: int = 42
+        self,
+        data_dir: str | None = None,
+        checkpoint: str = DEFAULT_CHECKPOINT,
+        seed: int = 42,
+        normalization_stats_path: str | None = None,
     ):
         self._data_dir = data_dir
         self.seed = seed
         self._linear = Linear(data_dir=data_dir, seed=seed)  # fallback branch
-        self._wbm = WBM(data_dir=data_dir, checkpoint=checkpoint, seed=seed)  # SSL embeddings
+        self._wbm = WBM(
+            data_dir=data_dir,
+            checkpoint=checkpoint,
+            seed=seed,
+            normalization_stats_path=normalization_stats_path,
+        )  # SSL embeddings
         self._weekly_provider = None
         self._ssl_pca = None
         self._ssl_clf = None

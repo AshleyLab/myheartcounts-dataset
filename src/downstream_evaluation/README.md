@@ -76,6 +76,27 @@ PYTHONPATH=src python scripts/paper_results/downstream/run_paper_pipeline.py \
 
 `configs/paper/downstream_paper.yaml` records the methods, bootstrap count/seed, baseline, and the fairness knobs — the single provenance of the published numbers. Re-aggregate without re-bootstrapping via `--skip-phase1`.
 
+### Reference checkpoint (WBM on the Hub)
+
+The reported **WBM** model (Mamba2 contrastive encoder + Linear fallback) loads a
+released checkpoint bundle via `from_release(...)` — a local dir or an `hf://`
+URI — exactly like the forecasting / imputation reference models:
+
+```python
+import openmhc
+from openmhc.encoders import WBM
+
+# pip install 'openmhc[hf]'   (+ mamba-ssm on a CUDA machine to run the encoder)
+enc = WBM.from_release("hf://MyHeartCounts/openmhc-wbm-dp")
+results = openmhc.evaluate_prediction(enc, version="full")
+```
+
+The released bundle lives under `MyHeartCounts/openmhc-wbm-dp` on the Hugging Face
+Hub. Stage it from the source W&B artifact with
+`tools/encoders/build_wbm_release.py`, then publish with
+`tools/publish_to_hf.py` (see the `openmhc_manifest.json` schema in
+`src/openmhc/encoders/_release.py`).
+
 ## Reproducible runs via the CLI (`mhc-downstream-eval`)
 
 The bundled baselines also run from a composable [Hydra](https://hydra.cc) CLI — the prediction-track twin of `mhc-impute-eval` / `mhc-forecast-eval`. It builds the model and calls the same `openmhc.evaluate_prediction` engine as the snippets above; reach for it (over the `METHOD=… scripts/run_eval.py` env-var driver) when you want config provenance, parameter sweeps, or cluster dispatch — each run snapshots its fully-resolved config next to the results.
