@@ -841,9 +841,16 @@ def _per_attribute_skill_keyed(
     For each task r = (scenario, channel) and key tuple k = (*extra_keys),
     we restrict to the **common subgroup set** that both the method and the
     baseline have data for in that task/key, and then:
-        D^{(k)}_{r, j}  =  max_g E^{(k)}_{r, j, g}  -  min_g E^{(k)}_{r, j, g}
+        D^{(k)}_{r, j}  =  (2 / |G|(|G|-1)) * Σ_{g, g' ∈ G, g ≠ g'}
+                                  | E^{(k)}_{r, j, g}  -  E^{(k)}_{r, j, g'} |
         D^{(k)}_{r, b}  =  same, for the baseline method b.
         ratio          =  clip(D_j / D_b,  clip_lower, clip_upper)
+    The disparity is the **mean absolute pairwise difference** (MAPD)
+    across the common subgroup set — averaged over all unordered (g, g')
+    pairs. For ``|G| = 2`` (e.g. sex) this collapses to ``|E_a − E_b|``,
+    matching the previous max-min formulation; for ``|G| ≥ 3`` (e.g.
+    age_group with 5 buckets → 10 pairs) MAPD is smoother because every
+    pair contributes instead of only the two extremes.
     Drop tasks where fewer than two common subgroups exist, where the
     baseline is already perfectly fair (D_b ≤ 0), or where any D is NaN.
     Then
@@ -851,12 +858,13 @@ def _per_attribute_skill_keyed(
 
     The ≥2-common-subgroup guard prevents a known failure mode where a
     method that happens to have data for only one subgroup of a task/draw
-    would yield D_j = max - min = 0 by construction, get clipped to
-    ``clip_lower`` after dividing by D_b > 0, and earn a near-perfect
-    ``S_attr ≈ 1 - clip_lower`` for free. This can happen in the bootstrap
-    path (per-draw row drop-outs from non-finite metrics, single-class AUC
-    draws, missing manifest coverage) even when the upstream subgroup
-    universe is logically the same across methods.
+    would yield D_j = 0 by construction (a single value has no pairwise
+    differences), get clipped to ``clip_lower`` after dividing by
+    D_b > 0, and earn a near-perfect ``S_attr ≈ 1 - clip_lower`` for free.
+    This can happen in the bootstrap path (per-draw row drop-outs from
+    non-finite metrics, single-class AUC draws, missing manifest
+    coverage) even when the upstream subgroup universe is logically the
+    same across methods.
 
     Returns one row per (method, *extra_keys) with columns
     ``[method, *extra_keys, S_attr, n_tasks]``.
@@ -882,19 +890,39 @@ def _per_attribute_skill_keyed(
     if aligned.empty:
         return pd.DataFrame(columns=["method", *extra_keys, "S_attr", "n_tasks"])
 
+    def _mapd(series: pd.Series) -> float:
+        """Mean absolute pairwise difference of a numeric series.
+
+        Computes ``(2 / n(n-1)) * Σ_{i<j} |x_i − x_j|`` — i.e. the mean
+        of ``|x_i − x_j|`` over the ``n(n-1)/2`` unordered pairs.
+        Returns NaN when fewer than 2 finite values are present.
+        """
+        vals = series.to_numpy()
+        # NaNs would propagate into the pairwise differences; mirror the
+        # downstream "any D NaN" drop by short-circuiting here.
+        vals = vals[np.isfinite(vals)]
+        n = vals.size
+        if n < 2:
+            return float("nan")
+        # |x_i - x_j| for every pair (n,n); take the upper triangle so
+        # each unordered pair counts once.
+        diffs = np.abs(vals[:, None] - vals[None, :])
+        iu, ju = np.triu_indices(n, k=1)
+        return float(diffs[iu, ju].mean())
+
     grouped = aligned.groupby(method_task_keys, observed=True)
     D = pd.DataFrame(
         {
-            "D_j": grouped["E"].max() - grouped["E"].min(),
-            "D_b": grouped["E_b"].max() - grouped["E_b"].min(),
+            "D_j": grouped["E"].apply(_mapd),
+            "D_b": grouped["E_b"].apply(_mapd),
             "n_sub": grouped["subgroup_value"].nunique(),
         }
     ).reset_index()
 
     # Drop tasks where:
-    #   - fewer than 2 common (method ∩ baseline) subgroups exist; max-min
-    #     is degenerate (= 0) by construction and would otherwise be
-    #     rewarded as "perfect fairness" after clipping.
+    #   - fewer than 2 common (method ∩ baseline) subgroups exist; the
+    #     mean pairwise difference is undefined (NaN from ``_mapd``) and
+    #     a single subgroup row would otherwise look "perfectly fair".
     #   - the baseline is already perfectly fair (D_b ≤ 0).
     #   - either disparity is NaN.
     # The D_b > 0 / NaN guards mirror compute_skill_scores'
@@ -904,7 +932,7 @@ def _per_attribute_skill_keyed(
         & (D["D_b"] > 0)
         & D["D_b"].notna()
         & D["D_j"].notna()
-        & (D["D_j"] >= 0)  # max-min is non-negative by construction
+        & (D["D_j"] >= 0)  # |·|-based, non-negative by construction
     )
     D = D.loc[keep].copy()
     if D.empty:
@@ -963,12 +991,12 @@ def compute_fair_skill_scores(
     subgroup_value, E]``. Rows for the global ``subgroup_attr == "all"``
     cell are ignored.
 
-    For each attribute in ``attrs`` we compute the per-task max-min
-    disparity for the method and for the baseline, clip the ratio, and
-    take the geometric mean across tasks (see ``_per_attribute_skill_keyed``).
-    The overall score is the macro-average across attributes — methods
-    missing any attribute drop out of the overall row to keep the average
-    honest.
+    For each attribute in ``attrs`` we compute the per-task **mean
+    absolute pairwise difference** (MAPD) disparity for the method and
+    for the baseline, clip the ratio, and take the geometric mean across
+    tasks (see ``_per_attribute_skill_keyed``). The overall score is the
+    macro-average across attributes — methods missing any attribute drop
+    out of the overall row to keep the average honest.
 
     Returns one row per (method, scope) with columns
     ``[method, scope, fair_skill_score, n_tasks]``. ``scope`` is one entry

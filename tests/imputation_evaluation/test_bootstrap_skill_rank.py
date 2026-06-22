@@ -21,6 +21,7 @@ from imputation_evaluation.evaluation.bootstrap_skill_rank import (
     _assert_manifests_agree,
     aggregate_skill_rank_fairness,
     compute_per_draw_errors,
+    compute_per_draw_errors_from_per_user_errors,
     read_draws_parquet,
     write_draws_parquet,
 )
@@ -587,3 +588,61 @@ def test_compute_per_draw_errors_default_returns_dataframe(tmp_path):
     # Single DataFrame, not a tuple.
     assert isinstance(out, pd.DataFrame)
     assert list(out.columns) == DRAWS_PARQUET_COLUMNS
+
+
+def test_per_user_fast_path_uses_split_specific_manifests():
+    """Multi-split fast path must rebuild canonical user ordering per split."""
+    test_manifest = pa.table(
+        {
+            "sample_idx": [0, 1],
+            "user_id": ["test_u0", "test_u1"],
+            "date": ["2024-01-01", "2024-01-02"],
+        }
+    )
+    val_manifest = pa.table(
+        {
+            "sample_idx": [0],
+            "user_id": ["val_u0"],
+            "date": ["2024-02-01"],
+        }
+    )
+    per_user_df = pd.DataFrame(
+        [
+            {
+                "method": "locf",
+                "scenario": "scenarioA",
+                "split": "test",
+                "channel": "ch_0",
+                "channel_type": "continuous",
+                "subgroup_attr": "all",
+                "subgroup_value": "all",
+                "user_id": "test_u0",
+                "E_per_user": 1.0,
+            },
+            {
+                "method": "locf",
+                "scenario": "scenarioA",
+                "split": "val",
+                "channel": "ch_0",
+                "channel_type": "continuous",
+                "subgroup_attr": "all",
+                "subgroup_value": "all",
+                "user_id": "val_u0",
+                "E_per_user": 2.0,
+            },
+        ]
+    )
+
+    draws = compute_per_draw_errors_from_per_user_errors(
+        per_user_df,
+        {
+            "test": {"locf": test_manifest},
+            "val": {"locf": val_manifest},
+        },
+        n_boot=1,
+        seed=0,
+    )
+
+    by_split = draws.set_index("split")["E"].to_dict()
+    assert by_split["test"] == pytest.approx(1.0)
+    assert by_split["val"] == pytest.approx(2.0)

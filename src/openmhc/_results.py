@@ -126,9 +126,28 @@ class ImputationResults:
             ``n_applicable`` reports samples a masking scenario could be
             applied to; ``overall_fallback_rate`` reports the fraction of
             target cells the model itself failed to produce.
+        per_user_errors: Optional ``DataFrame`` of per-(user, channel, cell)
+            errors emitted by the canonical producer
+            (:func:`imputation_evaluation.evaluation.per_user_errors.build_per_user_errors`).
+            Schema: ``[method, scenario, split, channel, channel_type,
+            subgroup_attr, subgroup_value, user_id, E_per_user]`` — the
+            same long format consumed by the paper Phase 2 aggregators
+            and the BCa LOO jackknife. Populated by
+            ``evaluate_imputation``; when ``output_dir`` is set this frame
+            is also written to
+            ``<output_dir>/per_user_errors.parquet``.
+        skill_scores: Optional ``DataFrame`` of paired-R skill scores
+            against the baseline supplied via ``baseline_errors``.
+            Columns: ``[method, scope, skill_score, n_tasks]`` —
+            per-(scenario, channel-bucket, overall) scopes as emitted by
+            :func:`paper_metrics_core.compute_skill_scores`. ``None``
+            unless ``baseline_errors`` was provided.
     """
 
     scenarios: dict = field(repr=False)
+    # Optional additive fields populated by evaluate_imputation when available.
+    per_user_errors: pd.DataFrame | None = field(default=None, repr=False)
+    skill_scores: pd.DataFrame | None = field(default=None, repr=False)
 
     @property
     def overall_fallback_rate(self) -> float:

@@ -76,10 +76,10 @@ bash jobs/sherlock/imputation_eval/00_setup.sh
 sh_dev -t 1:00:00
 source jobs/sherlock/imputation_eval/_common.sh
 mhc-impute-eval method=mean data=xs masking=sleep_gap_only \
-  hydra.run.dir=$OUT_BASE/_smoke bootstrap=on \
+  hydra.run.dir=$OUT_BASE/_smoke \
   data.daily_hf_dir=${SCRATCH_RUN_ROOT}/.myheartcounts-dataset-cache/data-xs/processed/daily_hf \
   data.split_file=${SCRATCH_RUN_ROOT}/.myheartcounts-dataset-cache/data-xs/splits/sharable_users_seed42_2026.json
-ls $OUT_BASE/_smoke/{results.json,bootstrap_metrics.json,pairs}
+ls $OUT_BASE/_smoke/{results.json,per_user_errors.parquet,pairs}
 
 # submit everything (7 imputer jobs + 1 paper-bootstrap with afterok dep)
 bash jobs/sherlock/imputation_eval/submit_all.sh

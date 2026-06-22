@@ -15,9 +15,10 @@ draws_path: results/paper/bootstrap_draws.parquet
 per_user_errors_path: results/paper/per_user_errors.parquet
 manifest_path: configs/paper/bootstrap_method_dirs.json
 
-# Phase 0 (Hydra eval) — applied to every method
-common_overrides:
-  - evaluation.save_pairs=true
+# Phase 0 (Hydra eval) — applied to every method.
+# Pairs are always written (the runner needs them for the canonical producer),
+# so no overrides are required here. Add method-specific overrides as needed.
+common_overrides: []
 
 # Phase 1 (bootstrap_imputation_draws.py)
 n_boot: 1000

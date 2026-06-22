@@ -19,6 +19,7 @@ env/
 # Editor
 .vscode/
 .idea/
+.claude/
 *.swp
 .DS_Store
 
@@ -37,6 +38,10 @@ __pycache__/
 # Generated outputs (eval run results, notebook-side artifacts)
 data/cache/
 notebooks/data/
+results/
+logs/
+forecasting_bca_20260618/
+imputation_results_paper/
 
 # Forecasting release staging + merge artifacts (large weights, not source)
 .merge_cache/

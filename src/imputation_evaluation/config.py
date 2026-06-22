@@ -245,8 +245,6 @@ class OutputConfig:
 class EvalConfig:
     """Evaluation configuration."""
 
-    compute_metrics: bool = True  # If False, only save pairs (no MetricAccumulator)
-    save_pairs: bool = True  # Save raw (gt, pred) pairs to Parquet
     # Which splits to evaluate. Default ``["val", "test"]`` preserves the
     # historical behavior; for leaderboard-only reruns (paper pipeline reads
     # ``--splits test`` exclusively) pass ``[test]`` to skip val. Skipping
@@ -289,24 +287,6 @@ class SensitivityConfig:
 
 
 @dataclass
-class BootstrapConfig:
-    """Participant-level cluster bootstrap for imputation metric CIs.
-
-    When ``enabled``, the runner forces pair-saving on and computes percentile
-    confidence intervals + standard errors by resampling users (clusters), not
-    rows. See ``src/imputation_evaluation/evaluation/bootstrap.py``.
-    """
-
-    enabled: bool = False
-    n_boot: int = 1000
-    ci_level: float = 0.95
-    seed: int = 42
-    include_auc: bool = True
-    # Where to write structured bootstrap_metrics.json (None = next to results.json).
-    output_path: str | None = None
-
-
-@dataclass
 class WandbConfig:
     """Weights & Biases logging configuration."""
 
@@ -329,5 +309,4 @@ class ImputationEvalConfig:
     evaluation: EvalConfig = field(default_factory=EvalConfig)
     visualization: VisualizationConfig = field(default_factory=VisualizationConfig)
     sensitivity: SensitivityConfig = field(default_factory=SensitivityConfig)
-    bootstrap: BootstrapConfig = field(default_factory=BootstrapConfig)
     wandb: WandbConfig = field(default_factory=WandbConfig)

@@ -78,6 +78,7 @@ include-package-data = true
 
 [tool.setuptools.package-data]
 "eval_hydra" = ["configs/**/*.yaml"]
+"openmhc" = ["data/baselines/*.parquet"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
