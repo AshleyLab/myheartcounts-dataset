@@ -250,6 +250,94 @@ class WBM:
         return X
 
 
+class WBMProbe:
+    """The reported WBM model: the WBM encoder + the uniform PCA-50 probe.
+
+    Participants with a WBM (weekly) embedding are scored by the uniform
+    :class:`openmhc.LinearProbe` over their pooled 256-d embedding (fit on the
+    weekly train cohort) — the same head Toto / Chronos-2 use, so WBM is no
+    longer a probe outlier. Participants **without** a weekly embedding are left
+    non-finite, so the harness substitutes the Linear baseline before scoring
+    (the missing-prediction fallback in
+    :class:`~downstream_evaluation.evaluation.evaluator.DownstreamEvaluator`) —
+    matching how forecasting / imputation handle a model that can't produce a
+    cell. The Linear fallback branch that used to live in this model now lives in
+    the harness (issue #38).
+
+    Moving the probe onto the shared ``LinearProbe`` aligns WBM's PCA convention
+    onto the ``fit_transform`` (U·S) path the other encoders use — a deliberate
+    ~1e-6 re-baseline of the SSL-cohort predictions vs the former ``Hybrid``. The
+    Linear-fallback cohort is unaffected (that baseline has no PCA).
+    """
+
+    name = "wbm"
+    input_granularity = "daily"  # full daily cohort + segments for the harness fallback
+    needs_segments = True  # daily segments feed the harness Linear fallback
+
+    def __init__(
+        self, data_dir: str | None = None, checkpoint: str = DEFAULT_CHECKPOINT, seed: int = 42
+    ):
+        """Store the data root, checkpoint, and seed; the encoder loads lazily on use."""
+        self._data_dir = data_dir
+        self.seed = seed
+        self._wbm = WBM(data_dir=data_dir, checkpoint=checkpoint, seed=seed)
+        self._weekly_provider = None
+        self._probe = None
+        self._ctx = None  # EvalContext (task / split / cohort user_ids), injected per call
+
+    def set_context(self, ctx) -> None:
+        """Receive the per-(task, split) cohort context; the engine injects it before
+        ``fit`` / ``predict``. The encoder keys its weekly cache by ``task`` and the
+        prediction is aligned to the daily cohort's ``user_ids`` — neither carried by
+        the clean ``fit(data, labels, task_type)`` signature, so they arrive here."""
+        self._ctx = ctx
+
+    def set_loader(self, loader) -> None:
+        """Forward the shared :class:`DataLoader` to the encoder: on an embedding-cache
+        miss its weekly windows are assembled from the same one-read store."""
+        self._wbm.set_loader(loader)
+
+    def _weekly_td(self, task: str, split: str):
+        """Weekly cohort + eligible week_starts for ``task`` (the encoder's cohort)."""
+        if self._weekly_provider is None:
+            from openmhc._evaluate import _DatasetPaths
+
+            from downstream_evaluation.data.provider import (
+                LOOKUP_BY_GRANULARITY,
+                TaskDataProvider,
+            )
+            from downstream_evaluation.data.splits import load_split_file
+
+            paths = _DatasetPaths.from_root(self._data_dir)
+            lookup = str(paths.root / "processed" / LOOKUP_BY_GRANULARITY["weekly"])
+            self._weekly_provider = TaskDataProvider(
+                lookup, load_split_file(paths.splits_file), granularity="weekly"
+            )
+        return self._weekly_provider.task_data(task, split)
+
+    def fit(self, data, labels, task_type) -> None:
+        # ``data`` (the daily cohort) is unused here — the encoder self-serves its
+        # weekly embeddings; the daily segments feed the harness Linear fallback.
+        import openmhc
+
+        wtd = self._weekly_td(self._ctx.task, "train")
+        X = self._wbm.encode_cohort(self._ctx.task, wtd)
+        self._probe = openmhc.LinearProbe(task_type, seed=self.seed).fit(X, wtd.labels)
+
+    def predict(self, data) -> np.ndarray:
+        """Per-user SSL-probe predictions aligned to the daily cohort; NaN for users
+        without a weekly embedding (the harness substitutes the Linear baseline)."""
+        daily_users = [str(u) for u in self._ctx.user_ids]
+        wtd = self._weekly_td(self._ctx.task, self._ctx.split)
+        preds = self._probe.predict(self._wbm.encode_cohort(self._ctx.task, wtd))
+        by_user = dict(zip((str(u) for u in wtd.user_ids), preds))
+        out = np.full(len(daily_users), np.nan, dtype=np.float64)
+        for i, u in enumerate(daily_users):
+            if u in by_user:
+                out[i] = by_user[u]
+        return out
+
+
 def _main() -> None:
     import argparse
 

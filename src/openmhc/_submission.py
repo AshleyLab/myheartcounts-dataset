@@ -100,21 +100,21 @@ def prediction_to_submission_yaml(
 ) -> str:
     """Render the Track 1 (outcome prediction) leaderboard submission packet.
 
-    Same shape as :func:`imputation_to_submission_yaml`. The Track 1 subdir
-    name and substrate format are still being finalized, so the rendered packet
-    carries a NOTE flagging that; maintainers compute skill / fair-skill / rank
-    vs. the Linear baseline during ingestion.
+    Same shape as :func:`imputation_to_submission_yaml`. The Track-1 substrate is
+    the per-user prediction-pair frame (``<method>.parquet`` from
+    ``evaluate_prediction(output_dir=...)``); maintainers recompute skill /
+    fair-skill / rank vs. the Linear baseline from it during ingestion.
 
     Args, Returns: see :func:`imputation_to_submission_yaml`. ``track`` selects
     the Static vs. Longitudinal sub-track label.
     """
     return _render_packet(
         track=track,
-        track_subdir="prediction",
-        subtrack="other",
-        subtrack_options="finalized in the per-track update",
-        substrate_hint="per-user substrate from the eval (format being finalized)",
-        subdir_finalized=False,
+        track_subdir="downstream",
+        subtrack="static",
+        subtrack_options="static | longitudinal",
+        substrate_hint="per-user prediction pairs (<method>.parquet from output_dir=)",
+        subdir_finalized=True,
         method_name=method_name,
         method_category=method_category,
         submitter_team=submitter_team,

@@ -44,11 +44,11 @@ def _lsm2(method: MethodConfig, data: DataConfig):
 
 
 def _wbm(method: MethodConfig, data: DataConfig):
-    from downstream_evaluation.models.hybrid_wbm import Hybrid
+    from downstream_evaluation.models.wbm import WBMProbe
 
     if method.checkpoint:
-        return Hybrid(data.data_dir, checkpoint=method.checkpoint), None
-    return Hybrid(data.data_dir), None
+        return WBMProbe(data.data_dir, checkpoint=method.checkpoint), None
+    return WBMProbe(data.data_dir), None
 
 
 def _toto(method: MethodConfig, data: DataConfig):

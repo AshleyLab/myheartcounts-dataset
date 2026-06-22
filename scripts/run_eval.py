@@ -16,11 +16,11 @@ from openmhc._constants import BENCHMARK_TASKS
 def build_model(method: str, data_dir: str):
     """Instantiate a bundled baseline by name."""
     if method in ("wbm", "hybrid"):
-        from downstream_evaluation.models.hybrid_wbm import Hybrid
+        from downstream_evaluation.models.wbm import WBMProbe
         # WBM_CHECKPOINT overrides the default wandb SSL ref with a local .ckpt path
         # (e.g. the wandb-cached copy) so the run needs no network on the compute node.
         ckpt = os.environ.get("WBM_CHECKPOINT")
-        return Hybrid(data_dir, checkpoint=ckpt) if ckpt else Hybrid(data_dir)
+        return WBMProbe(data_dir, checkpoint=ckpt) if ckpt else WBMProbe(data_dir)
     if method == "linear":
         from downstream_evaluation.models.linear import Linear
         return Linear(data_dir=data_dir)
@@ -52,8 +52,9 @@ def main() -> None:
     """Run ``METHOD`` through ``evaluate_prediction``; write ``OUT_CSV`` (+ optional preds).
 
     Env vars: ``METHOD`` (default ``linear``), ``VERSION`` (``xs``|``full``, default
-    ``full``), ``MHC_DATA_DIR``, ``PREDICTIONS_DIR`` (optional), ``OUT_CSV`` (default
-    ``eval_<METHOD>.csv``).
+    ``full``), ``MHC_DATA_DIR``, ``PREDICTIONS_DIR`` (optional), ``OUTPUT_DIR``
+    (optional — write the leaderboard substrate ``<OUTPUT_DIR>/<METHOD>.parquet``),
+    ``OUT_CSV`` (default ``eval_<METHOD>.csv``).
     """
     import openmhc
     from openmhc._evaluate import _DatasetPaths
@@ -65,17 +66,27 @@ def main() -> None:
 
     # PREDICTIONS_DIR (optional): emit per-(method, task) test predictions +
     # _subgroups.json for the paper-metrics bootstrap (skill / rank / fairness CIs).
+    # OUTPUT_DIR (optional): emit the per-method leaderboard substrate
+    # <OUTPUT_DIR>/<METHOD>.parquet (raw per-user pairs) + meta sidecar for HF upload.
+    output_dir = os.environ.get("OUTPUT_DIR")
     results = openmhc.evaluate_prediction(
         model,
         version=version,
         tasks=BENCHMARK_TASKS,
         data_dir=str(paths.root),
         predictions_dir=os.environ.get("PREDICTIONS_DIR"),
+        output_dir=output_dir,
+        method_name=method if output_dir else None,
     )
 
     out = os.environ.get("OUT_CSV", f"eval_{method}.csv")
     results.to_csv(out)
     print(f"wrote {out}: {len(results.records)} records")
+    if output_dir:
+        print(
+            f"wrote {output_dir}/{method}.parquet "
+            f"(overall_fallback_rate={results.overall_fallback_rate:.4f})"
+        )
 
 
 if __name__ == "__main__":

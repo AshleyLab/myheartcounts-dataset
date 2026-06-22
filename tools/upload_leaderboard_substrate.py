@@ -2,9 +2,16 @@
 
 Creates the HF dataset repo if it doesn't exist (private by default), then
 uploads the method's substrate to ``<track>/<method>.parquet``. When any of
-``--name`` / ``--type`` / ``--submitter`` is given, also writes a
-``<track>/<method>.meta.json`` display sidecar (name, type, submitter) that the
-leaderboard reads to render the row.
+``--name`` / ``--type`` / ``--submitter`` / ``--subtrack`` is given (or a
+fallback rate is available), also writes a ``<track>/<method>.meta.json`` display
+sidecar (name, type, submitter, subtrack) that the leaderboard reads to render
+the row. ``--fallback-rate`` records ``overall_fallback_rate`` in that sidecar —
+the fraction of predictions the model left non-finite and the harness replaced
+with the track baseline (issue #39); when omitted it is read from the substrate's
+own ``<parquet>.meta.json`` provenance sidecar if present.
+
+The ``method`` column is validated against the upload name for ``imputation`` and
+``downstream`` (both group by that column); other tracks skip the check.
 
 Requires the ``[hf]`` extra (``pip install -e ".[hf]"``) for the
 ``huggingface_hub`` dependency. Authentication uses the standard
@@ -79,6 +86,28 @@ def validate_method_column(parquet_path: Path, method: str) -> None:
         )
 
 
+def resolve_fallback_rate(parquet_path: Path, explicit: float | None) -> tuple[float | None, str]:
+    """Resolve the ``overall_fallback_rate`` to record in the display sidecar.
+
+    Precedence (issue #39): an explicit ``--fallback-rate`` wins; otherwise read
+    it from the substrate's own ``<parquet>.meta.json`` provenance sidecar (which
+    ``evaluate_prediction``/``evaluate_*`` write next to the parquet). Returns
+    ``(rate, source)``; ``rate`` is ``None`` when neither supplies one, so the
+    leaderboard shows "n/a" rather than a fabricated number.
+    """
+    if explicit is not None:
+        return explicit, "--fallback-rate"
+    sidecar = Path(f"{parquet_path}.meta.json")
+    if sidecar.exists():
+        try:
+            val = json.loads(sidecar.read_text()).get("overall_fallback_rate")
+        except (json.JSONDecodeError, OSError):
+            val = None
+        if isinstance(val, (int, float)):
+            return float(val), sidecar.name
+    return None, ""
+
+
 def main() -> None:
     """Upload one method substrate parquet to the leaderboard dataset."""
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -102,10 +131,22 @@ def main() -> None:
         default=None,
         help="Sub-track for grouping: 'single-day' or 'long-context' (sidecar).",
     )
+    p.add_argument(
+        "--fallback-rate",
+        type=float,
+        default=None,
+        help=(
+            "overall_fallback_rate to record in the <method>.meta.json sidecar "
+            "(issue #39) — the fraction of scored predictions the model left "
+            "non-finite and the harness replaced with the track baseline. Read it "
+            "from Results.overall_fallback_rate. If omitted, the substrate's "
+            "<parquet>.meta.json provenance sidecar is used when present."
+        ),
+    )
     args = p.parse_args()
 
     src = find_parquet(args.dir, args.method)
-    if args.track == "imputation":
+    if args.track in ("imputation", "downstream"):
         validate_method_column(src, args.method)
     dest = f"{args.track}/{args.method}.parquet"
 
@@ -121,13 +162,18 @@ def main() -> None:
     print(f"Uploaded {src}  ->  {args.repo_id}:{dest}")
     print(f"  https://huggingface.co/datasets/{args.repo_id}/blob/main/{dest}")
 
-    if args.name or args.mtype or args.submitter or args.subtrack:
+    fallback_rate, fb_source = resolve_fallback_rate(src, args.fallback_rate)
+
+    if args.name or args.mtype or args.submitter or args.subtrack or fallback_rate is not None:
         meta = {
             "display_name": args.name or args.method,
             "type": args.mtype or "—",
             "submitter": args.submitter or "—",
             "subtrack": args.subtrack or "other",
         }
+        if fallback_rate is not None:
+            meta["overall_fallback_rate"] = fallback_rate
+            print(f"  recording overall_fallback_rate={fallback_rate:.4f} (from {fb_source})")
         meta_dest = f"{args.track}/{args.method}.meta.json"
         api.upload_file(
             path_or_fileobj=io.BytesIO(json.dumps(meta, indent=2).encode("utf-8")),

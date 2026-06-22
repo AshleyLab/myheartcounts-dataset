@@ -86,6 +86,9 @@ def evaluate_prediction(
     data_dir: str | Path | None = None,
     seed: int = 42,
     predictions_dir: str | Path | None = None,
+    *,
+    output_dir: str | Path | None = None,
+    method_name: str | None = None,
 ) -> PredictionResults:
     """Run health-prediction evaluation with a custom model.
 
@@ -104,9 +107,19 @@ def evaluate_prediction(
         seed: Random seed for classifiers and splits.
         predictions_dir: when set, write per-(method, task) test predictions +
             a shared ``_subgroups.json`` here, for the paper-metrics bootstrap.
+        output_dir: when set, write the per-method leaderboard substrate
+            ``<output_dir>/<method>.parquet`` (raw per-user prediction pairs,
+            subgroup-expanded) + a ``.meta.json`` sidecar, and populate
+            ``PredictionResults.per_user_pairs``. This is the file you upload to
+            the leaderboard; the maintainers recompute skill / rank / fairness
+            from it vs. the Linear baseline.
+        method_name: value for the substrate's ``method`` column and the
+            ``<method>.parquet`` filename (the leaderboard groups by it; the
+            upload filename must match). Defaults to ``model.name``.
 
     Returns:
-        PredictionResults with per-task metrics.
+        PredictionResults with per-task metrics; ``per_user_pairs`` is populated
+        when ``output_dir`` is set.
     """
     from openmhc._evaluate import evaluate_prediction as _eval
 
@@ -117,6 +130,8 @@ def evaluate_prediction(
         data_dir=data_dir,
         seed=seed,
         predictions_dir=predictions_dir,
+        output_dir=output_dir,
+        method_name=method_name,
     )
 
 
