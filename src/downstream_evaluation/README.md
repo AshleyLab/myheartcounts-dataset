@@ -203,7 +203,7 @@ Channels 0-18 are sensor values (NaN at missing), 19-37 the missingness mask. It
 
 **Memory.** Why iterate instead of stacking? For `hourly` specs the whole cohort is small (a few GB), so `data` is just a list. For `minute` (and other large) specs the full cohort is hundreds of GB — far past RAM — so the benchmark *streams* it: `data` is a `CohortView` that hands you one participant at a time and never holds the whole cohort at once. Peak memory then stays at roughly one participant (plus whatever you accumulate), **independent of cohort size** — as long as you iterate and don't stack the raw `data`.
 
-**What you implement:** 
+**What you implement:**
 
 `predict(data)` *(required)* — return one prediction per participant, in `data` order. What to return depends on the task:
 

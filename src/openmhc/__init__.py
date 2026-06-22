@@ -142,7 +142,7 @@ def evaluate_imputation(
     Args:
         imputer: Object implementing the Imputer protocol.
         version: ``"full"`` (11,894-user leaderboard split) or ``"xs"``
-            (593-user reviewer subset). Required — cross-checked against
+            (593-user quickstart subset). Required — cross-checked against
             the dataset root's ``dataset_version.json`` marker.
         masking_scenarios: "all" to run all 6 scenarios, or a list of
             scenario names.

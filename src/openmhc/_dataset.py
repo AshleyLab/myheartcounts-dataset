@@ -6,8 +6,8 @@ the DOI or directory layout.
 
 Two versions are available:
 
-- ``"xs"`` — 593-user subset suitable for reviewers and quickstart notebooks (~1.9 GB)
-- ``"full"`` — full 11,894-user release matching the paper (~38 GB, not yet published)
+- ``"xs"`` — 593-user subset suitable for quickstarts and smoke tests (~1.9 GB)
+- ``"full"`` — full 11,894-user release (~38 GB, not yet published)
 
 Large benchmark payloads are always resolved from one explicit dataset root:
 
@@ -191,8 +191,8 @@ def download_dataset(
     ``DATAVERSE_API_TOKEN`` environment variable.
 
     Args:
-        version: ``"xs"`` (593-user reviewer subset, ~1.9 GB) or
-            ``"full"`` (11,894-user paper release, ~38 GB).
+        version: ``"xs"`` (593-user quickstart subset, ~1.9 GB) or
+            ``"full"`` (11,894-user release, ~38 GB).
         dest: Where to put the data. Must be provided explicitly here or via
             ``MHC_DATA_DIR``.
         api_token: Optional Dataverse API token for restricted datasets.

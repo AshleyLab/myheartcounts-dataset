@@ -300,7 +300,7 @@ def evaluate_prediction(
             (channels 0-18 raw values with NaN at missing, 19-37 the mask).
             Encoder-style models run the uniform :class:`~openmhc.LinearProbe`
             inside ``fit`` / ``predict``; end-to-end models own their head.
-        version: ``"xs"`` (593-user reviewer subset) or ``"full"``
+        version: ``"xs"`` (593-user quickstart subset) or ``"full"``
             (11,894-user leaderboard split). Required — cross-checked against
             the dataset root's ``dataset_version.json`` marker.
         tasks: "all" to run the 32 benchmark tasks, or a list of task name strings.
@@ -424,7 +424,7 @@ def evaluate_imputation(
             per-window calendar-day deltas (``-1`` for padded slots) for
             calendar-aware models (e.g. RoPE day embeddings).
         version: ``"full"`` (11,894-user leaderboard split) or ``"xs"``
-            (593-user reviewer subset). Required — cross-checked against
+            (593-user quickstart subset). Required — cross-checked against
             the dataset root's ``dataset_version.json`` marker.
         masking_scenarios: "all" to run all 6 scenarios, or a list of
             scenario name strings.

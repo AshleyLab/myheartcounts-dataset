@@ -172,7 +172,7 @@ class Imputer(Protocol):
         ...     def __init__(self):
         ...         import openmhc
         ...         data_sum, data_count = 0.0, 0
-        ...         for data, mask in openmhc.iter_train_data():
+        ...         for data, mask in openmhc.iter_train_data(version="xs"):
         ...             obs = (mask > 0.5) & np.isfinite(data)
         ...             data_sum = data_sum + np.where(obs, data, 0.0).sum(axis=(0, 2))
         ...             data_count = data_count + obs.sum(axis=(0, 2))

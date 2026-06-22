@@ -14,9 +14,10 @@ Most users should read **Part 1** and call `openmhc.evaluate_imputation` — the
 import openmhc
 from openmhc.imputers import MeanImputer
 
-imputer = MeanImputer()                       # fits itself on the train split in __init__
+imputer = MeanImputer(version="xs")           # fits itself on the train split in __init__
 results = openmhc.evaluate_imputation(
     imputer,
+    version="xs",
     masking_scenarios="all",                   # or a list of scenario names
     seed=42,
 )
@@ -24,7 +25,7 @@ print(results.summary())                       # one row per (scenario, split, c
 results.to_csv("imputation_results.csv")
 ```
 
-`evaluate_imputation(imputer, masking_scenarios="all", data_dir=None, seed=42)` returns an [`ImputationResults`](../openmhc/_results.py) instance. Large benchmark payloads are resolved from `data_dir` first, then `MHC_DATA_DIR`. If neither is provided, the API raises instead of silently falling back to `~/.cache/openmhc/data`.
+`evaluate_imputation(imputer, version, masking_scenarios="all", data_dir=None, seed=42, *, n_days=1, max_samples=None, num_workers=0, num_eval_workers=1, pin_memory=False, output_dir=None, baseline_errors=None, keep_pairs=False, method_name="custom")` returns an [`ImputationResults`](../openmhc/_results.py) instance. Large benchmark payloads are resolved from `data_dir` first, then `MHC_DATA_DIR`. If neither is provided, the API raises instead of silently falling back to `~/.cache/openmhc/data`. The required `version` argument is cross-checked against the dataset root's `dataset_version.json` marker.
 
 ### The `Imputer` protocol
 
@@ -40,10 +41,13 @@ def impute(
     sample_indices: np.ndarray | None = None,   # (N,) split-local indices
     user_ids: list[str] | None = None,
     dates: list[str] | None = None,             # ISO "YYYY-MM-DD"
-) -> np.ndarray:                  # (N, 19, 1440) float32, imputed at target_mask == 1
+    day_offsets: np.ndarray | None = None,      # (N, n_days), only for n_days > 1
+) -> np.ndarray:                  # (N, 19, T) float32, imputed at target_mask == 1
 ```
 
-The optional keyword-only arguments are introspected from your signature ([adapter at `src/openmhc/_evaluate.py:615`](../openmhc/_evaluate.py)): three-arg implementations work unchanged, and personalized methods that declare `user_ids` / `dates` / `sample_indices` get them forwarded automatically. The harness never calls `fit` or any setup hook — do all setup in `__init__`.
+For daily evaluation, `T=1440`. For weekly or other multi-day evaluation, pass `n_days=2` through `n_days=7`; the imputer receives `T = n_days * 1440`, and implementations that declare `day_offsets` receive the per-window calendar-day offsets (`-1` for padded day slots).
+
+The optional keyword-only arguments are introspected from your signature ([adapter at `src/openmhc/_evaluate.py`](../openmhc/_evaluate.py)): three-arg implementations work unchanged, and personalized or calendar-aware methods that declare `user_ids` / `dates` / `sample_indices` / `day_offsets` get them forwarded automatically. The harness never calls a user `fit` method or setup hook — do all setup in `__init__`.
 
 ### Built-in reference imputers (`openmhc.imputers`)
 
@@ -149,7 +153,7 @@ python scripts/paper_results/imputation/bootstrap_imputation_draws.py \
 - `.summary()` — wide DataFrame, one row per `(scenario, split, channel_group)` with metrics as columns. Filters to the `continuous` / `binary` aggregate groups.
 - `.to_dataframe()` — long-format DataFrame including per-channel rows.
 - `.to_csv(path)` / `.to_json(path)` — dump full results.
-- `.to_submission_yaml(method_name=..., submitter_team=..., code_url=...)` — render a paste-ready leaderboard submission.
+- `.to_submission_yaml(method_name=..., submitter_team=..., code_url=...)` — render the HF-dataset submission packet (`meta.json` sidecar + PR file checklist).
 
 ### Custom imputers
 
@@ -158,20 +162,20 @@ If you need access to the training data (to compute statistics, fit a model, etc
 ```python
 import openmhc
 
-for data, mask in openmhc.iter_train_data():
+for data, mask in openmhc.iter_train_data(version="xs"):
     # data: (B, 19, 1440) float32, NaN at missing positions
     # mask: (B, 19, 1440) float32, 1 = observed
     ...
 
 # Or any split:
-for data, mask in openmhc.iter_split_data("val"):
+for data, mask in openmhc.iter_split_data("val", version="xs"):
     ...
 
 # Lightweight metadata only (no tensors loaded):
-meta = openmhc.load_sample_metadata("test")  # [{"sample_idx": 0, "user_id": ..., "date": ...}, ...]
+meta = openmhc.load_sample_metadata("test", version="xs")  # [{"sample_idx": 0, "user_id": ..., "date": ...}, ...]
 ```
 
-All of these accept `data_dir=` / `seed=` overrides; defaults match `evaluate_imputation`.
+All of these require `version="xs"` or `version="full"` and accept `data_dir=` / `seed=` overrides; defaults match `evaluate_imputation`.
 
 ---
 
@@ -293,7 +297,7 @@ Three edits:
    ```
 
 Run with `mhc-impute-eval method=my_method`. The public-API path
-(`openmhc.evaluate_imputation(MyImputer())`) keeps working in parallel — the
+(`openmhc.evaluate_imputation(MyImputer(), version="xs")`) keeps working in parallel — the
 imputer class itself does not need to know about Hydra.
 
 ---

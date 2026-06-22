@@ -468,4 +468,3 @@ class GRUD:
             preds = preds * sd + mu  # reverse the train-split z-score
         pred_by_user = dict(zip(ds.user_ids, preds))
         return np.array([pred_by_user.get(str(u), 0.0) for u in self._ctx.user_ids], dtype=np.float64)
-
