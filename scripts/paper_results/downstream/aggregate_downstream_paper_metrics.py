@@ -2,27 +2,27 @@
 r"""Phase 2 of the downstream paper-metrics bootstrap.
 
 Reads ``bootstrap_draws.parquet`` produced by phase 1
-(``bootstrap_downstream_draws.py``) and emits the five sidecar CSVs that carry
+(``bootstrap_downstream_draws.py``) and emits the four sidecar CSVs that carry
 mean / SE / 95 % CI for the headline metrics:
 
 * ``skill_scores_bootstrap.csv``            — per method × scope (Overall + per-domain)
 * ``avg_rankings_bootstrap.csv``            — per method × scope
 * ``fairness_subgroup_scores_bootstrap.csv``— per method × demographic_attr × subgroup
-* ``fairness_summary_bootstrap.csv``        — per method: S_overall, disparity, fairness-adjusted
 * ``task_metrics_bootstrap.csv``            — per method × task: the headline metric
   (auprc / spearman_r / pearson_r) with full-cohort point + SE + percentile CI
 
-Phase 2 is **fast** — re-run with a different subset of disparity functions, λ,
-or clip bounds without re-resampling.
+The headline fairness metric (the disparity-ratio Fairness Skill Score) is
+produced separately by ``aggregate_fairness_skill_score.py``.
+
+Phase 2 is **fast** — re-run with different clip bounds or CI level without
+re-resampling.
 
 Usage::
 
     PYTHONPATH=src python scripts/paper_results/downstream/aggregate_downstream_paper_metrics.py \
         --draws results/paper/bootstrap_draws.parquet \
         --output-dir results/paper/ \
-        --baseline-method linear \
-        --disparity-fn max_minus_min --disparity-fn worst_group \
-        --lambda-fairness 0.5
+        --baseline-method linear
 """
 
 from __future__ import annotations
@@ -38,13 +38,7 @@ from downstream_evaluation.evaluation.bootstrap_skill_rank import (
     POINT_DRAW,
     _summarise,
     aggregate_skill_rank_fairness,
-    align_across_methods,
-    load_method_predictions,
     read_draws_parquet,
-)
-from downstream_evaluation.evaluation.disparity_metrics import (
-    DISPARITY_FUNCTIONS,
-    FAIRNESS_COMBINE,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
@@ -117,47 +111,9 @@ def main() -> int:
     )
     p.add_argument("--clip-lower", type=float, default=1e-2)
     p.add_argument("--clip-upper", type=float, default=100.0)
-    p.add_argument("--lambda-fairness", type=float, default=0.5)
-    p.add_argument(
-        "--disparity-fn",
-        action="append",
-        default=None,
-        choices=sorted(DISPARITY_FUNCTIONS.keys()),
-        help="Named disparity function (repeatable). Default: all registered.",
-    )
-    p.add_argument(
-        "--fairness-combine", default="linear_penalty", choices=sorted(FAIRNESS_COMBINE.keys())
-    )
     p.add_argument("--ci-level", type=float, default=0.95)
     p.add_argument("--method-filter", nargs="+", default=None, help="Restrict to these methods.")
-    p.add_argument(
-        "--bca-skill-rank",
-        action="store_true",
-        help="Also emit a BCa CI (bca_lo/bca_hi) for skill_scores + avg_rankings via the "
-        "leave-one-user-out jackknife. Needs --predictions_dir/--csvs_dir. Off by default "
-        "(skill/rank are near-unbiased, so the percentile CI normally suffices).",
-    )
-    p.add_argument(
-        "--predictions_dir",
-        type=Path,
-        default=None,
-        help="Per-(method, task) test.parquet root (required with --bca-skill-rank).",
-    )
-    p.add_argument(
-        "--csvs_dir",
-        type=Path,
-        default=None,
-        help="Dir with eval_*.csv for task_type lookup (required with --bca-skill-rank).",
-    )
-    p.add_argument(
-        "--methods",
-        nargs="+",
-        default=None,
-        help="Methods to load for the jackknife (default: every method in the draws).",
-    )
     args = p.parse_args()
-    if args.bca_skill_rank and (args.predictions_dir is None or args.csvs_dir is None):
-        p.error("--bca-skill-rank requires --predictions_dir and --csvs_dir")
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     df, meta = read_draws_parquet(args.draws)
@@ -173,35 +129,12 @@ def main() -> int:
         df = df[df["method"].isin(args.method_filter)].copy()
         log.info("After --method-filter: %d rows", len(df))
 
-    if args.disparity_fn:
-        disparity_fns = {n: DISPARITY_FUNCTIONS[n].fn for n in args.disparity_fn}
-    else:
-        disparity_fns = {n: spec.fn for n, spec in DISPARITY_FUNCTIONS.items()}
-    log.info(
-        "Disparities: %s | combine=%s lambda=%s",
-        sorted(disparity_fns),
-        args.fairness_combine,
-        args.lambda_fairness,
-    )
-
-    aligned = None
-    if args.bca_skill_rank:
-        load_methods = args.methods or sorted(df["method"].unique())
-        aligned = align_across_methods(
-            {m: load_method_predictions(args.predictions_dir, m, args.csvs_dir) for m in load_methods}
-        )
-
     tables = aggregate_skill_rank_fairness(
         df,
         baseline=args.baseline_method,
         clip_lower=args.clip_lower,
         clip_upper=args.clip_upper,
-        lambda_fairness=args.lambda_fairness,
-        disparity_fns=disparity_fns,
-        fairness_combine_name=args.fairness_combine,
         ci_level=args.ci_level,
-        aligned=aligned,
-        bca_skill_rank=args.bca_skill_rank,
     )
     tables["task_metrics"] = summarise_task_metrics(df, ci_level=args.ci_level)
 
@@ -209,7 +142,6 @@ def main() -> int:
         "skill_scores": args.output_dir / "skill_scores_bootstrap.csv",
         "avg_rankings": args.output_dir / "avg_rankings_bootstrap.csv",
         "fairness_subgroup_scores": args.output_dir / "fairness_subgroup_scores_bootstrap.csv",
-        "fairness_summary": args.output_dir / "fairness_summary_bootstrap.csv",
         "task_metrics": args.output_dir / "task_metrics_bootstrap.csv",
     }
     for key, path in paths.items():

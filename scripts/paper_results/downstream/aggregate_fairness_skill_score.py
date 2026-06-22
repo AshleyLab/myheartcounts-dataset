@@ -9,7 +9,8 @@ with mean / SE / percentile CI across draws.
 Formulation (disparity-ratio vs the baseline, mirrors the skill-score machinery):
 
     For each task r and attribute G:
-        D_{r,j} = max_g E_{r,j}^{(g)} − min_g E_{r,j}^{(g)}   (model j's subgroup spread)
+        D_{r,j} = (2 / |G|(|G|−1)) · Σ_{g<g'} |E_{r,j}^{(g)} − E_{r,j}^{(g')}|
+                  (model j's mean absolute pairwise subgroup difference, MAPD)
         D_{r,b} = same for the baseline; drop r when D_{r,b} ≤ 0 or NaN.
         ratio_r = clip(D_{r,j} / D_{r,b}, ℓ, u)
     Per attribute:  S^{(G)}_j = 1 − GeometricMean_r(ratio_r)
@@ -124,15 +125,6 @@ def main() -> int:
         "--output", type=Path, required=True, help="Output CSV (fairness_skill_score_bootstrap.csv)"
     )
     p.add_argument("--baseline-method", default="linear")
-    p.add_argument(
-        "--disparity-mode",
-        choices=("maxmin", "mean_pairwise"),
-        default="maxmin",
-        help="Subgroup disparity D: 'maxmin' (worst-case max−min = max pairwise |ΔE|, "
-        "default/current) or 'mean_pairwise' (mean unordered-pairwise |ΔE| — the Gini "
-        "mean difference). Threaded into both the draws path and the BCa jackknife so "
-        "they stay consistent.",
-    )
     p.add_argument("--clip-lower", type=float, default=1e-2)
     p.add_argument("--clip-upper", type=float, default=100.0)
     p.add_argument("--ci-level", type=float, default=0.95)
@@ -181,9 +173,9 @@ def main() -> int:
     for (attr, b), g in sub.groupby(["subgroup_attr", "draw"]):
         # Disparity-ratio fairness skill per (task, method), reduced via the same
         # function the BCa jackknife uses so the draws path and the jackknife stay
-        # consistent by construction (and the disparity mode applies to both).
+        # consistent by construction.
         scores = _attr_disparity_ratio_skill(
-            g, methods, base, args.clip_lower, args.clip_upper, disparity=args.disparity_mode
+            g, methods, base, args.clip_lower, args.clip_upper
         )
         for m, s in scores.items():
             sg[m][attr][int(b)] = s
@@ -230,7 +222,6 @@ def main() -> int:
                 base,
                 clip_lower=args.clip_lower,
                 clip_upper=args.clip_upper,
-                disparity=args.disparity_mode,
             )
             _warn_on_point_drift(jack_point, point_by_key)
 

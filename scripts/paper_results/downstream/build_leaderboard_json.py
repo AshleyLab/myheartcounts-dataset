@@ -55,23 +55,23 @@ DOMAIN_FIELD: dict[str, str] = {
 }
 
 
-def _load_scope(path: Path, scope: str) -> dict[str, float]:
+def _load_scope(path: Path, scope: str, value_col: str = "point") -> dict[str, float]:
     out: dict[str, float] = {}
     with path.open() as f:
         for r in csv.DictReader(f):
             if r["scope"] == scope:
-                out[r["method"]] = float(r["point"])
+                out[r["method"]] = float(r[value_col])
     return out
 
 
-def _load_domains(path: Path) -> dict[str, dict[str, float]]:
+def _load_domains(path: Path, value_col: str = "point") -> dict[str, dict[str, float]]:
     out: dict[str, dict[str, float]] = {}
     with path.open() as f:
         for r in csv.DictReader(f):
             field = DOMAIN_FIELD.get(r["scope"])
             if field is None:
                 continue
-            out.setdefault(r["method"], {})[field] = float(r["point"])
+            out.setdefault(r["method"], {})[field] = float(r[value_col])
     return out
 
 
@@ -134,10 +134,12 @@ def main() -> None:
 
     current = json.loads(args.current.read_text())
     paper_dir: Path = args.paper_dir
-    skill = _load_scope(paper_dir / "skill_scores_bootstrap.csv", "Overall")
-    rank = _load_scope(paper_dir / "avg_rankings_bootstrap.csv", "Overall")
-    fair = _load_scope(paper_dir / "fairness_skill_score_bootstrap.csv", "overall")
-    doms = _load_domains(paper_dir / "skill_scores_bootstrap.csv")
+    # Match imputation/forecasting: skill score + average rank report the bootstrap
+    # ``mean``; the BCa-corrected fairness skill score reports the deterministic ``point``.
+    skill = _load_scope(paper_dir / "skill_scores_bootstrap.csv", "Overall", "mean")
+    rank = _load_scope(paper_dir / "avg_rankings_bootstrap.csv", "Overall", "mean")
+    fair = _load_scope(paper_dir / "fairness_skill_score_bootstrap.csv", "overall", "point")
+    doms = _load_domains(paper_dir / "skill_scores_bootstrap.csv", "mean")
 
     missing = [k for k, _, _ in METHODS if k not in skill]
     if missing:
