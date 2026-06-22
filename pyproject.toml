@@ -20,6 +20,7 @@ dependencies = [
   "mord",
   "numpy",
   "pandas",
+  "polars",
   "pyarrow",
   "scikit-learn",
   "scipy",
@@ -75,10 +76,10 @@ mhc-impute-eval = "imputation_evaluation.hydra.cli:main"
 mhc-impute-train = "imputation_training.hydra.cli:main"
 mhc-forecast-eval = "forecasting_evaluation.hydra.cli:main"
 mhc-forecast-train = "forecasting_training.hydra.cli:main"
-# mhc-downstream-eval is deferred: the public ``downstream_evaluation`` package
-# ships configs + ``create_model`` but no runner yet (orchestration lives in
-# the private repo). The Hydra pattern from the other two tracks is ready
-# to drop in once a public ``run_eval`` exists.
+# Downstream (health-prediction) Hydra CLI — the prediction-track twin of
+# mhc-impute-eval / mhc-forecast-eval. Requires the [hydra] extra.
+mhc-downstream-eval = "downstream_evaluation.hydra.cli:main"
+
 
 [tool.setuptools]
 package-dir = {"" = "src"}
@@ -95,6 +96,7 @@ include = [
   "data*",
   "devices*",
   "downstream_evaluation*",
+  "eval_hydra*",
   "imputation_evaluation*",
   "imputation_training*",
   "forecasting_evaluation*",

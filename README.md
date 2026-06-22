@@ -88,24 +88,47 @@ payloads from `data_dir=` or `MHC_DATA_DIR`.
 
 ### Outcome Prediction
 
-Implement `encode(weekly_tensors) -> embeddings`, where `weekly_tensors` has
-shape `(B, 168, 38)`. The first 19 channels are hourly sensor values and the
-last 19 channels are missingness masks.
+Implement a `Method` with `predict(data)` and, for trainable methods,
+`fit(data, labels, task_type)`. Each `data` item is one participant's eligible
+daily segments with shape `(n_days, 24, 38)`: channels 0-18 are raw sensor
+values with NaN at missing positions, and channels 19-37 are missingness masks.
 
 ```python
 import numpy as np
 import openmhc
 
+class MeanPoolMethod:
+    def _encode(self, data: np.ndarray) -> np.ndarray:
+        # data: (n_days, 24, 38) — one participant's eligible days
+        # (channels 0-18 raw values with NaN at missing, 19-37 the mask).
+        x = np.nan_to_num(data).reshape(-1, 38)
+        return np.concatenate([x.mean(0), x.std(0)])
 
-class MeanPoolEncoder:
-    def encode(self, weekly_tensors: np.ndarray) -> np.ndarray:
-        return weekly_tensors[:, :, :19].mean(axis=1).astype(np.float32)
+    def fit(self, data, labels, task_type):
+        emb = np.stack([self._encode(x) for x in data])
+        self._probe = openmhc.LinearProbe(task_type).fit(emb, labels)
 
+    def predict(self, data):
+        return self._probe.predict(np.stack([self._encode(x) for x in data]))
 
-results = openmhc.evaluate_prediction(MeanPoolEncoder(), version="xs")
+results = openmhc.evaluate_prediction(MeanPoolMethod(), version="xs")
 print(results.summary())
-print("global score:", results.global_score)
 ```
+
+`predict` is the only required method; `fit` is optional — a zero-shot / pretrained
+model omits it and is scored as-is.
+
+For reproducible runs (config provenance, sweeps, cluster dispatch), the
+`mhc-downstream-eval` Hydra CLI runs the bundled baselines from composable configs
+at `configs/downstream/`:
+
+```bash
+mhc-downstream-eval method=xgboost
+mhc-downstream-eval --multirun method=linear,mae,xgboost
+```
+
+The full Track-1 guide (data contract, baselines, CLI, paper reproduction) is in
+[`src/downstream_evaluation/README.md`](src/downstream_evaluation/README.md).
 
 ### Imputation
 
@@ -214,7 +237,7 @@ The main package exports:
 
 | API | Purpose |
 |---|---|
-| `openmhc.evaluate_prediction` | Evaluate an `Encoder` on outcome-prediction tasks |
+| `openmhc.evaluate_prediction` | Evaluate a `Method` on outcome-prediction tasks |
 | `openmhc.evaluate_imputation` | Evaluate an `Imputer` across masking scenarios |
 | `openmhc.evaluate_forecasting` | Evaluate a `Forecaster` on hourly forecasting windows |
 | `openmhc.download_dataset` | Download a public dataset release from Dataverse |

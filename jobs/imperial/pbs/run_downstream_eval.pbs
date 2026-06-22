@@ -1,0 +1,77 @@
+#!/bin/bash
+# Hydra-CLI downstream eval (PBS / CPU) — runs `mhc-downstream-eval` (here as
+# `python -m downstream_evaluation.hydra.cli`, so no install step is required) on
+# a compute node. The composable-config launcher; the prediction-track twin of
+# the imputation branch's SLURM dispatch. Replaces the legacy env-var path in
+# run_eval.pbs (which drives scripts/run_eval.py).
+#
+# Same public-API path either way: the CLI builds the bundled model from the
+# registry and calls openmhc.evaluate_prediction(model) — one engine; the model
+# builds its intermediate from raw on a cache miss (e.g. xgboost regenerates its
+# feature table from daily_hf the first time, ~3 h; later runs load it in minutes).
+#
+# Why a compute node (not login): the hourly DataLoader materializes the
+# daily_hourly_hf cohort (~1.14M samples) into RAM, peaking ~32 GB — above the
+# interactive login cgroup cap (OOM-kills there). CPU methods routed here:
+# linear, xgboost, multirocket, gru_d, toto, chronos2. GPU methods (mae, wbm)
+# use run_downstream_eval_gpu.pbs.
+#
+# Usage (submit from the repo root):
+#   qsub -v METHOD=linear,MHC_DATA_DIR=$HOME/yuze_mhc_ws/data  jobs/imperial/pbs/run_downstream_eval.pbs
+#   qsub -v METHOD=xgboost,MHC_DATA_DIR=$HOME/yuze_mhc_ws/data jobs/imperial/pbs/run_downstream_eval.pbs
+#   # one task + custom results dir (e.g. a smoke run, kept out of results/eval/):
+#   qsub -v METHOD=linear,TASKS=age,MHC_DATA_DIR=$HOME/yuze_mhc_ws/data,RESULTS_DIR=results/eval/_cli_smoke \
+#        jobs/imperial/pbs/run_downstream_eval.pbs
+#   # multiple tasks + export per-(method,task) predictions for the paper bootstrap:
+#   qsub -v METHOD=xgboost,TASKS="age,Diabetes",MHC_DATA_DIR=$HOME/yuze_mhc_ws/data,PREDICTIONS_DIR=results/eval/predictions \
+#        jobs/imperial/pbs/run_downstream_eval.pbs
+#
+#PBS -N downstream_eval
+#PBS -l select=1:ncpus=16:mem=96gb
+#PBS -l walltime=06:00:00
+#PBS -j oe
+#PBS -o logs/
+
+set -eo pipefail
+
+cd "${PBS_O_WORKDIR:-.}"
+mkdir -p logs
+echo "=== downstream eval (PBS/CPU, Hydra CLI): METHOD=${METHOD:-linear} ==="
+echo "Node: $(hostname) | Job: ${PBS_JOBID:-local} | PWD: $(pwd) | Date: $(date)"
+
+# -- conda env (py310; no GPU needed for these CPU methods) --
+source "$HOME/miniforge3/bin/activate" py310
+python -V
+
+export PYTHONNOUSERSITE=1
+export PYTHONPATH="$PWD/src:${PYTHONPATH:-}"
+export TMPDIR="${EPHEMERAL:-/tmp}/pbs_${PBS_JOBID:-$$}"
+# Per-job bytecode cache: avoids stale .pyc on the shared filesystem, whose coarse
+# mtimes can defeat Python's source-vs-bytecode check after a code edit.
+export PYTHONPYCACHEPREFIX="$TMPDIR/pycache"
+export HF_HOME="${HF_HOME:-$TMPDIR/hf_cache}"
+# hf-xet's temp/lock file ops fail on the RDS network filesystem; force plain HTTPS.
+export HF_HUB_DISABLE_XET=1
+mkdir -p "$HF_HOME"
+
+export METHOD="${METHOD:-linear}"
+: "${MHC_DATA_DIR:?set MHC_DATA_DIR to the dataset root (e.g. \$HOME/yuze_mhc_ws/data)}"
+
+# Compose the Hydra override list. data.data_dir is passed explicitly so the
+# resolved_config.yaml records the real path (MHC_DATA_DIR also works via the
+# None-resolver). Optional knobs map env -> override; builders ignore the ones
+# they don't read.
+overrides=( "method=${METHOD}" "data.data_dir=${MHC_DATA_DIR}" )
+# TASKS: comma-separated (e.g. "age" or "age,Diabetes"); unset = 32 benchmark tasks.
+# Plain `if` blocks (not `cond && append`) so a false test can't trip `set -e`.
+if [[ -n "${TASKS:-}" ]];            then overrides+=( "evaluation.tasks=[${TASKS}]" ); fi
+if [[ -n "${RESULTS_DIR:-}" ]];      then overrides+=( "output.results_dir=${RESULTS_DIR}" ); fi
+if [[ -n "${PREDICTIONS_DIR:-}" ]];  then overrides+=( "output.predictions_dir=${PREDICTIONS_DIR}" ); fi
+if [[ -n "${CHECKPOINT:-}" ]];       then overrides+=( "method.checkpoint=${CHECKPOINT}" ); fi
+if [[ -n "${FEATURES_DIR:-}" ]];     then overrides+=( "method.features_dir=${FEATURES_DIR}" ); fi
+
+echo "CLI: python -m downstream_evaluation.hydra.cli ${overrides[*]}"
+python -m downstream_evaluation.hydra.cli "${overrides[@]}"
+
+echo "=== downstream eval complete ($METHOD) ==="
+date

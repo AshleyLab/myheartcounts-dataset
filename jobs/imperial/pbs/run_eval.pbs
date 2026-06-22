@@ -1,0 +1,51 @@
+#!/bin/bash
+# Generic from-raw downstream eval (PBS / CPU) — the public-API path.
+#
+# Runs openmhc.evaluate_prediction(model) for the bundled baseline named by METHOD,
+# the same call an external submitter makes. One engine; the model builds its
+# intermediate from raw on a cache miss (e.g. xgboost regenerates its feature table
+# from daily_hf the first time, ~3 h; subsequent runs load the cache in minutes).
+#
+# Usage (submit from the repo root):
+#   qsub -v METHOD=xgboost,MHC_DATA_DIR=$HOME/yuze_mhc_ws/data jobs/imperial/pbs/run_eval.pbs
+#   qsub -v METHOD=linear,MHC_DATA_DIR=$HOME/yuze_mhc_ws/data  jobs/imperial/pbs/run_eval.pbs
+# GPU methods (mae) use run_eval_gpu.pbs instead.
+#PBS -N run_eval
+#PBS -l select=1:ncpus=16:mem=64gb
+#PBS -l walltime=06:00:00
+#PBS -j oe
+#PBS -o logs/
+
+set -eo pipefail
+
+cd "${PBS_O_WORKDIR:-.}"
+mkdir -p logs
+echo "=== downstream eval (PBS/CPU): METHOD=${METHOD:-linear} ==="
+echo "Node: $(hostname) | Job: ${PBS_JOBID:-local} | PWD: $(pwd) | Date: $(date)"
+
+# -- conda env (py310; no GPU needed for xgboost/linear/multirocket) --
+source "$HOME/miniforge3/bin/activate" py310
+python -V
+
+export PYTHONNOUSERSITE=1
+export PYTHONPATH="$PWD/src:${PYTHONPATH:-}"
+export TMPDIR="${EPHEMERAL:-/tmp}/pbs_${PBS_JOBID:-$$}"
+# Per-job bytecode cache: avoids stale .pyc on the shared filesystem, whose coarse
+# mtimes can defeat Python's source-vs-bytecode check after a code edit.
+export PYTHONPYCACHEPREFIX="$TMPDIR/pycache"
+export HF_HOME="${HF_HOME:-$TMPDIR/hf_cache}"
+# hf-xet's temp/lock file ops fail on the RDS network filesystem; force plain HTTPS.
+export HF_HUB_DISABLE_XET=1
+mkdir -p "$HF_HOME"
+
+# Dataset root (daily_hf + labels live under it). NOTE: do NOT set LABEL_*_PATH to
+# src/labels/* — that is a stale 33-task subset; the engine uses the data/labels
+# defaults via openmhc._ensure_labels_env.
+export METHOD="${METHOD:-linear}"
+: "${MHC_DATA_DIR:?set MHC_DATA_DIR to the dataset root (e.g. \$HOME/yuze_mhc_ws/data)}"
+export OUT_CSV="${OUT_CSV:-eval_${METHOD}.csv}"
+
+python scripts/run_eval.py
+
+echo "=== downstream eval complete ($METHOD) -> $OUT_CSV ==="
+date

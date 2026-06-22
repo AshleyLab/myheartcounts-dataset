@@ -5,20 +5,58 @@ Creates sklearn Pipelines with StandardScaler + classifier.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
-import mord
 import numpy as np
-from sklearn.base import BaseEstimator, ClassifierMixin
-from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
-from sklearn.linear_model import ElasticNetCV, LinearRegression, LogisticRegression, RidgeCV
+from sklearn.base import BaseEstimator, ClassifierMixin, TransformerMixin
+from sklearn.linear_model import LinearRegression, LogisticRegression
 from sklearn.pipeline import Pipeline, make_pipeline
 from sklearn.preprocessing import StandardScaler
-from sklearn.svm import SVC, SVR
-from xgboost import XGBClassifier, XGBRegressor
+from xgboost import XGBClassifier
 
 if TYPE_CHECKING:
     from downstream_evaluation.config import ClassifierConfig
+
+logger = logging.getLogger(__name__)
+
+
+class _RankCappedPCA(BaseEstimator, TransformerMixin):
+    """PCA with n_components capped at the data rank min(n_samples, n_features).
+
+    Equals PCA(n_components) when the input has >= n_components dims; only caps for
+    smaller embeddings, which sklearn's PCA would otherwise reject.
+    """
+
+    def __init__(self, n_components: int, whiten: bool = False, random_state=None) -> None:
+        self.n_components = n_components
+        self.whiten = whiten
+        self.random_state = random_state
+
+    def _make_pca(self, X):
+        from sklearn.decomposition import PCA
+
+        n_capped = min(self.n_components, *X.shape)
+        if n_capped < self.n_components:
+            logger.info("PCA n_components capped %d -> %d (input %s)",
+                        self.n_components, n_capped, X.shape)
+        return PCA(n_components=n_capped, whiten=self.whiten, random_state=self.random_state)
+
+    def fit(self, X, y=None) -> "_RankCappedPCA":
+        X = np.asarray(X)
+        self.pca_ = self._make_pca(X).fit(X)
+        return self
+
+    # Delegate fit_transform to the inner PCA so the result is byte-identical to a bare
+    # PCA step (PCA.fit_transform uses the SVD U·S; TransformerMixin's default
+    # fit().transform() re-projects and differs at ~1e-6).
+    def fit_transform(self, X, y=None):
+        X = np.asarray(X)
+        self.pca_ = self._make_pca(X)
+        return self.pca_.fit_transform(X)
+
+    def transform(self, X):
+        return self.pca_.transform(np.asarray(X))
 
 
 class XGBOrdinalWrapper(BaseEstimator, ClassifierMixin):
@@ -87,18 +125,82 @@ class XGBOrdinalWrapper(BaseEstimator, ClassifierMixin):
         return probs
 
     def predict(self, X):
-        """Predict ordinal class labels based on the predicted probabilities.
+        """Predict ordinal class labels by argmax over the class probabilities.
+
+        The probabilities are reconstructed from threshold outputs via
+        differencing, as in Frank & Hall (2001).
+        """
+        return self.predict_proba(X).argmax(axis=1).astype(int)
+
+
+class LogRegOrdinalWrapper(BaseEstimator, ClassifierMixin):
+    """LogisticRegression K-1 binary decomposition for ordinal targets.
+
+    Mirrors ``XGBOrdinalWrapper`` but uses LogisticRegression as the base
+    estimator, so linear-probe methods use the same ordinal meta-strategy as the
+    tree-based methods — isolating the linear-vs-tree comparison from the
+    ordinal-strategy comparison. Trains K-1 binary classifiers for K ordinal
+    levels (Frank & Hall cumulative-link decomposition).
+    """
+
+    def __init__(self, params, random_state=None):
+        """Initialize the wrapper.
+
+        Args:
+            params: Hyperparameters passed to each LogisticRegression classifier.
+            random_state: Random seed shared by all K-1 classifiers.
+        """
+        self.params = params
+        self.random_state = random_state
+        self.clfs = []
+        self.levels = None
+
+    def fit(self, X, y):
+        """Fit K-1 binary LogisticRegression classifiers for K ordinal levels.
+
+        Args:
+            X: Feature matrix of shape (n_samples, n_features).
+            y: Ordinal target vector of shape (n_samples,).
+
+        Returns:
+            self: The fitted wrapper.
+        """
+        self.levels = np.sort(np.unique(y))
+        self.clfs = []
+        for i in range(len(self.levels) - 1):
+            binary_y = (y > self.levels[i]).astype(int)
+            clf = LogisticRegression(**self.params, random_state=self.random_state)
+            clf.fit(X, binary_y)
+            self.clfs.append(clf)
+        return self
+
+    def predict_proba(self, X):
+        """Convert the K-1 threshold probabilities into K class probabilities.
 
         Args:
             X: Feature matrix of shape (n_samples, n_features).
 
         Returns:
-            preds: Array of shape (n_samples,) containing predicted ordinal class labels.
+            Array of shape (n_samples, K) of per-level class probabilities.
         """
-        # For ordinal, the expected value is the sum of probabilities
-        # of being above each threshold
         thresh_probs = np.column_stack([c.predict_proba(X)[:, 1] for c in self.clfs])
-        return np.round(np.sum(thresh_probs, axis=1)).astype(int)
+        probs = np.zeros((X.shape[0], len(self.levels)))
+        probs[:, 0] = 1 - thresh_probs[:, 0]
+        for i in range(1, len(self.levels) - 1):
+            probs[:, i] = thresh_probs[:, i - 1] - thresh_probs[:, i]
+        probs[:, -1] = thresh_probs[:, -1]
+        return probs
+
+    def predict(self, X):
+        """Predict ordinal labels as the argmax of the class probabilities.
+
+        Args:
+            X: Feature matrix of shape (n_samples, n_features).
+
+        Returns:
+            Array of shape (n_samples,) of predicted ordinal labels.
+        """
+        return self.predict_proba(X).argmax(axis=1).astype(int)
 
 
 class RobustStandardScaler(StandardScaler):
@@ -167,24 +269,6 @@ def create_model(
             n_jobs=n_jobs,
             random_state=random_state,
         )
-    elif clf_type == "svm":
-        params = config.svm
-        clf = SVC(
-            kernel=params.kernel,
-            C=params.C,
-            class_weight=params.class_weight,
-            probability=params.probability,
-            random_state=random_state,
-        )
-    elif clf_type == "random_forest_classifier":
-        params = config.random_forest_classifier
-        clf = RandomForestClassifier(
-            n_estimators=params.n_estimators,
-            max_depth=params.max_depth,
-            class_weight=params.class_weight,
-            n_jobs=params.n_jobs,
-            random_state=random_state,
-        )
     elif clf_type == "linear_regression":
         params = config.linear_regression
         clf = LinearRegression(
@@ -193,98 +277,29 @@ def create_model(
             n_jobs=params.n_jobs,
             positive=params.positive,
         )
-    elif clf_type == "elastic_net":
-        params = config.elastic_net
-        clf = ElasticNetCV(
-            l1_ratio=params.l1_ratio,
-            n_alphas=params.n_alphas,
-            cv=params.cv,
+    elif clf_type == "logreg_ordinal":
+        # K-1 binary decomposition using LogisticRegression — mirrors xgboost_ordinal
+        # so linear-probe methods use the same ordinal meta-strategy as tree methods.
+        # Inherits hyperparameters from the configured linear probe.
+        params = config.logistic_regression
+        solver = params.solver
+        n_jobs = params.n_jobs if solver == "liblinear" else 1
+        lr_kwargs = dict(
             max_iter=params.max_iter,
-            random_state=random_state,
-        )
-    elif clf_type == "ridge_cv":
-        params = config.ridge_cv
-        clf = RidgeCV(
-            cv=params.cv,
-        )
-    elif clf_type == "svr":
-        params = config.svr
-        clf = SVR(
-            kernel=params.kernel,
+            class_weight=params.class_weight,
             C=params.C,
-            epsilon=params.epsilon,
+            solver=solver,
+            n_jobs=n_jobs,
         )
-    elif clf_type == "random_forest_regressor":
-        params = config.random_forest_regressor
-        clf = RandomForestRegressor(
-            n_estimators=params.n_estimators,
-            max_depth=params.max_depth,
-            n_jobs=params.n_jobs,
-            random_state=random_state,
-        )
-    elif clf_type == "xgboost_classifier":
-        params = config.xgboost_classifier
-        xgb_kwargs: dict = dict(
-            n_estimators=params.n_estimators,
-            max_depth=params.max_depth,
-            learning_rate=params.learning_rate,
-            min_child_weight=params.min_child_weight,
-            gamma=params.gamma,
-            subsample=params.subsample,
-            colsample_bytree=params.colsample_bytree,
-            reg_alpha=params.reg_alpha,
-            reg_lambda=params.reg_lambda,
-            n_jobs=params.n_jobs,
-            eval_metric=params.eval_metric,
-            random_state=random_state,
-        )
-        if params.scale_pos_weight is not None:
-            xgb_kwargs["scale_pos_weight"] = params.scale_pos_weight
-        clf = XGBClassifier(**xgb_kwargs)
-    elif clf_type == "xgboost_regressor":
-        params = config.xgboost_regressor
-        clf = XGBRegressor(
-            n_estimators=params.n_estimators,
-            max_depth=params.max_depth,
-            learning_rate=params.learning_rate,
-            subsample=params.subsample,
-            colsample_bytree=params.colsample_bytree,
-            reg_alpha=params.reg_alpha,
-            reg_lambda=params.reg_lambda,
-            n_jobs=params.n_jobs,
-            objective=params.objective,
-            random_state=random_state,
-        )
+        clf = LogRegOrdinalWrapper(params=lr_kwargs, random_state=random_state)
 
-    elif clf_type == "xgboost_ordinal":
-        params = config.xgboost_ordinal
-        # Pass your dictionary directly into the wrapper
-        clf = XGBOrdinalWrapper(params=params.__dict__)
-
-    # all threshold ordinal regression from mord package, which is more efficient than statsmodels' OrderedModel for large datasets
-    elif clf_type == "ordinal_logit_at":
-        params = config.ordinal_logit_at
-        clf = mord.LogisticAT(
-            alpha=params.alpha,  # Regularization strength
-            max_iter=params.max_iter,  # Optimization iterations
-            verbose=0,
-        )
-    elif clf_type == "ordinal_logit_ridge":
-        params = config.ordinal_logit_ridge
-        clf = mord.OrdinalRidge(
-            alpha=params.alpha,  # Regularization strength
-            fit_intercept=params.fit_intercept,
-        )
     else:
         raise ValueError(f"Unknown model type: {clf_type}")
 
-    # Build pipeline: [scaler] → [L2 norm] → [PCA] → classifier
-    # XGBoost is tree-based (scale-invariant) and handles NaN natively;
-    # a scaler would propagate NaN into mean_/scale_, corrupting features.
-    is_xgb = hasattr(clf, "get_xgb_params")
+    # Build pipeline: [scaler] → [L2 norm] → [PCA] → classifier.
     steps: list = []
 
-    if config.use_scaler and not is_xgb:
+    if config.use_scaler:
         scaler_type = getattr(config, "scaler_type", "robust")
         if scaler_type == "standard":
             steps.append(StandardScaler())
@@ -298,10 +313,14 @@ def create_model(
 
     pca_n = getattr(config, "pca_n_components", None)
     if pca_n is not None:
-        from sklearn.decomposition import PCA
-
         pca_whiten = getattr(config, "pca_whiten", False)
-        steps.append(PCA(n_components=pca_n, whiten=pca_whiten))
+        # random_state pins the randomized SVD solver that sklearn auto-selects for
+        # wide feature matrices (e.g. MultiRocket's ~50k dims). Without it the probe
+        # is non-reproducible: the rotated subspace varies run-to-run, swinging
+        # rare-positive AUPRC by ~0.03. Seeded here so results are deterministic.
+        steps.append(
+            _RankCappedPCA(n_components=pca_n, whiten=pca_whiten, random_state=random_state)
+        )
 
     if steps:
         steps.append(clf)

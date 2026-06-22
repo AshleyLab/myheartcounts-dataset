@@ -6,36 +6,148 @@ No base class inheritance required -- just implement the right methods.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
 import numpy as np
 
 
-@runtime_checkable
-class Encoder(Protocol):
-    """Protocol for health-prediction encoders.
+@dataclass
+class EvalContext:
+    """Per-(task, split) context the benchmark hands a bundled baseline.
 
-    Encode weekly sensor tensors into fixed-size embeddings.
+    The unified :class:`Method` contract passes only clean arrays + labels +
+    ``task_type`` — everything a from-scratch external model needs. A *bundled*
+    baseline may additionally need to know **which** cohort it is being fit on (to
+    align a precomputed per-user feature/embedding cache) or the **task name** (the
+    ``linear`` baseline drops a demographic covariate on its own task, e.g. age is
+    not a feature for the ``age`` task). The engine delivers that here via the
+    optional ``set_context`` hook — called once before ``fit`` (train context) and
+    once before ``predict`` (test context) — so the public ``fit`` / ``predict``
+    signatures stay minimal. External models simply don't implement ``set_context``
+    and never see it.
 
-    Example:
-        >>> class MyEncoder:
-        ...     def encode(self, weekly_tensors: np.ndarray) -> np.ndarray:
-        ...         # weekly_tensors: (B, 168, 38)
-        ...         # Returns: (B, D) embeddings
-        ...         return weekly_tensors[:, :, :19].mean(axis=1)
+    Attributes:
+        task: the task name (e.g. ``"Diabetes"``); ``task_type`` is ``get_task_type(task)``.
+        split: the cohort split — ``"train"`` / ``"validation"`` / ``"test"``.
+        user_ids: cohort user ids, aligned with the ``data`` / ``labels`` passed to
+            ``fit`` / ``predict``.
+        dates: per-user eligible segment dates (daily) / week_starts (weekly), aligned
+            with ``user_ids`` — for cache baselines that pool per-user over the cohort's
+            eligible days (e.g. MAE). ``None`` when not provided.
     """
 
-    def encode(self, weekly_tensors: np.ndarray) -> np.ndarray:
-        """Map weekly sensor data to fixed-size embeddings.
+    task: str
+    split: str
+    user_ids: np.ndarray
+    dates: list | None = None
 
-        Args:
-            weekly_tensors: Array of shape (B, 168, 38).
-                Columns 0-18 are z-scored sensor values (19 channels, hourly).
-                Columns 19-37 are missingness masks (1 = missing, 0 = observed).
 
-        Returns:
-            Array of shape (B, D) where D is any embedding dimensionality.
-            Must be float32.
+@runtime_checkable
+class CohortStream(Protocol):
+    """The cohort handed to ``fit`` / ``predict`` — iterate for one participant at a time.
+
+    A small (hourly) spec hands you a plain ``list`` of per-participant arrays; a large or
+    ``streaming`` spec hands you a lazy view with the **same iteration surface**, so the
+    whole cohort never sits in RAM. Both forms satisfy this protocol — program against it,
+    not against any concrete type. **Iterate — don't index** (``data[i]``) **or stack**
+    (``np.stack(data)``) the streaming form: those force the cohort into memory. ``load`` is
+    available on the streaming form for random access by participant id.
+
+    This is the public description of that handle; the engine's concrete streaming class
+    satisfies it structurally, so submitters never import an internal type.
+    """
+
+    def __iter__(self) -> Iterator[np.ndarray]:
+        """Yield one participant's array at a time, shaped to the model's ``data_spec``."""
+        ...
+
+    def __len__(self) -> int:
+        """Number of participants in the cohort."""
+        ...
+
+    def load(self, user_id) -> np.ndarray:
+        """Return one participant's array by id (streaming form only)."""
+        ...
+
+
+# What the ``data`` argument to ``fit`` / ``predict`` actually is: a materialized list for
+# small specs, or a streamed :class:`CohortStream` for large / streaming specs.
+ParticipantData = list | CohortStream
+
+
+@runtime_checkable
+class Method(Protocol):
+    """The prediction-track model contract — **return one prediction per participant**.
+
+    One shape for every model, external submissions and bundled baselines alike.
+    ``predict`` is the only **required** method: it returns one prediction per
+    participant on a held-out cohort. ``fit`` is **optional** — this is an evaluation
+    suite, not training infrastructure, so a zero-shot or pretrained model simply omits
+    it; when present, the engine calls it on the train cohort before ``predict`` (see
+    *Optional hooks* below). Representation isolation is preserved by *convention*: an
+    encoder-style method runs its own representation and then the benchmark's uniform
+    head, :class:`openmhc.LinearProbe`, inside ``fit`` / ``predict`` — so its score
+    still reflects the representation, not the choice of classifier — while an
+    end-to-end method owns its head directly.
+
+    **Choose your input shape** with ``data_spec = DataSpec(resolution, window)``
+    (see :class:`~openmhc.DataSpec`):
+
+    - ``DataSpec("hourly", "day")``       → each participant ``(n_days, 24, 38)``
+    - ``DataSpec("hourly", "series", N)`` → each participant ``(N, 38)`` (one continuous window)
+    - ``DataSpec("minute", "day")``       → each participant ``(n_days, 1440, 38)``
+
+    Channels are always 0-18 raw sensor values (NaN at missing positions) and 19-37 the
+    missingness mask (1 = missing). ``labels`` is a ``(n,)`` array aligned with the cohort;
+    ``task_type`` is ``"binary"`` / ``"multiclass"`` / ``"ordinal"`` / ``"regression"``.
+
+    **Consuming ``data``** — iterate it to get one participant's array at a time::
+
+        for x in data: ...        # x is that participant's array, shaped to your data_spec
+
+    For small (hourly) specs ``data`` is a plain ``list``; for large specs (``minute``, or
+    whenever you set ``streaming = True``) it is a streamed :class:`~openmhc.CohortStream`
+    that yields the *same* per-participant arrays one at a time, so the whole cohort never
+    sits in memory. **Iterate — don't index** (``data[i]``) **or stack the raw cohort**
+    (``np.stack(data)``): those force everything into RAM and break streaming. Encoding each
+    participant and stacking the small results (as below) is always safe.
+
+    **Optional hooks** — omit any of these and the engine simply skips that step:
+
+    - ``fit(data, labels, task_type) -> None`` — train on the train cohort. ``data`` is
+      the per-participant arrays (iterate it) shaped to your ``data_spec``; ``labels`` is a
+      ``(n,)`` array aligned with the cohort; ``task_type`` is as above. Omit it for a
+      zero-shot / pretrained model — the engine then never even builds the train inputs.
+    - ``set_context(ctx: EvalContext)`` — called before ``fit`` and ``predict`` (bundled
+      baselines only — see :class:`EvalContext`).
+
+    A model without a ``data_spec`` falls back to the legacy ``input_granularity = "daily"``
+    (equivalent to ``DataSpec("hourly", "day")``).
+
+    Example (encoder-style, via the uniform probe — streaming-safe as written)::
+
+        import numpy as np
+        import openmhc
+        from openmhc import DataSpec
+
+        class MyMethod:
+            data_spec = DataSpec("hourly", "day")            # (n_days, 24, 38) per participant
+
+            def fit(self, data, labels, task_type):
+                emb = np.stack([self._encode(x) for x in data])   # iterate; stack small embeddings
+                self._probe = openmhc.LinearProbe(task_type).fit(emb, labels)
+
+            def predict(self, data):
+                return self._probe.predict(np.stack([self._encode(x) for x in data]))
+    """
+
+    def predict(self, data: ParticipantData) -> np.ndarray:
+        """Return one prediction per participant, in ``data`` order (the only required method).
+
+        The optional ``fit(data, labels, task_type)`` / ``set_context(ctx)`` hooks are
+        documented in the class docstring above; the engine calls each only if defined.
         """
         ...
 
@@ -141,7 +253,7 @@ class Forecaster(Protocol):
 
     Optional metadata kwargs are keyword-only and forwarded only if declared
     (the harness inspects the signature once, the same duck-typed pattern as
-    :class:`Encoder` / :class:`Imputer`): ``variable_names``,
+    :class:`Method` / :class:`Imputer`): ``variable_names``,
     ``past_covariates``, ``future_covariates``, ``index_days``.
 
     The benchmark ranks point forecasts; quantile forecasts are optional by

@@ -1,24 +1,18 @@
-"""Feature extractors for downstream evaluation."""
+"""Feature extractors for the forecasting track."""
 
-__all__ = ["FeatureExtractor", "BaselineFeatureExtractor", "EncoderFeatureExtractor"]
+__all__ = ["FeatureExtractor", "MultivariateFeatureExtractor"]
 
 
 def __getattr__(name: str):
     """Lazy import to avoid heavy dependencies at module load."""
     if name == "FeatureExtractor":
-        from downstream_evaluation.feature_extractors.base import FeatureExtractor
+        from forecasting_evaluation.feature_extractors.base import FeatureExtractor
 
         return FeatureExtractor
-    elif name == "BaselineFeatureExtractor":
-        from downstream_evaluation.feature_extractors.baseline_extractor import (
-            BaselineFeatureExtractor,
+    if name == "MultivariateFeatureExtractor":
+        from forecasting_evaluation.feature_extractors.multivariate_extractor import (
+            MultivariateFeatureExtractor,
         )
 
-        return BaselineFeatureExtractor
-    elif name == "EncoderFeatureExtractor":
-        from downstream_evaluation.feature_extractors.encoder_extractor import (
-            EncoderFeatureExtractor,
-        )
-
-        return EncoderFeatureExtractor
+        return MultivariateFeatureExtractor
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
