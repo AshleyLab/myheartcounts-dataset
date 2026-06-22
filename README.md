@@ -6,17 +6,17 @@
 [![Dataset](https://img.shields.io/badge/Dataset-Coming%20Soon-6c757d?style=flat-square)](#)
 [![Paper](https://img.shields.io/badge/Paper-Coming%20Soon-b31b1b?style=flat-square)](#)
 
-OpenMHC is the public Python API and reference implementation suite for the
-MyHeartCounts wearable health benchmark. The repository provides:
+This is the official public repository and package of OpenMHC, which includes the evaluation harnesses to recreate the public leaderboards, contains a public API to run your own methods on the benchmark and create results files that can be submitted (see below for more details). The repo also comes with reference implementations of models presented in the OpenMHC paper, including reimplementations/adaptations of Google's LSM2 and Apple's WBM. 
+The research-grade codebased can be found here https://github.com/NarayanSchuetz/OpenMHC (particularly relevant for training infra, until we ported that properly).
 
-- Duck-typed evaluation APIs for outcome prediction, imputation, and forecasting.
-- Dataset download and path validation helpers for MyHeartCounts dataset releases.
-- Reference imputers and forecasters, including release-bundle loaders for trained models.
-- Hydra-based evaluation and training CLIs for reproducible local or cluster runs.
-- Leaderboard submission helpers that render the Hugging Face dataset submission packet (metadata sidecar + per-user substrate).
+What can this repository and the OpenMHC dataset be useful for?
+- Experiment on the, to-date, largest fully public mobile/wearable health dataset. This space is vastly underexplored in the AI/ML world and will allow for many valuable contributions that could affect millions of users one day.
+- Leverage our pre-trained wearable foundation models on your own datasets (this could be from research or your own Apple HealthKit exports - we are working on adaptors for the latter but Claude/Codex can likely help prior to that).
+- Evaluate your own new method/model on our benchmark tasks, spanning dense downstream prediction across >30 tasks, 24h wearable data forecasting, a single day/multi-day minute level imputation and submit them to be displayed on the official leaderboard
+- Augment your own datasets, in mobile/wearable health studies we are often limite to small disease cohorts, OpenMHC can give you access to larger numbers of subjects to compare to.
 
-- **Leaderboard:** https://myheartcounts.stanford.edu/benchmark
-- **Submit a result:** [open a PR on the leaderboard dataset](https://huggingface.co/datasets/MyHeartCounts/OpenMHC-leaderboard-data)
+
+
 - **Dataset:** see [DATASET.md](DATASET.md)
 
 ## Release Plan
@@ -258,10 +258,18 @@ Submissions are pull requests on the Hugging Face leaderboard dataset
 A submission adds two files under the track's subdirectory:
 
 - `<track>/<method>.parquet` — the per-user substrate from your evaluation run
-  (Track 2: `per_user_errors.parquet`, written when you pass `output_dir=` to
-  `evaluate_imputation`).
+  (Track 2: `per_user_errors.parquet`, written when you pass `output_dir=` and
+  `method_name="<method>"` to `evaluate_imputation`). The `method_name` sets the
+  parquet's `method` column and **must match the `<method>` filename stem** — it
+  defaults to `"custom"`, and the leaderboard groups submissions by that column,
+  so an unset name collides with every other default submission.
 - `<track>/<method>.meta.json` — the display sidecar
   (`display_name`, `type`, `submitter`, `subtrack`).
+
+Track 2 (imputation) is live today. The Track 1 and Track 3 subdirectory names
+and substrate formats are still being finalized — `to_submission_yaml` flags
+this in the rendered packet; confirm against `tools/leaderboard_docs/` before
+submitting to those tracks.
 
 `to_submission_yaml` renders the `meta.json` block plus the PR file checklist so
 you don't hand-write the sidecar:
@@ -276,6 +284,31 @@ packet = results.to_submission_yaml(
 print(packet)
 ```
 
+Note the two distinct `method_name` arguments: the one above is the **display
+label** rendered in `meta.json` and can be free-form (`"My Method"`). The one you
+pass to `evaluate_imputation` sets the parquet's `method` column and **must equal
+the `<method>` filename stem** the leaderboard groups by.
+
+Lay the two files out under the track subdirectory and open the PR with the
+Hugging Face Hub client (`pip install -e ".[hf]"`):
+
+```python
+from huggingface_hub import HfApi
+
+# my_submission/imputation/<method>.parquet
+# my_submission/imputation/<method>.meta.json
+HfApi().upload_folder(
+    repo_id="MyHeartCounts/OpenMHC-leaderboard-data",
+    repo_type="dataset",
+    folder_path="my_submission",
+    create_pr=True,
+    commit_message="Add <method> to the imputation leaderboard",
+)
+```
+
+The call returns a PR URL. (You can also drag the files into the dataset's
+"Community → New pull request" page on the Hub.)
+
 Public submissions must use the standard evaluation protocol for the selected
 track, including the canonical dataset version, split file, masking or
 forecasting configuration, and label-validity criterion.
@@ -283,8 +316,10 @@ forecasting configuration, and label-validity criterion.
 Maintainers compute leaderboard-level skill scores, fair skill scores, and
 average ranks from the submitted substrate during ingestion. Track 1 is scored
 against the linear-probe baseline, Track 2 against LOCF, and Track 3 against
-Seasonal Naive. See `tools/upload_leaderboard_substrate.py` and
-`tools/leaderboard_docs/` for the substrate layout.
+Seasonal Naive. See
+[`tools/leaderboard_docs/imputation/SCHEMA.md`](tools/leaderboard_docs/imputation/SCHEMA.md)
+for the Track 2 per-method substrate columns and dtypes, and
+`tools/upload_leaderboard_substrate.py` for the maintainer upload path.
 
 ## Repo Layout
 
