@@ -161,12 +161,16 @@ def forecasting_to_submission_yaml(
 ) -> str:
     """Render a paste-ready submission body for a Track 3 forecasting result.
 
-    Skill scores against the Seasonal Naive baseline are left as ``—``
-    until the per-channel baseline file is shipped. Subgroup keys match
-    the submission template (``step``, ``flights``, ``hr``, ``energy``,
+    The aggregate ``skill_score`` (overall, vs the Seasonal Naive baseline) is
+    filled in locally from ``results.skill_scores`` when ``evaluate_forecasting``
+    computed it against the shipped baseline; otherwise it is left as ``—``.
+    ``fair_skill_score`` and ``avg_rank`` stay maintainer-computed (they need the
+    private demographics and the full leaderboard, respectively). Subgroup keys
+    match the submission template (``step``, ``flights``, ``hr``, ``energy``,
     ``sleep``, ``workouts``).
     """
     raw = json.dumps(results.per_channel, indent=2, default=_json_default)
+    skill_line = f"skill_score: {_forecasting_overall_skill(results)}"
     return _render_yaml_block(
         track="Track 3 — Forecasting",
         method_name=method_name,
@@ -178,9 +182,9 @@ def forecasting_to_submission_yaml(
         code_url=code_url,
         notes=notes,
         aggregate_lines=[
-            "skill_score: —  # computed by maintainers vs Seasonal Naive baseline",
-            "fair_skill_score: —",
-            "avg_rank: —",
+            skill_line,
+            "fair_skill_score: —  # computed by maintainers from the disparity-ratio bootstrap",
+            "avg_rank: —  # computed by maintainers vs current leaderboard",
         ],
         subgroup_lines=[
             "step: —",
@@ -241,6 +245,22 @@ def _render_yaml_block(
     if notes:
         parts.extend(["", "# --- notes ---", notes])
     return "\n".join(parts)
+
+
+def _forecasting_overall_skill(results: ForecastingResults) -> str:
+    """Overall skill score line for the submitted method, or a maintainer placeholder.
+
+    Reads ``results.skill_scores`` (the forecasting reducer's model-summary table,
+    populated by ``evaluate_forecasting`` when a baseline substrate is available)
+    and returns the non-baseline row's ``overall_score`` formatted to 6 dp.
+    """
+    df = getattr(results, "skill_scores", None)
+    if df is None or getattr(df, "empty", True) or "overall_score" not in df.columns:
+        return "—  # computed by maintainers vs Seasonal Naive baseline"
+    rows = df[df["model"].astype(str) != "seasonal_naive"]
+    if rows.empty or not np.isfinite(float(rows["overall_score"].iloc[0])):
+        return "—  # computed by maintainers vs Seasonal Naive baseline"
+    return f"{float(rows['overall_score'].iloc[0]):.6f}"
 
 
 def _json_default(obj):

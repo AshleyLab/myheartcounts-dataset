@@ -201,6 +201,9 @@ def evaluate_forecasting(
     max_samples: int | None = None,
     *,
     num_workers: int = 4,
+    output_dir: str | Path | None = None,
+    baseline_errors: str | Path | None = None,
+    method_name: str = "custom",
 ) -> ForecastingResults:
     """Run forecasting evaluation (Track 3) with a custom forecaster.
 
@@ -218,9 +221,23 @@ def evaluate_forecasting(
             (default ``4``). The forecasting evaluator is sequential-only, so
             this only affects data loading; ``max_samples`` is the main speed
             lever.
+        output_dir: Optional persistent directory. When set, the eval runs there
+            (not a tempdir) and the canonical ``per_user_errors.parquet`` (plus
+            ``skill_scores.csv`` when a baseline is available) are written to it.
+        baseline_errors: Path to a single-method per-user substrate parquet (the
+            Seasonal-Naive baseline) used as the skill-score denominator. Defaults
+            to the frozen baseline shipped at
+            ``openmhc/data/baselines/forecasting_seasonal_naive_per_user_errors.parquet``;
+            skill is computed with the paper defaults (mae + auroc, clip
+            [0.01, 100], micro/user) so it matches the leaderboard. If the shipped
+            file is absent and none is passed, ``skill_scores`` stays ``None``.
+        method_name: Label for the ``model`` column of the emitted substrate (and
+            the row in ``skill_scores``). Defaults to ``"custom"``.
 
     Returns:
-        ForecastingResults with per-channel metrics.
+        ForecastingResults with per-channel metrics; ``per_user_errors`` (the
+        canonical substrate) and ``skill_scores`` (vs the Seasonal-Naive baseline)
+        are populated when the substrate / baseline are available.
     """
     from openmhc._evaluate import evaluate_forecasting as _eval
 
@@ -232,6 +249,9 @@ def evaluate_forecasting(
         seed=seed,
         max_samples=max_samples,
         num_workers=num_workers,
+        output_dir=output_dir,
+        baseline_errors=baseline_errors,
+        method_name=method_name,
     )
 
 

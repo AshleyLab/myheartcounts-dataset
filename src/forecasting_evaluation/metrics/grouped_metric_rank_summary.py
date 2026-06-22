@@ -29,6 +29,10 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from forecasting_evaluation.metrics import metric_spec as _spec  # noqa: E402
+from forecasting_evaluation.metrics.per_user_errors import (  # noqa: E402
+    read_per_user_metrics_parquet,
+    to_rank_user_df,
+)
 
 CHANNEL_INFO = _spec.CHANNEL_INFO
 LOWER_IS_BETTER_METRICS = _spec.LOWER_IS_BETTER_METRICS
@@ -599,27 +603,42 @@ def build_grouped_metric_rank_tables(
     continuous_channel_indices: tuple[int, ...],
     binary_groups: list[tuple[str, tuple[int, ...]]],
     within_user_aggregation: str = "micro",
+    per_user_metrics: pd.DataFrame | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Build user-level, long, and wide grouped metric rank tables."""
+    """Build user-level, long, and wide grouped metric rank tables.
+
+    When ``per_user_metrics`` (the canonical substrate frame) is supplied the
+    user-level table is reconstructed from it via
+    :func:`per_user_errors.to_rank_user_df` instead of re-scanning the metric
+    trees; this requires ``within_user_aggregation="micro"`` (the substrate mode).
+    """
     if within_user_aggregation not in {"micro", "macro"}:
         raise ValueError("--within-user-aggregation must be either 'micro' or 'macro'")
-    continuous_user = _build_continuous_user_rows(
-        models=models,
-        metrics=[metric.strip().lower() for metric in continuous_metrics if metric.strip()],
-        channel_indices=continuous_channel_indices,
-        within_user_aggregation=within_user_aggregation,
-    )
-    binary_user = _build_binary_user_rows(
-        models=models,
-        metrics=[metric.strip().lower() for metric in binary_metrics if metric.strip()],
-        groups=binary_groups,
-        within_user_aggregation=within_user_aggregation,
-    )
-    frames = [frame for frame in [continuous_user, binary_user] if not frame.empty]
-    if frames:
-        user_metric_df = pd.concat(frames, ignore_index=True)
+    if per_user_metrics is not None:
+        if within_user_aggregation != "micro":
+            raise ValueError(
+                "per_user_metrics substrate supports only within_user_aggregation="
+                f"'micro'; got {within_user_aggregation!r}."
+            )
+        user_metric_df = to_rank_user_df(per_user_metrics, binary_groups=binary_groups)
     else:
-        user_metric_df = pd.DataFrame()
+        continuous_user = _build_continuous_user_rows(
+            models=models,
+            metrics=[metric.strip().lower() for metric in continuous_metrics if metric.strip()],
+            channel_indices=continuous_channel_indices,
+            within_user_aggregation=within_user_aggregation,
+        )
+        binary_user = _build_binary_user_rows(
+            models=models,
+            metrics=[metric.strip().lower() for metric in binary_metrics if metric.strip()],
+            groups=binary_groups,
+            within_user_aggregation=within_user_aggregation,
+        )
+        frames = [frame for frame in [continuous_user, binary_user] if not frame.empty]
+        if frames:
+            user_metric_df = pd.concat(frames, ignore_index=True)
+        else:
+            user_metric_df = pd.DataFrame()
     long_df, wide_df = _build_summary_tables(user_metric_df=user_metric_df, models=models)
     return user_metric_df, long_df, wide_df
 
@@ -681,6 +700,14 @@ def build_parser() -> argparse.ArgumentParser:
         default="forecasting_grouped_metric_rank_summary",
         help="Filename prefix for generated CSV files.",
     )
+    parser.add_argument(
+        "--per-user-errors",
+        default=None,
+        help=(
+            "Optional canonical per-user substrate parquet. When given, the rank "
+            "table is reconstructed from it (micro) instead of re-scanning trees."
+        ),
+    )
     return parser
 
 
@@ -693,6 +720,9 @@ def main() -> None:
         default=DEFAULT_CONTINUOUS_CHANNELS,
     )
     binary_groups = _resolve_binary_groups(args.binary_group)
+    per_user_metrics = None
+    if args.per_user_errors:
+        per_user_metrics, _ = read_per_user_metrics_parquet(args.per_user_errors)
 
     user_df, long_df, wide_df = build_grouped_metric_rank_tables(
         models=models,
@@ -701,6 +731,7 @@ def main() -> None:
         continuous_channel_indices=continuous_channel_indices,
         binary_groups=binary_groups,
         within_user_aggregation=str(args.within_user_aggregation),
+        per_user_metrics=per_user_metrics,
     )
 
     output_dir = Path(args.output_dir)
