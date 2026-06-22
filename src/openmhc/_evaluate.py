@@ -274,7 +274,7 @@ def evaluate_prediction(
     Args:
         encoder: Object with an `encode(weekly_tensors) -> embeddings` method.
             Input shape is (B, 168, 38), output shape is (B, D).
-        version: ``"xs"`` (593-user reviewer subset) or ``"full"``
+        version: ``"xs"`` (593-user quickstart subset) or ``"full"``
             (11,894-user leaderboard split). Required — cross-checked
             against the dataset root's ``dataset_version.json`` marker.
         tasks: "all" to run all 33 tasks, or a list of task name strings.
@@ -650,7 +650,7 @@ def evaluate_imputation(
             per-window calendar-day deltas (``-1`` for padded slots) for
             calendar-aware models (e.g. RoPE day embeddings).
         version: ``"full"`` (11,894-user leaderboard split) or ``"xs"``
-            (593-user reviewer subset). Required — cross-checked against
+            (593-user quickstart subset). Required — cross-checked against
             the dataset root's ``dataset_version.json`` marker.
         masking_scenarios: "all" to run all 6 scenarios, or a list of
             scenario name strings.

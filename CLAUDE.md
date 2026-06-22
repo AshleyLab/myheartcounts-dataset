@@ -120,9 +120,9 @@ All evaluate/download functions resolve the dataset root in this priority order:
 All three `*Results` classes expose:
 - `.summary()` → DataFrame
 - `.to_csv()` / `.to_json()`
-- `.to_submission_yaml()` → paste-ready leaderboard submission body
+- `.to_submission_yaml()` → renders the HF-dataset submission packet (`meta.json` sidecar + PR file checklist)
 
-Leaderboard submissions go via GitHub issue using `.github/ISSUE_TEMPLATE/submission.yml`.
+Leaderboard submissions go via a pull request on the Hugging Face dataset repo `MyHeartCounts/OpenMHC-leaderboard-data`, adding `<track>/<method>.parquet` (per-user substrate) + `<track>/<method>.meta.json`. See `tools/upload_leaderboard_substrate.py` and `tools/leaderboard_docs/`.
 
 ### Lazy Imports
 

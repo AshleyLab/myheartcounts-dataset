@@ -4,11 +4,11 @@ These let custom imputers fit themselves and look up per-sample
 metadata without depending on the internal evaluation harness.
 
     >>> import openmhc
-    >>> for data, mask in openmhc.iter_train_data():
+    >>> for data, mask in openmhc.iter_train_data(version="xs"):
     ...     # data: (B, 19, 1440) float32, NaN at missing positions
     ...     # mask: (B, 19, 1440) float32, 1 = observed, 0 = missing
     ...     pass
-    >>> meta = openmhc.load_sample_metadata("val")
+    >>> meta = openmhc.load_sample_metadata("val", version="xs")
     >>> meta[0]
     {'sample_idx': 0, 'user_id': '...', 'date': '2024-...'}
 """
