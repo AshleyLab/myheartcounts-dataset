@@ -6,7 +6,11 @@
 [![Dataset](https://img.shields.io/badge/Dataset-Coming%20Soon-6c757d?style=flat-square)](#)
 [![Paper](https://img.shields.io/badge/Paper-Coming%20Soon-b31b1b?style=flat-square)](#)
 
-This is the official public repository and package of OpenMHC, an Apple HealthKit based mobile and wearable dataset and evaluation suite with over 60M hours of minute-level data from around 12k participants across multiple countries. This repository includes the evaluation harnesses to recreate the public leaderboards, contains a public API to run your own methods on the benchmark and create results files that can be submitted (see below for more details). The repo also comes with reference implementations of models presented in the OpenMHC paper, including reimplementations/adaptations of Google's LSM2 and Apple's WBM. 
+![OpenMHC overview](figures/figure_1_final.png)
+
+![OpenMHC dataset variables and participant profiles](figures/figure_2_final.png)
+
+This is the official public repository and package of OpenMHC, which includes the evaluation harnesses to recreate the public leaderboards, contains a public API to run your own methods on the benchmark and create results files that can be submitted (see below for more details). The repo also comes with reference implementations of models presented in the OpenMHC paper, including reimplementations/adaptations of Google's LSM2 and Apple's WBM. 
 The research-grade codebased can be found here https://github.com/NarayanSchuetz/OpenMHC (particularly relevant for training infra, until we ported that properly).
 
 What can this repository and the OpenMHC dataset be useful for?
@@ -22,6 +26,7 @@ What can this repository and the OpenMHC dataset be useful for?
 
 - [ ] Release Full OpenMHC dataset (Estimated: August-December)
 - [ ] Release Apple HealthKit export adaptor, so people can directly run our models on their data (Estimated: July-September)
+- [ ] Release examples on how to run our-pretrained models on individual dataset samples (Estimated: July-August)
 - [ ] Release cleaned-up training infrastructure here (Estimated: July-August)
 - [x] Release model checkpoints on Hugging Face
 - [x] Release benchmark Hugging Face Space
@@ -79,13 +84,14 @@ root, or vice versa.
 See [DATASET.md](DATASET.md) for Dataverse details, manual setup, directory
 layout, and Data Use Agreement terms.
 
-## Quickstart
+## OpenMHC Benchmark Quickstart
+If you want to run your own models on the OpenMHC benchmark, follow the quickstart guides below.
 
 Models implement small protocols; no inheritance is required. All evaluation
 entry points require `version="xs"` or `version="full"` and resolve large data
 payloads from `data_dir=` or `MHC_DATA_DIR`.
 
-### Outcome Prediction
+### Track 1 - Downstream Predictions
 
 Implement a `Method` with `predict(data)` and, for trainable methods,
 `fit(data, labels, task_type)`. Each `data` item is one participant's eligible
@@ -129,7 +135,7 @@ mhc-downstream-eval --multirun method=linear,mae,xgboost
 The full Track-1 guide (data contract, baselines, CLI, paper reproduction) is in
 [`src/downstream_evaluation/README.md`](src/downstream_evaluation/README.md).
 
-### Imputation
+### Track 2A: Imputation
 
 Implement `impute(data, observed_mask, target_mask) -> imputed_data`, where
 `data` has shape `(N, 19, T)`, `T=1440` for daily evaluation by default, and
@@ -187,7 +193,7 @@ See [src/imputation_evaluation/README.md](src/imputation_evaluation/README.md)
 and [docs/neural-imputers.md](docs/neural-imputers.md) for method contracts,
 release bundle format, metrics, and SLURM workflows.
 
-### Forecasting
+### Track 2B: Forecasting
 
 Implement `predict(history, horizon) -> forecast`, where `history` has shape
 `(n_channels, history_length)` and the return value has shape
