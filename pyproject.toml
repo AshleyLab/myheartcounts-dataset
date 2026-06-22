@@ -44,6 +44,15 @@ pypots = [
 lsm2 = [
   "pytorch-lightning>=2.0",
 ]
+chronos = [
+  # Chronos-2 forecaster wrapper. Chronos2Pipeline ships in the 2.x line;
+  # the PyPI distribution is `chronos-forecasting` (imported as `chronos`).
+  "chronos-forecasting>=2.0",
+]
+toto = [
+  # Toto forecaster wrapper (imported as `toto`).
+  "toto-ts>=0.2",
+]
 hf = [
   "huggingface_hub>=0.20",
 ]
@@ -58,7 +67,7 @@ wandb = [
 # Every runtime feature in one shot (all tracks + Hydra CLIs + W&B logging).
 # Add ``dev`` for contributor tooling: ``pip install -e ".[all,dev]"``.
 all = [
-  "openmhc[pypots,lsm2,hf,hydra,wandb]",
+  "openmhc[pypots,lsm2,chronos,toto,hf,hydra,wandb]",
 ]
 
 [project.scripts]
