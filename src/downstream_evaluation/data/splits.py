@@ -1,6 +1,6 @@
 """User split utilities for downstream evaluation.
 
-These are copied from baseline_datamodule.py to avoid importing pytorch_lightning.
+Standalone split helpers (no pytorch_lightning dependency).
 """
 
 from __future__ import annotations

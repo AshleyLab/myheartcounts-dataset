@@ -1,0 +1,5 @@
+# @package method
+type: wbm
+# Was the WBM_CHECKPOINT env var. null = the default SSL ref; override with a
+# local .ckpt path (e.g. the wandb-cached copy) for offline compute nodes.
+checkpoint: null

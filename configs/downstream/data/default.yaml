@@ -1,0 +1,6 @@
+# @package data
+# Dataset root. null -> resolved from the MHC_DATA_DIR environment variable.
+data_dir: null
+# Dataset release: "full" (leaderboard split) or "xs" (reviewer subset). Cross-checked
+# against the root's dataset_version.json marker.
+version: full

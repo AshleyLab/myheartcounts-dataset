@@ -238,14 +238,12 @@ with an additional **L1 log-space mean over scenarios in scope**.
 | `semantic` | `{sleep_gap, workout_gap, intensity_failure}` | 3 |
 | `overall` | all 6 scenarios | 6 |
 
-`overall` is the headline skill / rank quoted on the leaderboard JSON
-(`build_leaderboard_json.OVERALL_SKILL_SCOPE`). The legacy per-channel
-`overall` (flat geomean over all 68 per-channel tasks) was deleted in
-C3 of the B.2-everywhere consolidation; the new `overall` is the
-3-level form universally applied. The fairness CSV's `overall` row is
-a separate quantity — the cross-attribute macro of the per-attribute
-disparity-ratio skill scores — and is read via
-`OVERALL_FAIR_SCOPE = "overall"` from a different CSV.
+`overall` is the headline skill / rank scope quoted on the leaderboard.
+The legacy per-channel `overall` (flat geomean over all 68 per-channel
+tasks) was deleted in C3 of the B.2-everywhere consolidation; the new
+`overall` is the 3-level form universally applied. The fairness CSV's
+`overall` row is a separate quantity — the cross-attribute macro of the
+per-attribute disparity-ratio skill scores — read from a different CSV.
 
 ### 5.3.1 The universal 3-level B.2 form
 
@@ -536,24 +534,15 @@ So a subset rerun lets you re-cut ranks against a custom comparison
 group while skill / fairness numbers stay bit-identical to the full-pool
 run.
 
-**Two operational guardrails:**
-
-1. **The baseline must be in the filter.** Both skill and fairness pair
-   each method's E against the baseline's E per task; if the baseline
-   isn't in the parquet rows after filtering, the inner merge produces
-   no rows and the CSV gets empty skill / fairness rows for every
-   method. The pipeline driver's `_method_filter_args` helper raises a
-   `ValueError` before subprocess launch if the YAML's `method_filter`
-   excludes `baseline_method`; the direct CLI does not enforce this, so
-   include `locf` (or whatever `--baseline-method` is) explicitly.
-
-2. **`build_leaderboard_json.py` does NOT re-filter to its own
-   `DAILY_META` / `PERSONALIZED_META` registries when reading the
-   subset CSV.** It looks for every method registered in those dicts and
-   raises `SystemExit` if any is missing from the CSV. If your subset
-   doesn't include every method the renderer expects, either edit the
-   dicts to match the subset, or invoke the renderer with a different
-   working directory whose registry matches.
+**One operational guardrail — the baseline must be in the filter.**
+Both skill and fairness pair each method's E against the baseline's E
+per task; if the baseline isn't in the parquet rows after filtering,
+the inner merge produces no rows and the CSV gets empty skill /
+fairness rows for every method. The pipeline driver's
+`_method_filter_args` helper raises a `ValueError` before subprocess
+launch if the YAML's `method_filter` excludes `baseline_method`; the
+direct CLI does not enforce this, so include `locf` (or whatever
+`--baseline-method` is) explicitly.
 
 ### 8.2 Phase B fast paths — consuming `per_user_errors.parquet` directly
 

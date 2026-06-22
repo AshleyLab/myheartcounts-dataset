@@ -1,0 +1,62 @@
+#!/bin/bash
+# Hydra-CLI downstream eval (PBS / GPU) — runs `mhc-downstream-eval` (here as
+# `python -m downstream_evaluation.hydra.cli`) on a GPU node for the encoder
+# methods whose from-raw extraction runs a neural encoder: mae, wbm. The GPU
+# twin of run_downstream_eval.pbs; replaces the env-var run_eval_gpu.pbs.
+#
+# Unlike the CPU launcher, these read the minute store (daily_hf) lazily (mmap,
+# one row at a time) rather than materializing daily_hourly_hf in RAM, so 64gb is
+# enough — the cost is the GPU embedding pass on a cache miss (cached after).
+#
+# Usage (submit from the repo root):
+#   qsub -v METHOD=mae,MHC_DATA_DIR=$HOME/yuze_mhc_ws/data jobs/imperial/pbs/run_downstream_eval_gpu.pbs
+#
+# NOTE (mae): the default checkpoint is the public HF ref
+# hf://MyHeartCounts/openmhc-lsm2-daily, fetched on a cache miss (needs internet;
+# HF_HUB_DISABLE_XET=1 is set below for the RDS filesystem). To run fully offline
+# pass a LOCAL .ckpt via CHECKPOINT:
+#   qsub -v METHOD=mae,MHC_DATA_DIR=$HOME/yuze_mhc_ws/data,CHECKPOINT=$HOME/yuze_mhc_ws/models/mae_lsm2.ckpt \
+#        jobs/imperial/pbs/run_downstream_eval_gpu.pbs
+# (Avoid '=' in the .ckpt filename — qsub -v parses VAR=VALUE on '='.)
+#PBS -N downstream_eval_gpu
+#PBS -l select=1:ncpus=8:mem=64gb:ngpus=1
+#PBS -l walltime=24:00:00
+#PBS -j oe
+#PBS -o logs/
+
+set -eo pipefail
+
+cd "${PBS_O_WORKDIR:-.}"
+mkdir -p logs
+echo "=== downstream eval (PBS/GPU, Hydra CLI): METHOD=${METHOD:-mae} ==="
+echo "Node: $(hostname) | Job: ${PBS_JOBID:-local} | PWD: $(pwd) | Date: $(date)"
+nvidia-smi --query-gpu=name,memory.total --format=csv,noheader || true
+
+source "$HOME/miniforge3/bin/activate" py310
+python -V
+
+export PYTHONNOUSERSITE=1
+export PYTHONPATH="$PWD/src:${PYTHONPATH:-}"
+export TMPDIR="${EPHEMERAL:-/tmp}/pbs_${PBS_JOBID:-$$}"
+export PYTHONPYCACHEPREFIX="$TMPDIR/pycache"
+export HF_HOME="${HF_HOME:-$TMPDIR/hf_cache}"
+# hf-xet's temp/lock file ops fail on the RDS network filesystem; force plain HTTPS.
+export HF_HUB_DISABLE_XET=1
+mkdir -p "$HF_HOME"
+
+export METHOD="${METHOD:-mae}"
+: "${MHC_DATA_DIR:?set MHC_DATA_DIR to the dataset root (e.g. \$HOME/yuze_mhc_ws/data)}"
+
+overrides=( "method=${METHOD}" "data.data_dir=${MHC_DATA_DIR}" )
+if [[ -n "${TASKS:-}" ]];            then overrides+=( "evaluation.tasks=[${TASKS}]" ); fi
+if [[ -n "${RESULTS_DIR:-}" ]];      then overrides+=( "output.results_dir=${RESULTS_DIR}" ); fi
+if [[ -n "${PREDICTIONS_DIR:-}" ]];  then overrides+=( "output.predictions_dir=${PREDICTIONS_DIR}" ); fi
+# CHECKPOINT: local .ckpt for mae/wbm; unset = the model's default (HF ref for mae).
+if [[ -n "${CHECKPOINT:-}" ]];       then overrides+=( "method.checkpoint=${CHECKPOINT}" ); fi
+echo "MAE/WBM checkpoint=${CHECKPOINT:-(model default)}"
+
+echo "CLI: python -m downstream_evaluation.hydra.cli ${overrides[*]}"
+python -m downstream_evaluation.hydra.cli "${overrides[@]}"
+
+echo "=== downstream eval complete ($METHOD) ==="
+date

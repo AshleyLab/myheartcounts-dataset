@@ -3,21 +3,21 @@
 Quick start:
 
     >>> import openmhc
-    >>> results = openmhc.evaluate_prediction(my_encoder)
-    >>> results.summary()
-    >>> results.global_score  # mean AUROC across binary tasks
-
-    >>> results = openmhc.evaluate_imputation(my_imputer)
+    >>> results = openmhc.evaluate_prediction(my_model, version="full")
     >>> results.summary()
 
-    >>> openmhc.list_tasks()              # 33 prediction tasks
+    >>> results = openmhc.evaluate_imputation(my_imputer, version="full")
+    >>> results.summary()
+
+    >>> openmhc.list_tasks()              # the 32 benchmark prediction tasks
     >>> openmhc.list_masking_scenarios()   # 6 masking scenarios
     >>> openmhc.SENSOR_CHANNELS           # 19 channel names
 """
 
 from pathlib import Path
 
-from openmhc._constants import MASKING_SCENARIOS, SENSOR_CHANNELS
+from openmhc._constants import MASKING_SCENARIOS, SENSOR_CHANNELS, TASK_DISPLAY_NAMES
+from openmhc._data_spec import DataSpec
 from openmhc._data_utils import (
     iter_split_data,
     iter_train_data,
@@ -30,7 +30,14 @@ from openmhc._dataset import (
     read_dataset_marker,
     write_dataset_marker,
 )
-from openmhc._protocols import Encoder, Forecaster, Imputer
+from openmhc._probe import LinearProbe
+from openmhc._protocols import (
+    CohortStream,
+    EvalContext,
+    Forecaster,
+    Imputer,
+    Method,
+)
 from openmhc._results import (
     ForecastingResults,
     ImputationResults,
@@ -39,9 +46,14 @@ from openmhc._results import (
 
 __all__ = [
     # Protocols
-    "Encoder",
+    "Method",
+    "EvalContext",
+    "DataSpec",
+    "CohortStream",
     "Imputer",
     "Forecaster",
+    # Standard probe (turns embeddings into predictions)
+    "LinearProbe",
     # Evaluation functions
     "evaluate_prediction",
     "evaluate_imputation",
@@ -59,6 +71,7 @@ __all__ = [
     "list_tasks",
     "list_masking_scenarios",
     "SENSOR_CHANNELS",
+    "TASK_DISPLAY_NAMES",
     # Result types
     "PredictionResults",
     "ImputationResults",
@@ -67,29 +80,44 @@ __all__ = [
 
 
 def evaluate_prediction(
-    encoder: Encoder,
+    model: Method,
     version: Version,
     tasks: str | list[str] = "all",
     data_dir: str | Path | None = None,
     seed: int = 42,
+    predictions_dir: str | Path | None = None,
 ) -> PredictionResults:
-    """Run health-prediction evaluation with a custom encoder.
+    """Run health-prediction evaluation with a custom model.
 
     Args:
-        encoder: Object implementing the Encoder protocol.
-        version: ``"xs"`` or ``"full"``. Required — cross-checked against
+        model: Object implementing the :class:`Method` protocol —
+            ``fit(data, labels, task_type)`` / ``predict(data)`` on per-participant
+            arrays. Declare input shape via ``data_spec`` (see :class:`DataSpec`); ``data``
+            is a list, or a streamed :class:`CohortStream` for large specs. Encoder-style
+            models run :class:`LinearProbe` inside ``fit`` / ``predict``.
+        version: ``"xs"`` (593-user reviewer subset) or ``"full"``
+            (11,894-user leaderboard split). Required — cross-checked against
             the dataset root's ``dataset_version.json`` marker.
-        tasks: "all" to run all 33 tasks, or a list of task names.
+        tasks: "all" to run the 32 benchmark tasks, or a list of task names.
         data_dir: Path to the dataset root. If omitted, ``MHC_DATA_DIR``
             must be set.
         seed: Random seed for classifiers and splits.
+        predictions_dir: when set, write per-(method, task) test predictions +
+            a shared ``_subgroups.json`` here, for the paper-metrics bootstrap.
 
     Returns:
-        PredictionResults with per-task metrics and a global score.
+        PredictionResults with per-task metrics.
     """
     from openmhc._evaluate import evaluate_prediction as _eval
 
-    return _eval(encoder, version=version, tasks=tasks, data_dir=data_dir, seed=seed)
+    return _eval(
+        model,
+        version=version,
+        tasks=tasks,
+        data_dir=data_dir,
+        seed=seed,
+        predictions_dir=predictions_dir,
+    )
 
 
 def evaluate_imputation(
@@ -114,7 +142,7 @@ def evaluate_imputation(
     Args:
         imputer: Object implementing the Imputer protocol.
         version: ``"full"`` (11,894-user leaderboard split) or ``"xs"``
-            (593-user reviewer subset). Required — cross-checked against
+            (593-user quickstart subset). Required — cross-checked against
             the dataset root's ``dataset_version.json`` marker.
         masking_scenarios: "all" to run all 6 scenarios, or a list of
             scenario names.
@@ -256,14 +284,14 @@ def evaluate_forecasting(
 
 
 def list_tasks() -> list[str]:
-    """Return all 33 available prediction task names.
+    """Return the 32 benchmark prediction task names.
 
     Returns:
-        Sorted list of task name strings.
+        List of task name strings (the same set ``evaluate_prediction(tasks="all")`` runs).
     """
-    from labels.api import TARGET_NAMES
+    from openmhc._constants import BENCHMARK_TASKS
 
-    return sorted(TARGET_NAMES)
+    return list(BENCHMARK_TASKS)
 
 
 def list_masking_scenarios() -> list[str]:

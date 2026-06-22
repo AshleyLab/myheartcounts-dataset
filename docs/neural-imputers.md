@@ -30,7 +30,7 @@ pip install 'openmhc[lsm2]'     # for LSM2Imputer / LSM2WeeklySparseImputer
 pip install 'openmhc[pypots,lsm2]'
 ```
 
-`pypots` pulls in `pypots>=0.7`. `lsm2` pulls in `pytorch-lightning>=2.0`.
+`pypots` pulls in `pypots>=1.2`. `lsm2` pulls in `pytorch-lightning>=2.0`.
 `torch` is already a base dependency, so no extra install is needed for it.
 
 Importing the wrapper classes (`from openmhc.imputers import LSM2Imputer`) is
@@ -124,8 +124,9 @@ BRITSImputer.from_release("hf://MyHeartCounts/openmhc-brits-imp@v1.0")
 
 Snapshots cache via `huggingface_hub`'s default location
 (`~/.cache/huggingface/hub`, controllable via `HF_HOME`). Only the
-manifest, normalization stats, and checkpoint files are downloaded — the
-model card and any other repo metadata are skipped.
+manifest, normalization stats, FEDformer `fourier_modes.json` sidecar, and
+checkpoint files are downloaded — the model card and any other repo metadata
+are skipped.
 
 [openrail]: https://huggingface.co/blog/open_rlhf
 
@@ -139,24 +140,34 @@ A release is a self-contained directory:
 my-release/
 ├── model.pypots                 # or model.ckpt for LSM2
 ├── normalization_stats.json
+├── fourier_modes.json           # required for FEDformer spec v2 bundles
 └── openmhc_manifest.json
 ```
 
-`openmhc_manifest.json` schema (spec_version 1):
+`openmhc_manifest.json` schema (current writer emits spec_version 2):
 
 ```json
 {
-  "spec_version": 1,
-  "kind": "brits",
+  "spec_version": 2,
+  "kind": "fedformer",
   "checkpoint": "model.pypots",
   "normalization_stats": "normalization_stats.json",
+  "fourier_modes": "fourier_modes.json",
   "arch": {
     "n_steps": 1440,
     "n_features": 19,
-    "rnn_hidden_size": 128
+    "n_layers": 2,
+    "d_model": 512,
+    "n_heads": 8,
+    "d_ffn": 128,
+    "moving_avg_window_size": 25,
+    "dropout": 0.1,
+    "variant": "Fourier",
+    "modes": 32,
+    "mode_select": "random"
   },
   "provenance": {
-    "wandb_artifact": "MHC_Dataset/.../brits:v0",
+    "wandb_artifact": "MHC_Dataset/.../fedformer:v0",
     "wandb_run": "...",
     "val_mae": 0.0945,
     "val_epoch": 5
@@ -169,6 +180,12 @@ Paths are stored *relative to the manifest file*, so the bundle is movable —
 `shutil.copytree` it anywhere and `from_release` still works. The
 `normalization_stats` field may be `null` for checkpoints trained on raw
 inputs (`BRITSImputer` defaults to no normalization in this project).
+The `fourier_modes` field is only valid for FEDformer and is required for
+current FEDformer releases; it points to the sidecar used to restore PyPOTS
+FourierBlock indices. Spec v1 manifests without this sidecar are still
+loadable for legacy compatibility, but FEDformer bundles without it use the
+legacy "re-draw on construct" path described below and should not be used for
+paper-faithful results.
 
 `provenance` is freeform metadata; the loader ignores unknown keys.
 
@@ -357,10 +374,12 @@ wandb artifact get MHC_Dataset/mhc-mae-ssl/mae-weekly-sparse-d4:v0      --root .
 ```
 
 The LSM2 wrappers look for `*.ckpt` (then `*.pt`, then `*.pth`) inside the
-downloaded directory. Normalization stats are typically embedded in
-`ckpt["LightningDataModule"]["normalization_stats"]`, so no sibling JSON is
-required — the converter (and the wrappers) will pull stats straight from the
-checkpoint.
+downloaded directory. Direct wrapper construction only reads a
+`normalization_stats.json` passed via `normalization_stats_path`; it does not
+extract stats from the checkpoint by itself. The release converter can extract
+stats embedded in `ckpt["LightningDataModule"]["normalization_stats"]` and
+write the sibling JSON into the bundle, which is what `from_release()` then
+uses.
 
 ---
 
@@ -521,7 +540,7 @@ The `imputation_training` pipeline sidesteps this by:
 1. Seeding all RNGs deterministically before model construction.
 2. Capturing each trained `FourierBlock.index` to a
    `fourier_modes.json` sidecar written next to the `.pypots` file in
-   the release bundle. Manifest spec v2 adds an optional
+   the release bundle. Manifest spec v2 adds a required FEDformer
    `fourier_modes` field that points at the sidecar.
 3. Restoring those indices post-`model.load()` at inference time (see
    `FEDformerImputer._post_load`).

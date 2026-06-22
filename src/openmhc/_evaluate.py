@@ -1,7 +1,7 @@
 """Public evaluation functions for OpenMHC.
 
 These functions provide a simple interface to the benchmark's evaluation
-pipelines. They accept duck-typed Encoder/Imputer objects and return
+pipelines. They accept duck-typed Method/Imputer/Forecaster objects and return
 structured results.
 """
 
@@ -11,7 +11,6 @@ import json
 import logging
 import os
 import tempfile
-import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -20,7 +19,7 @@ import numpy as np
 import pandas as pd
 
 if TYPE_CHECKING:
-    from openmhc._protocols import Encoder, Imputer
+    from openmhc._protocols import Imputer, Method
 
 from openmhc._dataset import (
     EXPECTED_N_USERS,
@@ -88,6 +87,7 @@ class _DatasetPaths:
     daily_hf: Path
     window_index: Path
     weekly_labels_lookup: Path
+    daily_labels_lookup: Path
     splits_file: Path
     norm_stats: Path
     clip_dates: Path
@@ -141,16 +141,21 @@ class _DatasetPaths:
                 f"root, or pass version={marker['version']!r}."
             )
 
-        splits_file = root / "splits" / _SPLIT_FILENAMES[version]
-        cls._validate_split_file(splits_file, version, marker)
+        paths = cls._build(root, version)
+        cls._validate_split_file(paths.splits_file, version, marker)
+        return paths
 
+    @classmethod
+    def _build(cls, root: Path, version: str) -> _DatasetPaths:
+        """Derive the sub-path bundle from a resolved root + version (no I/O)."""
         return cls(
             root=root,
             daily_hourly_hf=root / "processed" / "daily_hourly_hf",
             daily_hf=root / "processed" / "daily_hf",
             window_index=root / "processed" / "window_index_w7_s7_d5.parquet",
             weekly_labels_lookup=root / "processed" / "weekly_labels_lookup_stride7.parquet",
-            splits_file=splits_file,
+            daily_labels_lookup=root / "processed" / "daily_labels_lookup.parquet",
+            splits_file=root / "splits" / _SPLIT_FILENAMES[version],
             norm_stats=root / "processed" / "normalization_stats_hourly.json",
             clip_dates=root / "labels" / "clip_dates.json",
             labels_dir=root / "labels",
@@ -158,6 +163,24 @@ class _DatasetPaths:
             forecasting_sample_index_dir=root / "forecasting_sample_index",
             version=version,
         )
+
+    @classmethod
+    def from_root(cls, override: str | Path | None = None) -> _DatasetPaths:
+        """Build the bundle from an already-validated root, trusting its marker.
+
+        For internal callers (the bundled models, the loader) that received a root the
+        public API already resolved and version-checked: they need the sub-paths, not a
+        re-assertion of the version. The ``dataset_version.json`` marker supplies the
+        version; there is no caller-vs-marker cross-check. Public entry points use
+        :meth:`resolve`, which requires an explicit ``version`` and cross-checks it.
+
+        Raises:
+            FileNotFoundError: If the root is missing or has no ``dataset_version.json``
+                marker (see :func:`openmhc.write_dataset_marker`).
+        """
+        root = _resolve_dataset_root(override)
+        version = read_dataset_marker(root)["version"]
+        return cls._build(root, version)
 
     @staticmethod
     def _validate_split_file(splits_file: Path, version: str, marker: dict) -> None:
@@ -258,359 +281,110 @@ def _ensure_labels_env(labels_dir: Path) -> None:
 
 
 def evaluate_prediction(
-    encoder: Encoder,
+    model: Method,
     version: Version,
     tasks: str | list[str] = "all",
     data_dir: str | Path | None = None,
     seed: int = 42,
+    predictions_dir: str | Path | None = None,
 ) -> PredictionResults:
-    """Run health-prediction evaluation with a custom encoder.
+    """Run health-prediction evaluation with a custom model.
 
-    Encodes weekly sensor tensors via `encoder.encode()` and evaluates the
-    resulting embeddings on up to 33 health prediction tasks using linear
-    probes (logistic regression for binary, ordinal logistic for ordinal,
-    ridge regression for continuous).
+    Fits the model per task on the train cohort's eligible data + labels, scores
+    its test-split predictions, and reports the primary metric per task type.
 
     Args:
-        encoder: Object with an `encode(weekly_tensors) -> embeddings` method.
-            Input shape is (B, 168, 38), output shape is (B, D).
-        version: ``"xs"`` (593-user reviewer subset) or ``"full"``
-            (11,894-user leaderboard split). Required — cross-checked
-            against the dataset root's ``dataset_version.json`` marker.
-        tasks: "all" to run all 33 tasks, or a list of task name strings.
+        model: Object implementing the :class:`~openmhc.Method` contract —
+            ``fit(data, labels, task_type)`` / ``predict(data)``, where ``data``
+            is a list with one ``(n_segments, 24, 38)`` array per participant
+            (channels 0-18 raw values with NaN at missing, 19-37 the mask).
+            Encoder-style models run the uniform :class:`~openmhc.LinearProbe`
+            inside ``fit`` / ``predict``; end-to-end models own their head.
+        version: ``"xs"`` (593-user quickstart subset) or ``"full"``
+            (11,894-user leaderboard split). Required — cross-checked against
+            the dataset root's ``dataset_version.json`` marker.
+        tasks: "all" to run the 32 benchmark tasks, or a list of task name strings.
         data_dir: Override for the dataset root (the same root that
             ``download_dataset`` writes to). If omitted, ``MHC_DATA_DIR`` must
             be set. All sub-paths (`processed/daily_hourly_hf/`, `splits/`,
             `labels/`, etc.) are derived from this root.
         seed: Random seed for classifiers and splits.
+        predictions_dir: when set, write per-(method, task) test predictions +
+            a shared ``_subgroups.json`` here — the input the paper-metrics
+            bootstrap paired-resamples for skill / rank / fairness CIs.
 
     Returns:
-        A PredictionResults instance with per-task metrics and a global score
-        (mean AUROC across binary tasks).
+        A PredictionResults instance with per-task metrics.
+
+    Raises:
+        TypeError: If ``model`` does not satisfy the :class:`~openmhc.Method` contract
+            (no callable ``predict``).
     """
-    import pandas as pd
+    from openmhc._protocols import Method
+
+    if not isinstance(model, Method):
+        raise TypeError(
+            f"{type(model).__name__} does not satisfy openmhc.Method: a callable "
+            "predict(self, data) is required. See openmhc.Method for the contract."
+        )
 
     paths = _DatasetPaths.resolve(data_dir, version=version)
-    paths.require(
-        "daily_hourly_hf",
-        "window_index",
-        "weekly_labels_lookup",
-        "labels_dir",
-    )
     _ensure_labels_env(paths.labels_dir)
 
-    from downstream_evaluation.config import ClassifierConfig, parse_time_windows
     from downstream_evaluation.data.splits import load_split_file
-    from downstream_evaluation.evaluation.metrics import (
-        compute_binary_metrics,
-        compute_multiclass_metrics,
-        compute_ordinal_metrics,
-        compute_regression_metrics,
-        get_task_type,
-    )
-    from downstream_evaluation.models.registry import create_model
-    from labels.api import TARGET_NAMES
+    from downstream_evaluation.evaluation.metrics import get_task_type
+    from downstream_evaluation.runner import EvalConfig, run_eval
+    from openmhc._constants import BENCHMARK_TASKS
 
-    # Resolve tasks.
     if tasks == "all":
-        task_list = sorted(TARGET_NAMES)
+        task_list = list(BENCHMARK_TASKS)
     elif isinstance(tasks, str):
         task_list = [tasks]
     else:
         task_list = list(tasks)
 
-    # Resolve paths.
-    daily_hourly_dir = paths.daily_hourly_hf
-    split_file = paths.splits_file
-    window_index_path = paths.window_index
-    labels_path = paths.weekly_labels_lookup
-    clip_dates_path = paths.clip_dates
+    split_users = load_split_file(paths.splits_file)
 
-    # Load user splits.
-    split_users = load_split_file(split_file)
-
-    # Load labels.
-    labels_df = pd.read_parquet(labels_path)
-
-    # Apply coverage filter (min 5 valid days).
-    valid_indices = None
-    if "n_valid_days" in labels_df.columns:
-        mask = labels_df["n_valid_days"].values >= 5
-        valid_indices = np.where(mask)[0]
-        labels_df = labels_df.iloc[valid_indices].reset_index(drop=True)
-
-    # Load clip dates.
-    all_clip_dates: dict = {}
-    if clip_dates_path.exists():
-        with open(clip_dates_path) as f:
-            all_clip_dates = json.load(f)
-
-    # Load dataset (on-the-fly weekly from daily_hourly_hf + window index).
-    from data.datasets.indexed_week_dataset import load_indexed_week_dataset
-
-    hf_dataset = load_indexed_week_dataset(
-        daily_hourly_hf_dir=str(daily_hourly_dir),
-        window_index_path=str(window_index_path),
-        window_size=7,
+    # External models and bundled baselines run through the one engine identically
+    # (mirrors evaluate_imputation → run_eval). The cohort and per-task temporal
+    # scope come from the lookup the engine selects.
+    cfg = EvalConfig(
+        data_dir=str(paths.root),
+        split_users=split_users,
+        tasks=task_list,
+        seed=seed,
+        predictions_dir=str(predictions_dir) if predictions_dir is not None else None,
     )
-    logger.info("Loaded IndexedWeekDataset: %d windows", len(hf_dataset))
+    results = run_eval(cfg, model)
 
-    if valid_indices is not None:
-        hf_dataset = hf_dataset.select(valid_indices)
-
-    # Extract features using the user's encoder.
-    features, user_ids, segment_starts = _extract_encoder_features(
-        encoder, hf_dataset, split_users, seed
-    )
-
-    # Build a lightweight store for aggregation.
-    from downstream_evaluation.feature_store import WeekFeatureStore, _StoreMetadata
-
-    segment_starts_ns = pd.to_datetime(segment_starts.tolist()).astype("int64").values
-
-    n_valid_hours = (
-        np.array(hf_dataset["n_valid_hours"], dtype=np.int32)
-        if "n_valid_hours" in hf_dataset.column_names
-        else None
-    )
-
-    store_meta = _StoreMetadata(
-        feature_type="custom_encoder",
-        feature_dim=features.shape[1],
-        n_samples=features.shape[0],
-        segment_type="weekly",
-    )
-    store = WeekFeatureStore(
-        features, user_ids, segment_starts, segment_starts_ns, store_meta, n_valid_hours
-    )
-
-    del hf_dataset
-
-    # Evaluate: iterate over tasks with "full" time window and linear probes.
-    time_windows = parse_time_windows("full,before_label")
-
-    clf_mapping = {
-        "binary": ["logistic_regression"],
-        "ordinal": ["ordinal_logit_at"],
-        "regression": ["ridge_cv"],
-        "multiclass": ["logistic_regression"],
+    # Flatten the engine's ``{task: {metric: value, n_test}}`` into long-format
+    # records.
+    probe_by_type = {
+        "binary": "logistic_regression",
+        "multiclass": "logistic_regression",
+        "ordinal": "logreg_ordinal",
+        "regression": "linear_regression",
     }
-
     records: list[dict] = []
-    binary_aurocs: list[float] = []
-
-    for task_name in task_list:
-        try:
-            task_type = get_task_type(task_name)
-        except ValueError:
-            logger.warning("Unknown task %s, skipping", task_name)
+    for task_name, task_metrics in results.items():
+        if task_name == "config":
             continue
-
-        classifiers = clf_mapping.get(task_type, [])
-        if not classifiers:
-            continue
-
-        for tw in time_windows:
-            if tw.needs_clip_dates and task_name not in all_clip_dates:
+        task_type = get_task_type(task_name)
+        n_test = task_metrics.get("n_test")
+        for metric_name, value in task_metrics.items():
+            if metric_name == "n_test":
                 continue
-
-            clip = all_clip_dates.get(task_name)
-
-            for clf_type in classifiers:
-                if task_name not in labels_df.columns:
-                    logger.warning("Task %s missing from labels lookup, skipping", task_name)
-                    break
-                task_labels = labels_df[task_name].values
-                try:
-                    splits = store.aggregate_for_task(
-                        task_labels,
-                        task_type,
-                        clip,
-                        tw,
-                        split_users,
-                        pooling_method="mean",
-                    )
-                except Exception as e:
-                    logger.warning("Task %s/%s failed aggregation: %s", task_name, tw.name, e)
-                    continue
-
-                # Current signature returns 4-tuple (X, y, user_ids, n_weeks)
-                # under "train"/"val"/"test" keys (split file used "validation").
-                X_train, y_train, *_ = splits["train"]
-                X_val, y_val, *_ = splits["val"]
-                X_test, y_test, *_ = splits["test"]
-
-                if len(X_train) == 0 or len(X_test) == 0:
-                    logger.warning("Task %s: empty split, skipping", task_name)
-                    continue
-
-                clf_config = ClassifierConfig(type=clf_type, use_scaler=True)
-                clf = create_model(clf_config, random_state=seed, task_type=task_type)
-
-                # NaN handling for sklearn.
-                for X in [X_train, X_val, X_test]:
-                    np.nan_to_num(X, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
-
-                with warnings.catch_warnings():
-                    warnings.filterwarnings("ignore", category=RuntimeWarning)
-                    clf.fit(X_train, y_train)
-
-                    row = {
-                        "task": task_name,
-                        "task_type": task_type,
-                        "classifier": clf_type,
-                        "n_train": len(X_train),
-                        "n_test": len(X_test),
-                    }
-
-                    if task_type == "binary":
-                        test_prob = clf.predict_proba(X_test)[:, 1]
-                        m = compute_binary_metrics(y_test, test_prob)
-                        row["metric"] = "auroc"
-                        row["value"] = m["auroc"]
-                        records.append(row)
-                        binary_aurocs.append(m["auroc"])
-                        records.append(
-                            {
-                                **row,
-                                "metric": "auprc",
-                                "value": m["auprc"],
-                            }
-                        )
-
-                    elif task_type == "ordinal":
-                        test_pred = clf.predict(X_test)
-                        m = compute_ordinal_metrics(y_test, test_pred)
-                        for metric_name in ("spearman_r", "qwk", "mae_ordinal"):
-                            records.append({**row, "metric": metric_name, "value": m[metric_name]})
-
-                    elif task_type == "multiclass":
-                        test_pred = clf.predict(X_test)
-                        m = compute_multiclass_metrics(y_test, test_pred)
-                        for metric_name in ("accuracy", "f1_macro"):
-                            records.append({**row, "metric": metric_name, "value": m[metric_name]})
-
-                    elif task_type == "regression":
-                        test_pred = clf.predict(X_test)
-                        m = compute_regression_metrics(y_test, test_pred)
-                        for metric_name in ("mse", "mae", "pearson_r", "r2"):
-                            records.append({**row, "metric": metric_name, "value": m[metric_name]})
-
-    global_score = float(np.mean(binary_aurocs)) if binary_aurocs else 0.0
-
-    return PredictionResults(records=records, global_score=global_score)
-
-
-def _extract_encoder_features(
-    encoder: Encoder,
-    hf_dataset,
-    split_users: dict[str, set[str]],
-    seed: int,
-    batch_size: int = 64,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Extract features from all samples using the user's encoder.
-
-    Normalizes sensor values using training-set statistics, constructs
-    (168, 38) tensors, and calls `encoder.encode()` in batches.
-
-    Args:
-        encoder: Object implementing the Encoder protocol.
-        hf_dataset: HuggingFace dataset with `values`, `mask`, `user_id`,
-            and timestamp columns.
-        split_users: Mapping of split name to set of user ID strings. The
-            "train" split is used to compute normalization statistics.
-        seed: Random seed for sampling training statistics.
-        batch_size: Number of samples per encoding batch.
-
-    Returns:
-        A tuple of (features, user_ids, segment_starts) where:
-            - features: float32 array of shape (N, D).
-            - user_ids: object array of shape (N,) with user ID strings.
-            - segment_starts: object array of shape (N,) with ISO timestamp
-              strings.
-    """
-    from tqdm import tqdm
-
-    N = len(hf_dataset)
-    user_ids = np.array(hf_dataset["user_id"], dtype=object)
-
-    # Determine timestamp column.
-    if "week_start" in hf_dataset.column_names:
-        segment_starts = np.array(hf_dataset["week_start"], dtype=object)
-    elif "date" in hf_dataset.column_names:
-        segment_starts = np.array(hf_dataset["date"], dtype=object)
-    else:
-        segment_starts = np.array([""] * N, dtype=object)
-
-    # Compute normalization stats from training set.
-    train_users = split_users.get("train", set())
-    train_mask = np.array([uid in train_users for uid in user_ids])
-
-    logger.info("Computing normalization stats from %d training samples...", train_mask.sum())
-    n_channels = 19
-    sums = np.zeros(n_channels, dtype=np.float64)
-    sq_sums = np.zeros(n_channels, dtype=np.float64)
-    counts = np.zeros(n_channels, dtype=np.float64)
-
-    train_indices = np.where(train_mask)[0]
-    stats_n = min(len(train_indices), 10000)
-    rng = np.random.RandomState(seed)
-    stats_indices = rng.choice(train_indices, stats_n, replace=False) if stats_n > 0 else []
-
-    for idx in stats_indices:
-        vals = np.array(hf_dataset[int(idx)]["values"], dtype=np.float32)
-        mask = np.array(hf_dataset[int(idx)]["mask"], dtype=np.float32)
-        if vals.ndim == 2:
-            vals_ch = vals[:, :n_channels]
-            mask_ch = mask[:, :n_channels]
-        else:
-            continue
-        observed = mask_ch > 0.5
-        for c in range(n_channels):
-            obs = vals_ch[:, c][observed[:, c]]
-            if len(obs) > 0:
-                sums[c] += obs.sum()
-                sq_sums[c] += (obs**2).sum()
-                counts[c] += len(obs)
-
-    means = np.where(counts > 0, sums / counts, 0.0).astype(np.float32)
-    stds = np.where(
-        counts > 1,
-        np.sqrt((sq_sums / counts) - (sums / counts) ** 2),
-        1.0,
-    ).astype(np.float32)
-    stds = np.maximum(stds, 1e-6)
-
-    # Extract features in batches.
-    all_features: list[np.ndarray] = []
-
-    for start in tqdm(range(0, N, batch_size), desc="Encoding", unit="batch"):
-        end = min(start + batch_size, N)
-        batch_tensors = np.zeros((end - start, 168, 38), dtype=np.float32)
-
-        for i, idx in enumerate(range(start, end)):
-            row = hf_dataset[int(idx)]
-            vals = np.array(row["values"], dtype=np.float32)
-            mask = np.array(row["mask"], dtype=np.float32)
-
-            T = min(vals.shape[0], 168)
-            vals_ch = vals[:T, :n_channels]
-            mask_ch = mask[:T, :n_channels]
-
-            # Z-score normalize.
-            observed = mask_ch > 0.5
-            normalized = np.where(observed, (vals_ch - means) / stds, np.nan)
-
-            batch_tensors[i, :T, :n_channels] = normalized
-            batch_tensors[i, :T, n_channels : 2 * n_channels] = 1.0 - mask_ch
-
-        embeddings = encoder.encode(batch_tensors)
-        all_features.append(np.asarray(embeddings, dtype=np.float32))
-
-    features = np.concatenate(all_features, axis=0)
-    logger.info("Extracted %dD features for %d samples", features.shape[1], features.shape[0])
-
-    return features, user_ids, segment_starts
+            records.append(
+                {
+                    "task": task_name,
+                    "task_type": task_type,
+                    "classifier": probe_by_type.get(task_type),
+                    "metric": metric_name,
+                    "value": value,
+                    "n_test": n_test,
+                }
+            )
+    return PredictionResults(records=records)
 
 
 # ---------------------------------------------------------------------------
@@ -650,7 +424,7 @@ def evaluate_imputation(
             per-window calendar-day deltas (``-1`` for padded slots) for
             calendar-aware models (e.g. RoPE day embeddings).
         version: ``"full"`` (11,894-user leaderboard split) or ``"xs"``
-            (593-user reviewer subset). Required — cross-checked against
+            (593-user quickstart subset). Required — cross-checked against
             the dataset root's ``dataset_version.json`` marker.
         masking_scenarios: "all" to run all 6 scenarios, or a list of
             scenario name strings.

@@ -19,20 +19,17 @@ class PredictionResults:
 
     Attributes:
         records: List of per-task metric records. Each record is a dict with
-            keys: task, task_type, classifier, metric, value, n_train, n_test.
-        global_score: Primary ranking metric (mean test AUROC across binary
-            tasks).
+            keys: task, task_type, classifier, metric, value, n_test.
     """
 
     records: list[dict] = field(repr=False)
-    global_score: float = 0.0
 
     def to_dataframe(self) -> pd.DataFrame:
         """Convert results to a pandas DataFrame.
 
         Returns:
             DataFrame with columns: task, task_type, classifier, metric,
-            value, n_train, n_test.
+            value, n_test.
         """
         return pd.DataFrame(self.records)
 
@@ -87,17 +84,18 @@ class PredictionResults:
         feature_dim: str = "—",
         notes: str = "",
     ) -> str:
-        """Render a paste-ready leaderboard-submission body.
+        """Render the Track 1 leaderboard submission packet.
 
-        See `.github/ISSUE_TEMPLATE/submission.yml` for field semantics.
-        Skill scores are emitted as "—" placeholders for Track 1; maintainers
-        fill them in during ingestion. ``paper_url`` is optional — leave
-        empty for independent submissions without a write-up.
+        Returns the ``meta.json`` sidecar block plus the pull-request checklist
+        for the Hugging Face dataset repo
+        ``MyHeartCounts/OpenMHC-leaderboard-data``; the maintainers compute
+        skill / fair-skill / rank from the substrate during ingestion.
+        ``paper_url`` is optional — leave empty for independent submissions
+        without a write-up.
         """
         from openmhc._submission import prediction_to_submission_yaml
 
         return prediction_to_submission_yaml(
-            self,
             method_name=method_name,
             submitter_team=submitter_team,
             code_url=code_url,
@@ -111,7 +109,7 @@ class PredictionResults:
 
     def __repr__(self) -> str:
         n = len(self.records)
-        return f"PredictionResults({n} records, global_score={self.global_score:.4f})"
+        return f"PredictionResults({n} records)"
 
 
 @dataclass
@@ -263,18 +261,19 @@ class ImputationResults:
         feature_dim: str = "—",
         notes: str = "",
     ) -> str:
-        """Render a paste-ready leaderboard-submission body.
+        """Render the Track 2 leaderboard submission packet.
 
-        See `.github/ISSUE_TEMPLATE/submission.yml` for field semantics.
-        Skill scores are computed locally from frozen LOCF baselines
-        (`data/baselines/imputation_locf.json`) when the file is present,
-        else emitted as "—". ``paper_url`` is optional — leave empty for
-        independent submissions without a write-up.
+        Returns the ``meta.json`` sidecar block plus the pull-request checklist
+        for the Hugging Face dataset repo
+        ``MyHeartCounts/OpenMHC-leaderboard-data``. The per-user substrate
+        parquet (``per_user_errors.parquet``, written when you pass
+        ``output_dir=`` to ``evaluate_imputation``) is the second PR file; the
+        maintainers compute skill / fair-skill / rank from it vs. LOCF.
+        ``paper_url`` is optional.
         """
         from openmhc._submission import imputation_to_submission_yaml
 
         return imputation_to_submission_yaml(
-            self,
             method_name=method_name,
             submitter_team=submitter_team,
             code_url=code_url,
@@ -371,16 +370,18 @@ class ForecastingResults:
         feature_dim: str = "—",
         notes: str = "",
     ) -> str:
-        """Render a paste-ready submission body for a Track 3 forecasting result.
+        """Render the Track 3 leaderboard submission packet.
 
-        Skill scores against the Seasonal Naive baseline are emitted as ``—``
-        because the per-channel baseline file isn't shipped yet; maintainers
-        fill them in from ``raw_metrics`` during ingestion.
+        Returns the ``meta.json`` sidecar block plus the pull-request checklist
+        for the Hugging Face dataset repo
+        ``MyHeartCounts/OpenMHC-leaderboard-data``; the maintainers compute
+        skill / fair-skill / rank vs. the Seasonal Naive baseline from the
+        substrate during ingestion. The Track 3 subdir name and substrate
+        format are still being finalized (the packet flags this).
         """
         from openmhc._submission import forecasting_to_submission_yaml
 
         return forecasting_to_submission_yaml(
-            self,
             method_name=method_name,
             submitter_team=submitter_team,
             code_url=code_url,

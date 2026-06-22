@@ -5,9 +5,8 @@
 # do not need rerunning.
 #
 # Each method writes to ${RUNS_ROOT}/<method>/ — overwriting the prior leaky
-# results. Downstream paper pipeline + leaderboard JSON build picks up the new
-# CSVs by method name (see scripts/paper_results/run_paper_pipeline.py and
-# scripts/paper_results/build_leaderboard_json.py).
+# results. Downstream paper pipeline picks up the new CSVs by method name
+# (see scripts/paper_results/run_paper_pipeline.py).
 #
 # Resources mirror run_baselines.sbatch (normal, 12 CPUs, 128G). Walltime is
 # tighter since we run 3/9 methods.
