@@ -153,7 +153,7 @@ class _DatasetPaths:
             daily_hourly_hf=root / "processed" / "daily_hourly_hf",
             daily_hf=root / "processed" / "daily_hf",
             window_index=root / "processed" / "window_index_w7_s7_d5.parquet",
-            weekly_labels_lookup=root / "processed" / "weekly_labels_lookup_stride7.parquet",
+            weekly_labels_lookup=root / "processed" / "weekly_labels_lookup_stride7_windowed.parquet",
             daily_labels_lookup=root / "processed" / "daily_labels_lookup.parquet",
             splits_file=root / "splits" / _SPLIT_FILENAMES[version],
             norm_stats=root / "processed" / "normalization_stats_hourly.json",

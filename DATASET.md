@@ -113,12 +113,4 @@ Submissions to the leaderboard use **C1** by default. Switch with the `data.labe
 Validity is **baked into the shipped labels lookups** — a non-sentinel cell in `daily_labels_lookup.parquet` / `weekly_labels_lookup_stride7_windowed.parquet` already marks a valid `(user, day/week)` inside the task window — so no standalone validity file ships with the dataset.
 
 ## Data Use Agreement
-
-The MHC dataset is shared under a Data Use Agreement (DUA) covering responsible-use terms for participant-derived health data. Downloading from the Hub triggers a click-through DUA acceptance. By using the dataset you agree to:
-
-- Use the data for academic research only
-- Not attempt to re-identify participants
-- Not redistribute the raw data
-- Cite the paper
-
-Full DUA text: <https://myheartcounts.stanford.edu/dua>
+The MHC dataset is shared under a Data Use Agreement (DUA) covering responsible-use terms for participant-derived health data. Downloading from the Hub triggers a click-through DUA acceptance.

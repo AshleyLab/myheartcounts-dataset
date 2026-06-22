@@ -25,13 +25,17 @@ N_CHANNELS = 19
 # WBM_Final_HPO_best architecture (the checkpoint's dims; load is strict=False with
 # a missing-keys check, so a wrong dim fails loudly).
 _ARCH = dict(in_dim=38, embed_dim=256, hidden_dim=64, num_layers=4, proj_dim=128, dropout=0.223)
-DEFAULT_CHECKPOINT = "wandb:MHC_Dataset/mhc-apple-contrastive-transformer/WBM_Final_HPO_best:v1"
+# Published release bundle (mirror of the W&B artifact
+# wandb:MHC_Dataset/mhc-apple-contrastive-transformer/WBM_Final_HPO_best:v1, recorded in
+# the bundle's openmhc_manifest.json provenance). The resolver auto-selects the single
+# .ckpt; set WBM_CHECKPOINT to override with a local/W&B ref.
+DEFAULT_CHECKPOINT = "hf://MyHeartCounts/openmhc-wbm-dp"
 
 
 # --------------------------------------------------------------------------- #
 # Stage-1 helpers: normalization-stat loading and per-example input assembly.
 # --------------------------------------------------------------------------- #
-def _resolve_norm_stats(paths):
+def _resolve_norm_stats(paths, normalization_stats_path: str | None = None):
     """Load the canonical hourly normalization constants.
 
     The pretraining/eval normalization is **not** a naive per-channel z-score: only
@@ -41,10 +45,17 @@ def _resolve_norm_stats(paths):
     ``normalization_stats_hourly.json`` — a small fixed preprocessing input (like the
     checkpoint), not an embedding cache. Recomputing them naively here would diverge
     (wrong channel set + weekly-vs-daily population), so we load the canonical file.
+
+    ``normalization_stats_path`` overrides the dataset lookup (e.g. the copy shipped
+    inside a published release bundle); when ``None`` the dataset's canonical file
+    next to ``daily_hourly_hf`` is used.
     """
     import json
 
-    json_path = paths.daily_hourly_hf.parent / "normalization_stats_hourly.json"
+    if normalization_stats_path is not None:
+        json_path = Path(normalization_stats_path)
+    else:
+        json_path = paths.daily_hourly_hf.parent / "normalization_stats_hourly.json"
     if not json_path.exists():
         raise FileNotFoundError(
             f"normalization_stats_hourly.json not found at {json_path}. Build it from "
@@ -120,6 +131,7 @@ def extract_wbm_embeddings(
     batch_size: int = 64,
     seed: int = 42,
     loader=None,
+    normalization_stats_path: str | None = None,
 ) -> None:
     """Regenerate the WBM embedding intermediate from raw (GPU).
 
@@ -127,7 +139,8 @@ def extract_wbm_embeddings(
     shared :class:`~downstream_evaluation.data.loader.DataLoader`'s daily rows + the
     window index — one ``daily_hourly_hf`` read per run (a loader is built here when
     none is injected). Writes ``embeddings.npy`` / ``user_ids.npy`` / ``week_starts.npy``
-    under ``output_dir``.
+    under ``output_dir``. ``normalization_stats_path`` overrides the dataset's canonical
+    normalization constants (e.g. a copy bundled in a published release).
     """
     import torch
     from tqdm import tqdm
@@ -156,7 +169,7 @@ def extract_wbm_embeddings(
     week_starts = np.asarray(ds["week_start"], dtype=object)
 
     # Canonical normalization constants (channels 0–6 z-scored; 7–18 identity).
-    means, stds = _resolve_norm_stats(paths)
+    means, stds = _resolve_norm_stats(paths, normalization_stats_path)
     logger.info("WBM norm stats: means[:3]=%s stds[:3]=%s", means[:3], stds[:3])
 
     enc = _load_wbm_encoder(checkpoint, device)
@@ -199,12 +212,19 @@ class WBM:
         checkpoint: str = DEFAULT_CHECKPOINT,
         cache_dir: str | None = None,
         seed: int = 42,
+        normalization_stats_path: str | None = None,
     ):
-        """Store the checkpoint, cache dir, and seed; embeddings load lazily on first use."""
+        """Store the checkpoint, cache dir, and seed; embeddings load lazily on first use.
+
+        ``normalization_stats_path`` overrides the dataset's canonical
+        ``normalization_stats_hourly.json`` (e.g. the copy bundled in a published
+        release); ``None`` keeps the dataset lookup.
+        """
         self._data_dir = data_dir
         self._checkpoint = checkpoint
         self._cache_dir = cache_dir
         self.seed = seed
+        self._normalization_stats_path = normalization_stats_path
         self._by_key: dict | None = None
         self._dim = 0
         self._loader = None  # shared DataLoader (cache-miss extraction), injected
@@ -231,6 +251,7 @@ class WBM:
                 data_dir=self._data_dir,
                 seed=self.seed,
                 loader=self._loader,
+                normalization_stats_path=self._normalization_stats_path,
             )
         emb = np.load(cache / "embeddings.npy")
         uids = np.load(cache / "user_ids.npy", allow_pickle=True)
@@ -275,12 +296,26 @@ class WBMProbe:
     needs_segments = True  # daily segments feed the harness Linear fallback
 
     def __init__(
-        self, data_dir: str | None = None, checkpoint: str = DEFAULT_CHECKPOINT, seed: int = 42
+        self,
+        data_dir: str | None = None,
+        checkpoint: str = DEFAULT_CHECKPOINT,
+        seed: int = 42,
+        normalization_stats_path: str | None = None,
     ):
-        """Store the data root, checkpoint, and seed; the encoder loads lazily on use."""
+        """Store the data root, checkpoint, and seed; the encoder loads lazily on use.
+
+        ``normalization_stats_path`` overrides the dataset's canonical
+        ``normalization_stats_hourly.json`` (e.g. the copy bundled in a published
+        release); it is forwarded to the WBM encoder.
+        """
         self._data_dir = data_dir
         self.seed = seed
-        self._wbm = WBM(data_dir=data_dir, checkpoint=checkpoint, seed=seed)
+        self._wbm = WBM(
+            data_dir=data_dir,
+            checkpoint=checkpoint,
+            seed=seed,
+            normalization_stats_path=normalization_stats_path,
+        )
         self._weekly_provider = None
         self._probe = None
         self._ctx = None  # EvalContext (task / split / cohort user_ids), injected per call

@@ -47,6 +47,8 @@ imputation_results_paper/
 .merge_cache/
 releases-fc/
 forecasting_model_ckpt/
+# Track-1 encoder release staging (large weights, not source)
+releases-enc/
 __MACOSX/
 
 # Scratch / throwaway experiment + benchmark scaffolding
