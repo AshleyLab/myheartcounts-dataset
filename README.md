@@ -2,8 +2,8 @@
 
 Evaluation API and reference implementations for the **MyHeartCounts Datasets & Benchmarks** (MHC D&B) leaderboard. Wearable sensor data from a real-world cardiovascular cohort, with three benchmark tracks: outcome prediction, imputation, and forecasting.
 
-- **Leaderboard:** https://myheartcounts.stanford.edu/benchmark
-- **Submit a result:** [open a submission issue](../../issues/new?template=submission.yml)
+- **Leaderboard:** https://myheartcounts.stanford.edu/openmhc
+- **Submit a result:** [Submit to the leaderboard](#submit-to-the-leaderboard)
 - **Paper:** *OpenMHC: Accelerating the Science of Wearable Foundation Models* (NeurIPS 2026)
 
 ## Install
