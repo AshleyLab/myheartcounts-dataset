@@ -14,13 +14,20 @@ jobs/sherlock/imputation_eval/
 │                            #      temporal_*, personalized_* (9 methods)
 ├── run_brits.sbatch         # GPU: any
 ├── run_dlinear.sbatch       # GPU: any  (smallest, 24h, 64G)
+├── run_dlinear_weekly.sbatch      # GPU: 7-day DLinear
 ├── run_fedformer.sbatch     # GPU: any
 ├── run_timesnet.sbatch      # GPU: GPU_MEM:24GB
 ├── run_lsm2.sbatch          # GPU: GPU_MEM:40GB
-├── run_lsm2_weekly_sparse.sbatch  # GPU: GPU_MEM:40GB
-├── sweep_methods.yaml       # Sherlock overlay of configs/paper/sweep_methods.yaml
-├── run_paper_bootstrap.sbatch     # Phase 1 + 2 (depends on all imputer jobs)
-├── submit_all.sh            # MASTER LAUNCHER — submits everything
+├── run_lsm2_weekly.sbatch         # GPU: GPU_MEM:32GB — dense 7-day LSM-2
+├── run_lsm2_weekly_48gb.sbatch    # alt: dense 7-day on GPU_MEM:48GB
+├── run_lsm2_weekly_sparse.sbatch  # GPU: GPU_MEM:32GB, --mem=96G, batch=16
+├── run_lsm2_weekly_sparse_24gb.sbatch  # alt: --mem=128G, batch=8 (host-OOM mitigation)
+├── sweep_methods.yaml       # 17-method paper sweep (incl. lsm2_weekly dense)
+├── sweep_methods_no_dense.yaml    # 16-method sweep (excl. lsm2_weekly) — bootstrap parity
+├── run_paper_bootstrap.sbatch     # Phase 1 + 2 on 17 methods (writes paper/)
+├── run_paper_bootstrap_no_dense.sbatch  # Phase 1 + 2 on 16 methods (writes paper_no_dense/)
+├── upload_leaderboard.sbatch      # Phase D: push substrate + bootstrap to HF
+├── submit_all.sh            # MASTER LAUNCHER — submits per-method eval jobs
 ├── babysit.sh               # /loop driver
 ├── _babysit.py              # actual watchdog (called by babysit.sh)
 ├── verify_parity.py         # compares new results vs MHC-benchmark max91d
@@ -101,10 +108,18 @@ python jobs/sherlock/imputation_eval/verify_parity.py
 | FEDformer | `gpu` | 48h | 8 | 96G | 1 | any |
 | TimesNet | `gpu` | 48h | 8 | 96G | 1 | `GPU_MEM:24GB` |
 | LSM2 daily | `gpu` | 48h | 8 | 96G | 1 | `GPU_MEM:40GB` |
-| LSM2 weekly sparse | `gpu` | 48h | 8 | 96G | 1 | `GPU_MEM:40GB` |
-| paper-bootstrap | `normal` | 8h | 12 | 128G | — | — |
+| LSM2 weekly sparse | `gpu` | 48h | 8 | 96G | 1 | `GPU_MEM:32GB` |
+| LSM2 weekly sparse 24GB | `gpu` | 48h | 8 | 128G | 1 | — (any GPU_MEM) |
+| LSM2 weekly dense | `gpu` | 48h | 8 | 96G | 1 | `GPU_MEM:32GB` |
+| LSM2 weekly dense 48GB | `gpu` | 48h | 8 | 96G | 1 | `GPU_MEM:48GB` |
+| paper-bootstrap (×2) | `normal` | 8h | 12 | 128G | — | — |
+| substrate producer (array) | `normal` | 45m | 8 | 32G | — | — |
+| HF leaderboard upload | `normal` | 1h | 2 | 8G | — | — |
 
 Mirrors `MHC-benchmark/jobs/stanford/sherlock/imputation/eval/*.sbatch`.
+
+The paper-bootstrap walltime ceiling of 8h is a conservative cap — the actual
+Phase 1+2 run on the full 16/17-method set takes ~1–2h.
 
 ## Re-bootstrap without re-eval
 
@@ -174,6 +189,151 @@ the imputer jobs complete; mismatches → inspect:
 4. normalization stats: the release bundle's
    `normalization_stats.json` must match the one MHC-benchmark trained
    against (`data/processed/pypotsdaily_h5/4bb0aa42/normalization_stats.json`).
+
+## Refreshing the HF leaderboard (canonical recipe)
+
+This is how the current leaderboard parquets at
+[`MyHeartCounts/OpenMHC-leaderboard-data`](https://huggingface.co/datasets/MyHeartCounts/OpenMHC-leaderboard-data)
+under `imputation/` were produced. Four phases — A is the heavy lift, B+C+D
+are a ~3-hour dependency chain.
+
+### Phase A — per-method evaluation
+
+Submit every imputer (8 sbatch jobs; the `baselines` job sequentially runs
+all 9 CPU baselines):
+
+```bash
+bash jobs/sherlock/imputation_eval/submit_all.sh --no-paper
+# --no-paper because phases B–D below will run the bootstrap with the
+# 17-method sweep, including lsm2_weekly which submit_all.sh doesn't cover.
+```
+
+`submit_all.sh` does **not** include `run_lsm2_weekly.sbatch` (the dense
+weekly variant is "out of the main paper table" and not in the JOBS map).
+Run it once on its own when needed:
+
+```bash
+sbatch jobs/sherlock/imputation_eval/run_lsm2_weekly.sbatch
+```
+
+After Phase A: 17 directories under `${RUNS_ROOT}/<method>/` each with
+`pairs/`, `per_user_errors.parquet` (subgroup_attr=all only), `results.json`,
+and `openmhc_manifest.json`. Wallclock: ~1 day end-to-end (mixed CPU+GPU).
+
+### Phase B — paper-bootstrap aggregator (×2 in parallel)
+
+Run two paper-bootstrap variants in parallel so consumers can pick either the
+backward-compatible 16-method pool (rank-matched to the prior leaderboard) or
+the 17-method pool (includes the new dense weekly LSM-2):
+
+```bash
+JID_A=$(sbatch --parsable jobs/sherlock/imputation_eval/run_paper_bootstrap.sbatch)
+JID_B=$(sbatch --parsable jobs/sherlock/imputation_eval/run_paper_bootstrap_no_dense.sbatch)
+```
+
+Outputs:
+
+- 17-method → `${SCRATCH_RUN_ROOT}/openmhc-imputation-eval/paper/`
+- 16-method → `${SCRATCH_RUN_ROOT}/openmhc-imputation-eval/paper_no_dense/`
+
+Each dir gets `bootstrap_draws.parquet` (~110 MB), `bootstrap_method_dirs.json`,
+and the Phase-2 CSVs (`skill_scores_bootstrap.csv`,
+`avg_rankings_bootstrap.csv`, `fairness_skill_score_bootstrap.csv`). Wallclock:
+~1–2h, parallel.
+
+### Phase C — substrate producer (array, 17 tasks)
+
+`runs/<m>/per_user_errors.parquet` (Phase A) has only `subgroup_attr=all`.
+The HF substrate format expects subgroup-broken-down rows for `age_group` and
+`sex` so the leaderboard can recompute fairness-skill-score. The producer
+takes the existing `pairs/` + demographics lookup and writes the expanded
+parquets:
+
+```bash
+JID_C=$(sbatch --parsable --dependency=afterok:$JID_A \
+  scripts/paper_results/imputation/parity/produce_per_method_per_user_errors.sbatch)
+```
+
+Depends on **only** `JID_A` (it needs `paper/bootstrap_method_dirs.json` to
+resolve pairs paths — `JID_B`'s manifest in `paper_no_dense/` would also
+work). Outputs 17 parquets at `paper-verification/per_user/<method>.parquet`
+(~150K rows each). Wallclock: ~45 min, parallel across array tasks.
+
+### Phase D — HF upload
+
+```bash
+JID_D=$(sbatch --parsable --dependency=afterok:$JID_B:$JID_C \
+  jobs/sherlock/imputation_eval/upload_leaderboard.sbatch)
+```
+
+Uploads everything to `MyHeartCounts/OpenMHC-leaderboard-data`:
+
+| Local source | HF destination |
+|---|---|
+| `paper-verification/per_user/<method>.parquet` (×17) | `imputation/<method>.parquet` (16 refreshed + 1 new for `lsm2_weekly`) |
+| `paper_no_dense/bootstrap_draws.parquet` | `imputation/bootstrap/draws.parquet` (**replaces** canonical) |
+| `paper/bootstrap_draws.parquet` | `imputation/bootstrap_with_dense_weekly/draws.parquet` (new sibling) |
+
+Existing per-method display metadata (the `.meta.json` sidecars on HF) is
+**not** overwritten — the upload tool only writes a sidecar when
+`--name`/`--type`/`--submitter` are passed, which we do only for the new
+`lsm2_weekly` entry.
+
+**Auth gotcha**: `huggingface_hub` 1.4.1 resolves `HF_HOME` to
+`/tmp/huggingface` by default and never finds the cached login token at
+`~/.cache/huggingface/token`. `upload_leaderboard.sbatch` works around this
+by reading the token file and exporting `HF_TOKEN` before any HF API call.
+If you re-run from an interactive shell, do the same:
+
+```bash
+export HF_TOKEN="$(cat ~/.cache/huggingface/token)"
+```
+
+### One-button rebuild
+
+```bash
+# Phase A (~1 day wallclock):
+bash jobs/sherlock/imputation_eval/submit_all.sh --no-paper
+sbatch jobs/sherlock/imputation_eval/run_lsm2_weekly.sbatch
+
+# Wait for everything in `squeue -u $USER` to clear, then verify with the
+# fallback-rate snippet under `scripts/paper_results/imputation/` (or just
+# `ls ${RUNS_ROOT}/*/results.json`).
+
+# Phases B + C + D (~3 h wallclock, fully chained):
+JID_A=$(sbatch --parsable jobs/sherlock/imputation_eval/run_paper_bootstrap.sbatch)
+JID_B=$(sbatch --parsable jobs/sherlock/imputation_eval/run_paper_bootstrap_no_dense.sbatch)
+JID_C=$(sbatch --parsable --dependency=afterok:$JID_A \
+         scripts/paper_results/imputation/parity/produce_per_method_per_user_errors.sbatch)
+JID_D=$(sbatch --parsable --dependency=afterok:$JID_B:$JID_C \
+         jobs/sherlock/imputation_eval/upload_leaderboard.sbatch)
+echo "Chain: A=$JID_A B=$JID_B C=$JID_C D=$JID_D"
+```
+
+### Adding a new method to the leaderboard
+
+1. Register the method via either a Hydra method preset under
+   `configs/imputation/method/<name>.yaml` or an entry in
+   `src/imputation_evaluation/hydra/registry.py` (Phase A needs this; the
+   later phases just consume pairs/ by name).
+2. Add a sbatch under this directory; wire it into `submit_all.sh`'s `JOBS`
+   map if you want the babysitter to track it.
+3. Add the method to both `sweep_methods.yaml` and
+   `sweep_methods_no_dense.yaml` (the latter only if you want it in the
+   16-method legacy pool too).
+4. Bump `--array=0-N` in
+   `scripts/paper_results/imputation/parity/produce_per_method_per_user_errors.sbatch`
+   and append the method name to its `METHODS` array.
+5. Add the method to `METHODS` in `upload_leaderboard.sbatch`. If it's new
+   on HF, pass `--name/--type/--submitter/--subtrack` so the display sidecar
+   is created with the right strings on the first upload.
+   `upload_leaderboard_substrate.py` is called with `--results-json
+   "${RUNS}/${M}/results.json"`, so the `fallback_rate` sidecar field is
+   auto-extracted (worst-case `overall_fallback_rate` across all
+   `(scenario, split)` cells) and merged into the existing sidecar without
+   clobbering the display fields. See
+   `tools/leaderboard_docs/imputation/SCHEMA.md` for the sidecar schema.
+6. Re-run the one-button rebuild.
 
 ## Known open items
 

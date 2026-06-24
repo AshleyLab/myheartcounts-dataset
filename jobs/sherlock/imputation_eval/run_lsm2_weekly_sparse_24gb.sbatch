@@ -30,8 +30,9 @@
 #SBATCH --output=/scratch/users/%u/logs/openmhc/lsm2_weekly_sparse_24gb_%j.out
 #SBATCH --error=/scratch/users/%u/logs/openmhc/lsm2_weekly_sparse_24gb_%j.err
 
-# shellcheck disable=SC1091
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_common.sh"
+# Use absolute path: sbatch copies the script to /var/spool/slurmd at run
+# time, so $BASH_SOURCE doesn't point at the in-repo sibling _common.sh.
+source /home/users/schuetzn/myheartcounts-dataset/jobs/sherlock/imputation_eval/_common.sh
 
 nvidia-smi || true
 

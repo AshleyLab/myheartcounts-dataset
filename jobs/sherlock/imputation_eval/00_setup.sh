@@ -52,6 +52,7 @@ declare -A ARTIFACTS=(
   [fedformer]="MHC_Dataset/mhc-pypots-fedformer/fedformer:v31"
   [timesnet]="MHC_Dataset/mhc-pypots-timesnet/timesnet:v31"
   [lsm2]="MHC_Dataset/mhc-mae-ssl-daily/mae-daily:v0"
+  [lsm2_weekly]="MHC_Dataset/mhc-mae-ssl/model-o5quh2cd:v2"
   [lsm2_weekly_sparse]="MHC_Dataset/mhc-mae-ssl/mae-weekly-sparse-d4:v0"
 )
 

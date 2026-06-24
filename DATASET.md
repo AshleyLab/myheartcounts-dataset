@@ -121,4 +121,4 @@ The MHC dataset is shared under a Data Use Agreement (DUA) covering responsible-
 - Not redistribute the raw data
 - Cite the paper
 
-Full DUA text: <https://myheartcounts.stanford.edu/dua>
+See the project README for the canonical link to the Data Use Agreement.

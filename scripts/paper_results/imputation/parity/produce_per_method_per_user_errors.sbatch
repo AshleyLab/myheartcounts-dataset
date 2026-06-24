@@ -4,7 +4,7 @@
 #SBATCH --time=00:45:00
 #SBATCH --mem=32G
 #SBATCH --cpus-per-task=8
-#SBATCH --array=0-15
+#SBATCH --array=0-16
 #SBATCH -o /scratch/users/schuetzn/tmp/claude/produce_pu_%a.out
 #SBATCH -e /scratch/users/schuetzn/tmp/claude/produce_pu_%a.err
 
@@ -29,7 +29,7 @@ METHODS=(
   mean mode locf linear temporal_mean temporal_mode
   personalized_mean personalized_mode personalized_temporal_mean
   brits dlinear dlinear_weekly fedformer timesnet
-  lsm2 lsm2_weekly_sparse
+  lsm2 lsm2_weekly_sparse lsm2_weekly
 )
 METHOD="${METHODS[$SLURM_ARRAY_TASK_ID]}"
 echo "[array=$SLURM_ARRAY_TASK_ID] method=$METHOD"
