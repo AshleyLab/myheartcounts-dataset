@@ -50,6 +50,19 @@ chronos = [
   # the PyPI distribution is `chronos-forecasting` (imported as `chronos`).
   "chronos-forecasting>=2.0",
 ]
+toto_dep = [
+  # toto's RUNTIME deps ONLY — NOT toto-ts itself. toto-ts 0.2.0 over-pins its
+  # transitive deps (torch==2.7.0, numpy==1.26.4, datasets==2.17.1, gluonts, ...),
+  # which conflict with the rest of openmhc, so toto-ts must be installed separately
+  # without its deps:
+  #     pip install --no-deps toto-ts==0.2.0
+  # then `pip install -e ".[toto_dep]"` supplies the deps its model forward needs.
+  "jaxtyping==0.2.29",
+  "rotary-embedding-torch==0.8.6",
+  # gluonts is imported by toto/model/distribution.py (the forecasting head); our
+  # last-latent extraction bypasses it, so its version is not result-affecting.
+  "gluonts[torch]",
+]
 toto = [
   # Toto forecaster wrapper (imported as `toto`).
   "toto-ts>=0.2",
@@ -65,10 +78,18 @@ hydra = [
 wandb = [
   "wandb>=0.16",
 ]
+downstream = [
+  # Prediction-track CPU feature extractors: MultiRocket (sktime -> numba) and
+  # the xgboost curve-analysis FPCA (scikit-fda). For reproducible numerics,
+  # install with the version freeze: ``pip install -e ".[downstream]" -c constraints.txt``.
+  "scikit-fda",
+  "sktime",
+  "numba",
+]
 # Every runtime feature in one shot (all tracks + Hydra CLIs + W&B logging).
 # Add ``dev`` for contributor tooling: ``pip install -e ".[all,dev]"``.
 all = [
-  "openmhc[pypots,lsm2,chronos,toto,hf,hydra,wandb]",
+  "openmhc[pypots,lsm2,chronos,hf,hydra,wandb,downstream]",
 ]
 
 [project.scripts]

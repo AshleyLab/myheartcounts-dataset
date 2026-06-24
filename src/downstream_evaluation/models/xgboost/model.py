@@ -178,33 +178,41 @@ def extract_xgboost_features(
         len(eligible_keys) if eligible_keys is not None else "n/a",
     )
 
-    # 1. Timeseries — also writes the per-day checkpoints day-dynamics consumes.
-    ts_out = out / "pipeline_timeseries_user_features.parquet"
-    ckpt_dir = out / "timeseries_daily_chunks"
-    if force or not ts_out.exists():
-        build_user_features_chunked(
-            arrow_dir=arrow_dir, output_path=ts_out, checkpoint_dir=ckpt_dir,
-            max_nonwear_minutes=max_nonwear_minutes, variance_filter=variance_filter,
-            cutoff_dates=cutoff_dates, eligible_keys=eligible_keys,
-        )
+    from threadpoolctl import threadpool_limits
 
-    # 2. Day dynamics — reads the timeseries checkpoints (must run after stage 1).
-    #    The checkpoints are already eligibility-filtered, so cutoff_dates stays None here.
-    dd_out = out / "pipeline_day_dynamics_user_features.parquet"
-    if force or not dd_out.exists():
-        build_signal_processing_features(
-            checkpoint_dir=ckpt_dir, output_path=dd_out, cutoff_dates=cutoff_dates,
-        )
+    # Pin BLAS to one thread for the whole feature build. The iterative steps — FPCA's
+    # randomized SVD, the HR basis least-squares, ARIMA's MLE — are non-deterministic under
+    # multi-threaded BLAS (reduction order isn't fixed), so single-threading them makes the
+    # features bit-reproducible across runs and machines. threadpoolctl sets this at runtime,
+    # so it doesn't depend on env vars being exported before the first numpy import.
+    with threadpool_limits(limits=1):
+        # 1. Timeseries — also writes the per-day checkpoints day-dynamics consumes.
+        ts_out = out / "pipeline_timeseries_user_features.parquet"
+        ckpt_dir = out / "timeseries_daily_chunks"
+        if force or not ts_out.exists():
+            build_user_features_chunked(
+                arrow_dir=arrow_dir, output_path=ts_out, checkpoint_dir=ckpt_dir,
+                max_nonwear_minutes=max_nonwear_minutes, variance_filter=variance_filter,
+                cutoff_dates=cutoff_dates, eligible_keys=eligible_keys,
+            )
 
-    # 3. Curve analysis — independent of the timeseries pipeline.
-    ca_out = out / "pipeline_curve_analysis_user_features.parquet"
-    if force or not ca_out.exists():
-        build_curve_analysis_features(
-            arrow_dir=arrow_dir, output_path=ca_out,
-            checkpoint_path=out / f"curve_analysis_avg_curves{suffix}.parquet",
-            max_nonwear_minutes=max_nonwear_minutes, variance_filter=variance_filter,
-            cutoff_dates=cutoff_dates, eligible_keys=eligible_keys,
-        )
+        # 2. Day dynamics — reads the timeseries checkpoints (must run after stage 1).
+        #    The checkpoints are already eligibility-filtered, so cutoff_dates stays None here.
+        dd_out = out / "pipeline_day_dynamics_user_features.parquet"
+        if force or not dd_out.exists():
+            build_signal_processing_features(
+                checkpoint_dir=ckpt_dir, output_path=dd_out, cutoff_dates=cutoff_dates,
+            )
+
+        # 3. Curve analysis — independent of the timeseries pipeline.
+        ca_out = out / "pipeline_curve_analysis_user_features.parquet"
+        if force or not ca_out.exists():
+            build_curve_analysis_features(
+                arrow_dir=arrow_dir, output_path=ca_out,
+                checkpoint_path=out / f"curve_analysis_avg_curves{suffix}.parquet",
+                max_nonwear_minutes=max_nonwear_minutes, variance_filter=variance_filter,
+                cutoff_dates=cutoff_dates, eligible_keys=eligible_keys,
+            )
     logger.info("xgboost features written -> %s", out)
 
 
