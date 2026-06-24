@@ -1,0 +1,31 @@
+# OpenMHC — reproducibility constraints for the CPU prediction-track methods
+# (linear, multirocket, xgboost). These are the numeric-stack versions that
+# produced the golden results; pinning them prevents silent run-to-run drift.
+#
+#   pip install -e ".[downstream]" -c constraints.txt
+#
+# Bit-exact ONLY on the validated platform/channel:
+#   linux x86_64 (manylinux2014) · CPython 3.10 · installer: pip (NOT conda)
+# A different OS/arch, or a conda/MKL build, links a different OpenBLAS and gives
+# last-bit (tolerance-level) drift, not bit-identity. OpenBLAS is bundled inside
+# the numpy/scipy PyPI wheels, so pinning those versions pins the BLAS by proxy:
+#   numpy 1.26.4 wheel -> OpenBLAS 0.3.23.dev ;  scipy 1.15.3 wheel -> OpenBLAS 0.3.28
+
+# --- shared probe + linear algebra (all CPU methods) ---
+numpy==1.26.4
+scipy==1.15.3
+scikit-learn==1.7.2
+pandas==2.2.3
+
+# --- xgboost: tree booster + curve-analysis FPCA + ARIMA features + feature I/O ---
+xgboost==3.2.0
+scikit-fda==0.10.1
+statsmodels==0.14.6
+threadpoolctl==3.6.0
+polars==1.41.2
+pyarrow==24.0.0
+
+# --- multirocket: sktime ROCKET kernels, numba-JIT (codegen-version sensitive) ---
+sktime==1.0.1
+numba==0.65.1
+llvmlite==0.47.0
