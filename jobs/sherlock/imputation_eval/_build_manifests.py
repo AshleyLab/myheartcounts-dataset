@@ -110,6 +110,16 @@ SPECS = {
         "arch": {},
         "provenance": {"wandb_artifact": "MHC_Dataset/mhc-mae-ssl-daily/mae-daily:v0"},
     },
+    "lsm2_weekly": {
+        # Dense 7-day LSM2 — same LSM2Imputer wrapper class as ``lsm2``; the
+        # weekly sizing (seq_length=10080, patch_size=60) is restored from the
+        # Lightning ckpt's hparams in ``_load_model``. ``kind`` must stay
+        # "lsm2" so ``from_release`` validation matches ``LSM2Imputer.model_name``.
+        "kind": "lsm2",
+        "checkpoint": None,
+        "arch": {},
+        "provenance": {"wandb_artifact": "MHC_Dataset/mhc-mae-ssl/model-o5quh2cd:v2"},
+    },
     "lsm2_weekly_sparse": {
         "kind": "lsm2_weekly_sparse",
         "checkpoint": None,

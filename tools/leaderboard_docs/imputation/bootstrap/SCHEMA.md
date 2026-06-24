@@ -70,10 +70,20 @@ Side-car metadata, written next to `draws.parquet`. Schema:
 - Format: single Parquet, dictionary-encoded categoricals, `float32` errors, `int32` draw index, `zstd` compression.
 - Resamples are paired across methods — same `boot_idx` matrix per split, so `R` and `rank` are valid per-draw comparisons.
 
+## Sibling
+
+`imputation/bootstrap_with_dense_weekly/` holds the 17-method variant
+(adds `lsm2_weekly`). Same schema as this file; `rank` ranges 1–17
+instead of 1–16 because the comparison pool grew, and `methods` in
+`draws.meta.json` has 17 entries. Skill / fairness values per method
+are byte-identical between the two variants (pairwise vs `locf`).
+
 ## Tracks
 
 | dir | track | status |
 |---|---|---|
-| `imputation/bootstrap/` | Track 2 — Imputation (above) | live |
+| `imputation/` | Track 2 — Imputation per-method substrate (`SCHEMA.md` there) | live |
+| `imputation/bootstrap/` | Track 2 — Imputation bootstrap (above, 16-method) | live |
+| `imputation/bootstrap_with_dense_weekly/` | Track 2 — Imputation bootstrap (17-method sibling) | live |
 | `forecasting/bootstrap/` | Track 3 — Forecasting | added later |
 | `downstream/bootstrap/` | Track 1 — Outcome Prediction | added later |
