@@ -135,28 +135,6 @@ def validate_method_column(parquet_path: Path, method: str) -> None:
         )
 
 
-def resolve_fallback_rate(parquet_path: Path, explicit: float | None) -> tuple[float | None, str]:
-    """Resolve the ``overall_fallback_rate`` to record in the display sidecar.
-
-    Precedence (issue #39): an explicit ``--fallback-rate`` wins; otherwise read
-    it from the substrate's own ``<parquet>.meta.json`` provenance sidecar (which
-    ``evaluate_prediction``/``evaluate_*`` write next to the parquet). Returns
-    ``(rate, source)``; ``rate`` is ``None`` when neither supplies one, so the
-    leaderboard shows "n/a" rather than a fabricated number.
-    """
-    if explicit is not None:
-        return explicit, "--fallback-rate"
-    sidecar = Path(f"{parquet_path}.meta.json")
-    if sidecar.exists():
-        try:
-            val = json.loads(sidecar.read_text()).get("overall_fallback_rate")
-        except (json.JSONDecodeError, OSError):
-            val = None
-        if isinstance(val, (int, float)):
-            return float(val), sidecar.name
-    return None, ""
-
-
 def main() -> None:
     """Upload one method substrate parquet to the leaderboard dataset."""
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -264,6 +242,12 @@ def main() -> None:
                 "submitter": "—",
                 "subtrack": "other",
             }
+        if args.track == "imputation":
+            # `overall_fallback_rate` was renamed to `fallback_rate` (PR #43);
+            # drop the legacy key so re-uploads don't carry both with divergent
+            # values. Downstream sidecars still use the long name, so this is
+            # gated to the imputation track.
+            meta.pop("overall_fallback_rate", None)
         for key, val in sidecar_provided.items():
             if val is not None:
                 meta[key] = val

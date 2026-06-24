@@ -19,7 +19,6 @@ jobs/sherlock/imputation_eval/
 ├── run_timesnet.sbatch      # GPU: GPU_MEM:24GB
 ├── run_lsm2.sbatch          # GPU: GPU_MEM:40GB
 ├── run_lsm2_weekly.sbatch         # GPU: GPU_MEM:32GB — dense 7-day LSM-2
-├── run_lsm2_weekly_48gb.sbatch    # alt: dense 7-day on GPU_MEM:48GB
 ├── run_lsm2_weekly_sparse.sbatch  # GPU: GPU_MEM:32GB, --mem=96G, batch=16
 ├── run_lsm2_weekly_sparse_24gb.sbatch  # alt: --mem=128G, batch=8 (host-OOM mitigation)
 ├── sweep_methods.yaml       # 17-method paper sweep (incl. lsm2_weekly dense)
@@ -111,7 +110,6 @@ python jobs/sherlock/imputation_eval/verify_parity.py
 | LSM2 weekly sparse | `gpu` | 48h | 8 | 96G | 1 | `GPU_MEM:32GB` |
 | LSM2 weekly sparse 24GB | `gpu` | 48h | 8 | 128G | 1 | — (any GPU_MEM) |
 | LSM2 weekly dense | `gpu` | 48h | 8 | 96G | 1 | `GPU_MEM:32GB` |
-| LSM2 weekly dense 48GB | `gpu` | 48h | 8 | 96G | 1 | `GPU_MEM:48GB` |
 | paper-bootstrap (×2) | `normal` | 8h | 12 | 128G | — | — |
 | substrate producer (array) | `normal` | 45m | 8 | 32G | — | — |
 | HF leaderboard upload | `normal` | 1h | 2 | 8G | — | — |
@@ -274,10 +272,12 @@ Uploads everything to `MyHeartCounts/OpenMHC-leaderboard-data`:
 | `paper_no_dense/bootstrap_draws.parquet` | `imputation/bootstrap/draws.parquet` (**replaces** canonical) |
 | `paper/bootstrap_draws.parquet` | `imputation/bootstrap_with_dense_weekly/draws.parquet` (new sibling) |
 
-Existing per-method display metadata (the `.meta.json` sidecars on HF) is
-**not** overwritten — the upload tool only writes a sidecar when
-`--name`/`--type`/`--submitter` are passed, which we do only for the new
-`lsm2_weekly` entry.
+Each method's `.meta.json` sidecar is written on every run (every upload
+passes `--results-json`, which auto-extracts `fallback_rate`), but the upload
+tool fetches the existing HF sidecar first and merges in only the fields it was
+given. So the display metadata (`display_name`/`type`/`submitter`/`subtrack`)
+of the 16 already-on-HF methods is preserved verbatim; only `lsm2_weekly` ships
+fresh display fields, on top of its auto-extracted `fallback_rate`.
 
 **Auth gotcha**: `huggingface_hub` 1.4.1 resolves `HF_HOME` to
 `/tmp/huggingface` by default and never finds the cached login token at

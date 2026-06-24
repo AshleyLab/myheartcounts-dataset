@@ -22,7 +22,7 @@ channels + 2 collapsed-binary tasks, 3 subgroup attributes).
 
 | column | type | description |
 |---|---|---|
-| `method` | string | method identifier (matches `<method>.parquet` filename without the `pypots_` prefix used internally) |
+| `method` | string | method identifier (must equal the `<method>.parquet` filename stem exactly) |
 | `scenario` | string | masking scenario: `random_noise`, `temporal_slice`, `signal_slice`, `sleep_gap`, `workout_gap`, `intensity_failure` |
 | `split` | string | data split — `test` (val is for development only and is not part of the leaderboard substrate) |
 | `channel` | string | `ch_0`–`ch_18` (19 sensor channels) or `cat_collapsed:sleep` / `cat_collapsed:workouts` (collapsed-binary tasks) |

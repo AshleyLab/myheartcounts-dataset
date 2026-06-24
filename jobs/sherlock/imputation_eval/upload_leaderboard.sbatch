@@ -12,9 +12,12 @@
 #   imputation/bootstrap/draws.parquet                          ← 16-method (REPLACES existing)
 #   imputation/bootstrap_with_dense_weekly/draws.parquet        ← 17-method (NEW sibling)
 #
-# Existing display sidecars (meta.json) are NOT overwritten for the 16
-# already-on-HF methods (omit --name/--type/--submitter to skip sidecar write).
-# lsm2_weekly is the only new method — we ship its sidecar.
+# All 17 methods get a sidecar (meta.json) write because every upload passes
+# --results-json, which auto-extracts fallback_rate. The tool fetches each
+# method's existing HF sidecar first and merges in only the provided fields, so
+# display_name/type/submitter/subtrack are preserved verbatim for the 16
+# already-on-HF methods. lsm2_weekly is the only new method — we ship its full
+# display fields on top of the auto-extracted fallback_rate.
 #
 # Auth: reads ~/.cache/huggingface/token and exports as HF_TOKEN (works around
 # huggingface_hub 1.4.1 default HF_HOME pointing to /tmp/huggingface).
