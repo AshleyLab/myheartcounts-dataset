@@ -47,9 +47,10 @@ METHOD_META: dict[str, tuple[str, str]] = {
 }
 DEFAULT_SUBSTRATE = (
     REPO_ROOT
-    / "results/forecasting_eval/simurgh/summary/forecasting_bca_20260618"
+    / "results/forecasting_eval/simurgh/summary/forecasting_full_20260622"
     / "forecasting_per_user_errors.parquet"
 )
+DEFAULT_RUNS_ROOT = REPO_ROOT / "results/forecasting_eval/simurgh"
 
 
 def main() -> int:
@@ -58,6 +59,13 @@ def main() -> int:
     p.add_argument("--substrate", type=Path, default=DEFAULT_SUBSTRATE)
     p.add_argument("--out", type=Path, default=DEFAULT_SUBSTRATE.parent / "leaderboard_substrates")
     p.add_argument("--submitter", default="OpenMHC team")
+    p.add_argument(
+        "--runs-root",
+        type=Path,
+        default=DEFAULT_RUNS_ROOT,
+        help="Per-model runs root; results.json at <runs-root>/<method>/hydra/results.json is "
+        "passed as --results-json so the uploader auto-fills the fallback_rate sidecar key.",
+    )
     args = p.parse_args()
 
     df, _ = read_per_user_metrics_parquet(args.substrate)
@@ -72,9 +80,11 @@ def main() -> int:
         dest = args.out / f"{method}.parquet"
         write_per_user_metrics_parquet(sub, dest)
         name, mtype = METHOD_META.get(method, (method, "—"))
+        results_json = args.runs_root / method / "hydra" / "results.json"
         cmds.append(
             f'python {upload} --dir {args.out} --method {method} --track forecasting '
-            f'--name "{name}" --type "{mtype}" --submitter "{args.submitter}"'
+            f'--name "{name}" --type "{mtype}" --submitter "{args.submitter}" '
+            f"--results-json {results_json}"
         )
         print(f"  {method}: {len(sub)} rows -> {dest}")
 
