@@ -82,9 +82,33 @@ Tiny display sidecar the leaderboard reads to render the row:
   "display_name": "My Forecaster",   // shown in the leaderboard
   "type": "Deep Learning",           // category label
   "submitter": "Stanford CS",        // lab / team
-  "subtrack": "other"                // Track 3 has no single-day/long-context split
+  "subtrack": "other",               // Track 3 has no single-day/long-context split
+  "fallback_rate": 0.0               // Seasonal-Naive substitution fraction (see below)
 }
 ```
+
+### `fallback_rate`
+
+Scalar in `[0, 1]`. The run's `overall_fallback_rate` (mirrors
+`openmhc._results.ForecastingResults.overall_fallback_rate`): the fraction of
+forecast cells the model emitted as non-finite (NaN), which the harness then
+substituted with the **Seasonal-Naive** baseline before scoring.
+
+- **`0.0`** — every forecast cell was finite; the harness never substituted.
+- **`>0`** — the model returned NaN at that fraction of forecast cells and the
+  harness filled them with Seasonal-Naive. Treat headline scores cautiously when
+  `fallback_rate > ~5%`, since the metric is inflated with baseline performance
+  on the substituted positions.
+
+The field is added to the sidecar by `tools/upload_leaderboard_substrate.py` in
+one of two ways:
+
+1. Explicit: `--fallback-rate FLOAT`
+2. Auto: `--results-json PATH` — the tool reads the run's `results.json` and
+   extracts the top-level `overall_fallback_rate`.
+
+Existing sidecar fields are preserved on update (the tool fetches the current
+sidecar from HF and merges only the provided fields).
 
 ## Conventions
 

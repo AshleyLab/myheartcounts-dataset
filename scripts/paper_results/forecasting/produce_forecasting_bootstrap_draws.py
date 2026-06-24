@@ -32,6 +32,7 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 import pandas as pd  # noqa: E402
+import yaml  # noqa: E402
 
 from forecasting_evaluation.metrics import metric_spec as _spec  # noqa: E402
 from forecasting_evaluation.metrics.bootstrap_fair_skill_score import (  # noqa: E402
@@ -55,13 +56,26 @@ def _git_commit() -> str:
         return "unknown"
 
 
+def _canonical_summary_dir() -> Path:
+    """Canonical summary dir, read from the sweep config's ``output_root``.
+
+    Single source of truth: the canonical run is pinned in ONE place
+    (``configs/paper/sweep_forecasting.yaml``). This default follows it, so a
+    bootstrap-draws refresh can never silently regenerate the leaderboard CIs
+    from a stale/old substrate (e.g. a legacy per-window-binary run).
+    """
+    out = Path(yaml.safe_load((REPO_ROOT / "configs/paper/sweep_forecasting.yaml").read_text())["output_root"])
+    return out if out.is_absolute() else REPO_ROOT / out
+
+
 def main() -> int:
     """Build + write the unified forecasting bootstrap-draws parquet + meta."""
     p = argparse.ArgumentParser(description="Build forecasting bootstrap draws reference.")
     p.add_argument(
         "--summary-dir",
         type=Path,
-        default=REPO_ROOT / "results/forecasting_eval/simurgh/summary/forecasting_bca_20260618",
+        default=_canonical_summary_dir(),
+        help="Canonical summary dir (default: the sweep config's output_root).",
     )
     p.add_argument("--out-dir", type=Path, default=None, help="default: --summary-dir")
     args = p.parse_args()
