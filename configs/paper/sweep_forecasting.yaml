@@ -10,9 +10,9 @@
 #   release_dir- optional bundle path -> model.release_dir= (finetuned / retrained)
 #   overrides  - optional extra Hydra dot-key strings for mhc-forecast-eval
 
-run_label: forecasting_full_20260609
+run_label: forecasting_full_20260622
 runs_root: results/forecasting_eval/simurgh
-output_root: results/forecasting_eval/simurgh/summary/forecasting_full_20260609
+output_root: results/forecasting_eval/simurgh/summary/forecasting_full_20260622
 
 baseline: seasonal_naive
 continuous_metrics: [mae]

@@ -92,6 +92,8 @@ class TotoModel(BasePredictionModel):
 
     def _resolve_device(self) -> str:
         device = self.config.device
+        if device == "auto":
+            return "cuda" if torch.cuda.is_available() else "cpu"
         if device == "cuda" and not torch.cuda.is_available():
             logger.warning("model.toto.device is cuda but CUDA is unavailable; falling back to cpu")
             return "cpu"

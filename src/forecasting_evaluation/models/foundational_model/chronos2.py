@@ -49,6 +49,12 @@ class Chronos2Model(BasePredictionModel):
             torch_dtype=torch_dtype,
             **kwargs,
         )
+        # Chronos-2 truncates context to its configured length internally and
+        # derives its instance-norm scaling from the truncated window, so feeding
+        # a longer history is wasted work with no effect on the output. Read the
+        # model's true context length and slice to it in predict() (the harness
+        # now hands models the full prefix; each model self-windows, like Toto).
+        self.context_length: int = int(self.pipeline.model_context_length)
         self.logger = logging.getLogger(__name__)
         self.logger.info(
             "Loaded Chronos-2 pipeline from %s (device=%s, dtype=%s)",
@@ -59,6 +65,13 @@ class Chronos2Model(BasePredictionModel):
 
     def _resolve_device_map(self) -> str:
         device = self.config.device
+        if device == "auto":
+            # Place the whole model on a single CUDA device explicitly. HF's
+            # device_map="auto" runs accelerate's memory probe, which on these
+            # nodes intermittently reports "Device 0 seems unavailable" and
+            # silently falls back to CPU (≈100x slower). An explicit "cuda"
+            # skips that probe; fall back to cpu only when CUDA is truly absent.
+            return "cuda" if torch.cuda.is_available() else "cpu"
         if device == "cuda" and not torch.cuda.is_available():
             logging.getLogger(__name__).warning(
                 "model.chronos2.device is cuda but CUDA is unavailable; falling back to cpu"
@@ -182,7 +195,22 @@ class Chronos2Model(BasePredictionModel):
             - quantiles_result: Quantile predictions of shape (n_features, prediction_length, n_quantiles)
               or None if quantiles cannot be computed
         """
+        # Trim to the model's context window before handing the array to the
+        # pipeline. Chronos-2 truncates to ``context_length`` and derives its
+        # instance-norm scaling from that window internally, so this is
+        # output-identical to passing the full prefix — but avoids preprocessing
+        # multi-year arrays on every window (the post-7939848 harness passes the
+        # full prefix; models self-window, as Toto does). Gated on no covariates
+        # so target/covariate alignment stays trivially correct (the current eval
+        # passes none); with covariates present we hand over the full prefix and
+        # let the pipeline truncate target+covariates consistently.
         target = history
+        if (
+            past_covariates is None
+            and future_covariates is None
+            and history.shape[1] > self.context_length
+        ):
+            target = history[:, -self.context_length :]
         prediction_length = horizon
 
         # Construct input in the format expected by Chronos2Pipeline
