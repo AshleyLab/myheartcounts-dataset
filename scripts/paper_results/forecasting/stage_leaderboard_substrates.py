@@ -22,6 +22,8 @@ import argparse
 import sys
 from pathlib import Path
 
+import yaml
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SRC_ROOT = REPO_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
@@ -45,11 +47,18 @@ METHOD_META: dict[str, tuple[str, str]] = {
     "mixlinear": ("MixLinear", "Deep Learning"),
     "segrnn": ("SegRNN", "Deep Learning"),
 }
-DEFAULT_SUBSTRATE = (
-    REPO_ROOT
-    / "results/forecasting_eval/simurgh/summary/forecasting_full_20260622"
-    / "forecasting_per_user_errors.parquet"
-)
+def _canonical_output_root() -> Path:
+    """Canonical summary dir, read from the sweep config's ``output_root``.
+
+    Single source of truth: the canonical run is pinned only in
+    ``configs/paper/sweep_forecasting.yaml``, so staging always splits the
+    current canonical substrate and never a stale/old one.
+    """
+    out = Path(yaml.safe_load((REPO_ROOT / "configs/paper/sweep_forecasting.yaml").read_text())["output_root"])
+    return out if out.is_absolute() else REPO_ROOT / out
+
+
+DEFAULT_SUBSTRATE = _canonical_output_root() / "forecasting_per_user_errors.parquet"
 DEFAULT_RUNS_ROOT = REPO_ROOT / "results/forecasting_eval/simurgh"
 
 

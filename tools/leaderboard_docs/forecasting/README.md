@@ -81,10 +81,19 @@ performance on the substituted cells and should be read with caution.
 
 ## Refreshing (full paper-results reproduction)
 
-The canonical run label is `forecasting_full_20260622` (see
-`configs/paper/sweep_forecasting.yaml`). All steps run from the OpenMHC code repo
-on Simurgh (SC); see `jobs/sc-cluster/forecasting_eval/README.md` for cluster
-details.
+**Single source of truth — avoid regressing to an old run.** The canonical run
+is pinned in exactly one place: `run_label` / `output_root` in
+`configs/paper/sweep_forecasting.yaml` (currently `forecasting_full_20260622`).
+The substrate-staging and bootstrap-draws scripts **default to it** (they read
+`output_root` from that file), so a bare `stage_leaderboard_substrates.py` or
+`produce_forecasting_bootstrap_draws.py` cannot silently rebuild the leaderboard
+from a stale substrate. To re-point the canonical run, edit **only** the sweep
+config. Likewise the **methodology is fixed in the sweep + code**:
+`within_user_aggregation: micro` (binary AUROC is **pooled per user** over all
+the user's horizon cells — the eval emits one pooled row/user; the legacy
+per-window "macro" path is *not* used for the leaderboard). All steps run from
+the OpenMHC code repo on Simurgh (SC); see
+`jobs/sc-cluster/forecasting_eval/README.md` for cluster details.
 
 ```bash
 LABEL=forecasting_full_20260622
