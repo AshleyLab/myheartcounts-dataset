@@ -61,15 +61,28 @@ DEFAULT_REPO_ID = "MyHeartCounts/OpenMHC-leaderboard-data"
 
 
 def _worst_case_fallback_rate(results_json: Path) -> float | None:
-    """Return ``max(overall_fallback_rate)`` across (scenario, split) in results.json.
+    """Return the worst-case ``overall_fallback_rate`` from a ``results.json``.
 
-    Mirrors :attr:`openmhc._results.ImputationResults.overall_fallback_rate`.
+    Handles both result shapes:
+
+    - **Forecasting / downstream** — a single top-level ``overall_fallback_rate``
+      scalar (the harness pools one rate over the whole run).
+    - **Imputation** — nested ``scenarios[*][*].overall_fallback_rate``; the
+      worst case is the max across every ``(scenario, split)`` cell (mirrors
+      :attr:`openmhc._results.ImputationResults.overall_fallback_rate`).
+
     Returns ``None`` when the field is absent everywhere (legacy runs that
-    predate the fallback-tracking feature); ``0.0`` when the field is present
-    and every cell reports 0 (modern runs where the harness never had to
-    substitute a fallback).
+    predate the fallback-tracking feature); ``0.0`` when present and every
+    measured cell reports 0 (the harness never had to substitute a fallback).
     """
     d = json.loads(results_json.read_text())
+    # Forecasting / downstream: a single top-level scalar. Imputation's
+    # results.json has scenario names at the top level (no such key), so this
+    # only fires for the flat shape.
+    top = d.get("overall_fallback_rate")
+    if isinstance(top, (int, float)):
+        return float(top)
+    # Imputation: max across nested scenarios[*][*].
     scenarios = d.get("scenarios", d)
     worst = 0.0
     found = False

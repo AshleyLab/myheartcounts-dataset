@@ -377,8 +377,23 @@ class ForecastingResults:
         logger.info("Forecasting results saved to %s", path)
 
     def to_json(self, path: str | Path) -> None:
-        """Export full results dict to JSON."""
-        Path(path).write_text(json.dumps(self.per_channel, indent=2, default=_json_default))
+        """Export the full results dict to JSON.
+
+        Emits ``overall_fallback_rate`` / ``fallback_rate`` at the top level
+        alongside ``per_channel`` (matching the harness ``results.json`` shape),
+        so the invalid-prediction rate survives the round-trip and the
+        leaderboard upload tool can extract it via ``--results-json``. Mirrors
+        ``ImputationResults.to_json``, which preserves the rate by dumping the
+        ``scenarios`` dict it lives inside.
+        """
+        payload = {
+            "run_dir": self.run_dir,
+            "n_samples": self.n_samples,
+            "overall_fallback_rate": self.overall_fallback_rate,
+            "fallback_rate": self.fallback_rate,
+            "per_channel": self.per_channel,
+        }
+        Path(path).write_text(json.dumps(payload, indent=2, default=_json_default))
         logger.info("Forecasting results saved to %s", path)
 
     def summary(self) -> pd.DataFrame:
