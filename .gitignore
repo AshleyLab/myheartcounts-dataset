@@ -28,9 +28,15 @@ env/
 .cache/
 data/.hf_cache/
 data/processed/
-data/cache/
+# Eval build artifacts (regenerated from raw; never commit)
+results/
+logs/
+eval_*.csv
+__pycache__/
+*.pyc
 
 # Generated outputs (eval run results, notebook-side artifacts)
+data/cache/
 notebooks/data/
 results/
 logs/
@@ -41,6 +47,8 @@ imputation_results_paper/
 .merge_cache/
 releases-fc/
 forecasting_model_ckpt/
+# Track-1 encoder release staging (large weights, not source)
+releases-enc/
 __MACOSX/
 
 # Scratch / throwaway experiment + benchmark scaffolding

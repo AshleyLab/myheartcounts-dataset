@@ -134,7 +134,9 @@ results = openmhc.evaluate_forecasting(fc, version="full")
 ```
 
 Released bundles live under `MyHeartCounts/openmhc-<model>-fc` on the Hugging
-Face Hub.
+Face Hub. See [`docs/neural-forecasters.md`](../../docs/neural-forecasters.md)
+for the release-bundle format, paper checkpoints, and the
+`tools/forecasting/build_forecasting_release.py` packager.
 
 ### Results object
 

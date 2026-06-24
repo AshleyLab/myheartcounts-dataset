@@ -19,8 +19,9 @@ task ``r = (group, metric, channel)``, sensitive attribute ``G ∈ {age_group, s
 with subgroup values ``g`` (the ``unknown`` bucket is a real subgroup, kept),
 ratio clips ``[ℓ, u]``::
 
-    D_{r,m}^{(G)} = max_g E_{r,m}^{(g)} − min_g E_{r,m}^{(g)}     (same for b)
-    both gaps are taken over the common method∩baseline subgroup set per task
+    D_{r,m}^{(G)} = (2 / |G|(|G|-1)) · Σ_{g≠g'} | E_{r,m}^{(g)} − E_{r,m}^{(g')} |   (same for b)
+    the mean absolute pairwise difference (MAPD) over the common method∩baseline
+    subgroup set per task; for |G| = 2 this collapses to |E_a − E_b| (== max-min)
     drop task r from G if <2 common subgroups, D_{r,b}^{(G)} ≤ 0, or any D is NaN
     ρ_r          = clip( D_{r,m}^{(G)} / D_{r,b}^{(G)}, ℓ, u )
     S^{(G)}_m    = 1 − exp( mean_c [ mean_{r∈c} ln ρ_r ] )   (c = sensor scope; equal per scope)
@@ -86,6 +87,24 @@ def _build_subgroup_error_long(
     return pd.concat(frames, ignore_index=True)[columns]
 
 
+def _mapd(series: pd.Series) -> float:
+    """Mean absolute pairwise difference of a numeric series.
+
+    Computes ``(2 / n(n-1)) * Σ_{i<j} |x_i − x_j|`` — the mean of ``|x_i − x_j|``
+    over the ``n(n-1)/2`` unordered pairs. Returns NaN when fewer than 2 finite
+    values are present. For ``n = 2`` this is ``|x_0 − x_1|`` (== max-min); for
+    ``n ≥ 3`` it smooths over every pair instead of only the two extremes.
+    """
+    vals = series.to_numpy()
+    vals = vals[np.isfinite(vals)]
+    n = vals.size
+    if n < 2:
+        return float("nan")
+    diffs = np.abs(vals[:, None] - vals[None, :])
+    iu, ju = np.triu_indices(n, k=1)
+    return float(diffs[iu, ju].mean())
+
+
 def _per_task_disparity_log_ratio(
     df_attr: pd.DataFrame,
     *,
@@ -100,7 +119,7 @@ def _per_task_disparity_log_ratio(
     task ``r = (group, metric, channel)`` we restrict to the **common subgroup set**
     that both the model and the baseline have data for, then::
 
-        D_j = max_g E_j^{(g)} - min_g E_j^{(g)}     (over common subgroups)
+        D_j = mean absolute pairwise difference of E_j over common subgroups
         D_b = same, for the baseline b
         ratio = clip(D_j / D_b, clip_lower, clip_upper)
 
@@ -110,10 +129,10 @@ def _per_task_disparity_log_ratio(
 
     The >=2-common-subgroup guard prevents a known failure mode where a model that
     happens to have data for only one subgroup of a task/draw would yield
-    ``D_j = max - min = 0`` by construction, get clipped to ``clip_lower`` after
-    dividing by ``D_b > 0``, and earn a near-perfect score for free. This can
-    happen in the bootstrap path (per-draw row drop-outs) even when the upstream
-    subgroup universe is logically the same across models.
+    ``D_j = 0`` by construction (a single value has no pairwise differences), get
+    clipped to ``clip_lower`` after dividing by ``D_b > 0``, and earn a near-perfect
+    score for free. This can happen in the bootstrap path (per-draw row drop-outs)
+    even when the upstream subgroup universe is logically the same across models.
 
     Returns one row per surviving task with columns
     ``[model, group, metric, channel_idx, channel_name, scope, log_ratio]``.
@@ -138,8 +157,8 @@ def _per_task_disparity_log_ratio(
     grouped = aligned.groupby(model_task_keys, observed=True)
     D = pd.DataFrame(
         {
-            "D_j": grouped["E"].max() - grouped["E"].min(),
-            "D_b": grouped["E_b"].max() - grouped["E_b"].min(),
+            "D_j": grouped["E"].apply(_mapd),
+            "D_b": grouped["E_b"].apply(_mapd),
             "n_sub": grouped["subgroup_value"].nunique(),
         }
     ).reset_index()
@@ -263,7 +282,7 @@ def compute_fair_skill_scores(
         if df_attr.empty:
             continue
         if df_attr["subgroup_value"].nunique() < 2:
-            # max-min disparity is degenerate with a single subgroup.
+            # MAPD disparity is undefined with a single subgroup (no pairs).
             continue
 
         tasks = _per_task_disparity_log_ratio(

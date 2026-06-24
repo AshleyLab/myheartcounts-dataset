@@ -1,0 +1,16 @@
+{
+  "_doc": "Per-task feature exclusions for downstream evaluation. Maps task name -> list of feature/covariate names to exclude when training/evaluating that task. Self-exclusion (a covariate matching the task name) is always applied automatically by the eval pipeline and does not need to be listed here.",
+  "_rationale": {
+    "BMI_categories <-> BMI_values": "Different encodings of the same underlying attribute; including the other version is a trivial leak.",
+    "age / BiologicalSex / BMI_values / BMI_categories": "Drop ALL demographics for these tasks. Age, sex, and BMI are strongly correlated with each other (sex and BMI differ non-trivially by age; BMI distributions differ by sex), so including any one as a covariate when another is the prediction target creates an 'easy mode' leak that inflates baseline performance. Applied symmetrically to all four tasks.",
+    "framingham_risk": "Risk score is a closed-form function of age + BiologicalSex + clinical features (incl. cholesterol, BP); appending demographics would leak partial formula inputs.",
+    "WeightKilograms": "Weight ~= BMI x height^2, and height has strong sex/age priors, so BMI_values + sex + age effectively reconstruct weight. Empirically every method scored r~0.92-0.95 with demos and dropped to r=0.10-0.65 without. Treated like the other demographic-aliased tasks (drop all 3 demos)."
+  },
+
+  "BMI_categories": ["age", "BiologicalSex", "BMI_values"],
+  "BMI_values": ["age", "BiologicalSex", "BMI_categories"],
+  "age": ["BiologicalSex", "BMI_values"],
+  "BiologicalSex": ["age", "BMI_values"],
+  "framingham_risk": ["age", "BiologicalSex", "BMI_values"],
+  "WeightKilograms": ["age", "BiologicalSex", "BMI_values"]
+}

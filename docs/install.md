@@ -12,8 +12,10 @@ environment. For getting the dataset itself, see
 > [!WARNING]
 > **Install `openmhc` into its own environment.** The evaluation engines ship
 > top-level packages — `forecasting_evaluation`, `imputation_evaluation`,
-> `downstream_evaluation`, `labels`, `data` — whose names are **not unique** to
-> this repo. The private `MHC-benchmark` repo defines the same names. If both
+> `downstream_evaluation`, `forecasting_training`, `imputation_training`,
+> `eval_hydra`, `labels`, `data`, `context`, `devices`, `utils` — whose names
+> are **not unique** to this repo. The private `MHC-benchmark` repo defines the
+> same names. If both
 > are installed (editable) into one environment, whichever sits earlier on
 > `sys.path` silently shadows the other, and imports resolve to the wrong copy
 > (e.g. `ModuleNotFoundError: No module named 'forecasting_evaluation.runner'`
@@ -65,7 +67,9 @@ Install only what you need — each extra is additive.
 | *(none)* | core: numpy, pandas, datasets, scikit-learn, torch, xgboost, … | Track 1 (outcome prediction); the public `evaluate_*` API surface |
 | `pypots` | `pypots` (+ `pygrinder`, `tsdb`) | Tracks 2 & 3 deep-learning imputers/forecasters |
 | `lsm2` | `pytorch-lightning` | LSM2 / Lightning-based models |
-| `hydra` | `hydra-core`, `omegaconf`, `hydra-submitit-launcher` | the `mhc-impute-eval` / `mhc-forecast-eval` CLIs |
+| `chronos` | `chronos-forecasting` | Track 3 `Chronos2Forecaster` (Chronos-2 foundation model) |
+| `toto` | `toto-ts` | Track 3 `TotoForecaster` (Toto foundation model) |
+| `hydra` | `hydra-core`, `omegaconf`, `hydra-submitit-launcher` | the `mhc-impute-eval` / `mhc-forecast-eval` (and `mhc-impute-train` / `mhc-forecast-train`) CLIs |
 | `hf` | `huggingface_hub` | Hub-backed checkpoint/artifact downloads |
 | `wandb` | `wandb` | W&B logging in the imputation pipeline |
 | `all` | every runtime extra above | the full benchmark (all tracks + CLIs) |
@@ -108,7 +112,7 @@ class LastValueForecaster:
         return np.tile(last, (1, horizon)).astype(np.float32)
 
 res = openmhc.evaluate_forecasting(
-    LastValueForecaster(), version="full", forecasting_length=24, max_samples=5
+    LastValueForecaster(), version="xs", forecasting_length=24, max_samples=5
 )
 print(res.summary())
 ```

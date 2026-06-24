@@ -146,8 +146,67 @@ def _discover_and_validate(cfg: dict, models: list[dict]) -> dict[str, str]:
     return selected
 
 
-def _phase_skill_rank(cfg: dict, selected: dict[str, str], dry_run: bool) -> None:
-    """Phase 2 — skill score + grouped mean-rank from the validated metrics."""
+def _phase_substrate(cfg: dict, selected: dict[str, str], dry_run: bool) -> Path | None:
+    """Phase 1.5 — build the canonical per-user substrate ONCE, shared downstream.
+
+    Reads each model's metric trees and writes
+    ``<output_root>/forecasting_per_user_errors.parquet`` (+ meta). The skill, rank,
+    and bootstrap phases then reconstruct their per-user tables from it instead of
+    re-scanning the trees ~5 times. Requires micro/user (the only modes the
+    substrate represents) — ``build_per_user_metrics`` raises otherwise.
+    """
+    sys.path.insert(0, str(REPO_ROOT / "src"))
+    from forecasting_evaluation.metrics import metric_spec as _spec
+    from forecasting_evaluation.metrics.per_user_errors import (
+        build_per_user_metrics,
+        write_per_user_metrics_parquet,
+    )
+
+    out = Path(cfg["output_root"])
+    out.mkdir(parents=True, exist_ok=True)
+    sub_path = out / "forecasting_per_user_errors.parquet"
+    cont = cfg.get("continuous_metrics", ["mae"])
+    binm = cfg.get("binary_metrics", ["auprc"])
+    within = cfg.get("within_user_aggregation", "micro")
+    agg = cfg.get("aggregation_unit", "user")
+    logger.info("Phase 1.5 substrate: building per-user metrics for %d models", len(selected))
+    if dry_run:
+        return sub_path
+    models = {name: {"path": path, "display_name": name} for name, path in selected.items()}
+    df = build_per_user_metrics(
+        models=models,
+        continuous_metrics=list(cont),
+        binary_metrics=list(binm),
+        continuous_channel_indices=_spec.CONTINUOUS_CHANNELS,
+        binary_channel_indices=_spec.BINARY_CHANNELS,
+        within_user_aggregation=within,
+        aggregation_unit=agg,
+    )
+    write_per_user_metrics_parquet(
+        df,
+        sub_path,
+        meta={
+            "run_label": cfg.get("run_label"),
+            "within_user_aggregation": within,
+            "aggregation_unit": agg,
+            "continuous_metrics": list(cont),
+            "binary_metrics": list(binm),
+            "baseline": cfg["baseline"],
+            "n_models": len(models),
+        },
+    )
+    logger.info("Wrote substrate (%d rows) -> %s", len(df), sub_path)
+    return sub_path
+
+
+def _phase_skill_rank(
+    cfg: dict, selected: dict[str, str], dry_run: bool, substrate_path: Path | None = None
+) -> None:
+    """Phase 2 — skill score + grouped mean-rank from the validated metrics.
+
+    When ``substrate_path`` is set, both summary CLIs read the canonical substrate
+    (``--per-user-errors``) instead of re-scanning the metric trees.
+    """
     out = Path(cfg["output_root"])
     out.mkdir(parents=True, exist_ok=True)
     models_json = out / "skill_rank_models.json"
@@ -160,6 +219,7 @@ def _phase_skill_rank(cfg: dict, selected: dict[str, str], dry_run: bool) -> Non
     agg = cfg.get("aggregation_unit", "user")
     within = cfg.get("within_user_aggregation", "micro")
     metrics = REPO_ROOT / "src" / "forecasting_evaluation" / "metrics"
+    substrate_args = ["--per-user-errors", str(substrate_path)] if substrate_path else []
 
     _run(
         [
@@ -181,6 +241,7 @@ def _phase_skill_rank(cfg: dict, selected: dict[str, str], dry_run: bool) -> Non
             str(out),
             "--output-prefix",
             "forecasting_skill_score",
+            *substrate_args,
         ],
         dry_run,
     )
@@ -200,17 +261,21 @@ def _phase_skill_rank(cfg: dict, selected: dict[str, str], dry_run: bool) -> Non
             str(out),
             "--output-prefix",
             "forecasting_grouped_metric_rank",
+            *substrate_args,
         ],
         dry_run,
     )
 
 
-def _phase_bootstrap(cfg: dict, selected: dict[str, str], dry_run: bool) -> None:
+def _phase_bootstrap(
+    cfg: dict, selected: dict[str, str], dry_run: bool, substrate_path: Path | None = None
+) -> None:
     """Phase 3 — paired user-level bootstrap CIs for skill score + mean rank.
 
     When ``bootstrap.fairness`` is set, also writes the disparity-ratio fairness
     skill score as both a deterministic point CSV and a bootstrap-CI CSV. Writes
-    alongside the Phase-2 point summaries.
+    alongside the Phase-2 point summaries. When ``substrate_path`` is set, the
+    bootstrap reducers consume the canonical substrate instead of re-scanning trees.
     """
     sys.path.insert(0, str(REPO_ROOT / "src"))
     from forecasting_evaluation.metrics import metric_spec as _spec
@@ -241,6 +306,12 @@ def _phase_bootstrap(cfg: dict, selected: dict[str, str], dry_run: bool) -> None
     if dry_run:
         return
 
+    per_user_metrics = None
+    if substrate_path is not None:
+        from forecasting_evaluation.metrics.per_user_errors import read_per_user_metrics_parquet
+
+        per_user_metrics, _ = read_per_user_metrics_parquet(substrate_path)
+
     tables = bootstrap_skill_rank(
         models=models,
         baseline_model=cfg["baseline"],
@@ -254,6 +325,7 @@ def _phase_bootstrap(cfg: dict, selected: dict[str, str], dry_run: bool) -> None
         ci_level=ci_level,
         within_user_aggregation=within,
         bca_skill_rank=bca_skill_rank,
+        per_user_metrics=per_user_metrics,
     )
     skill_path = out / "forecasting_skill_score_bootstrap.csv"
     rank_path = out / "forecasting_grouped_metric_rank_bootstrap.csv"
@@ -300,6 +372,7 @@ def _phase_bootstrap(cfg: dict, selected: dict[str, str], dry_run: bool) -> None
         ci_level=ci_level,
         within_user_aggregation=within,
         bca=bca_fairness,
+        per_user_metrics=per_user_metrics,
     )
     fair_point_path = out / "forecasting_fairness_skill_score.csv"
     fair_boot_path = out / "forecasting_fairness_skill_score_bootstrap.csv"
@@ -337,10 +410,12 @@ def main() -> int:
         _phase0_eval(cfg, models, args.dry_run)
 
     selected = _discover_and_validate(cfg, models)
-    _phase_skill_rank(cfg, selected, args.dry_run)
+    use_substrate = bool(cfg.get("use_substrate", True))
+    substrate_path = _phase_substrate(cfg, selected, args.dry_run) if use_substrate else None
+    _phase_skill_rank(cfg, selected, args.dry_run, substrate_path=substrate_path)
 
     if (cfg.get("bootstrap") or {}).get("enabled", False):
-        _phase_bootstrap(cfg, selected, args.dry_run)
+        _phase_bootstrap(cfg, selected, args.dry_run, substrate_path=substrate_path)
 
     logger.info("Done. Summary CSVs in %s", cfg["output_root"])
     return 0

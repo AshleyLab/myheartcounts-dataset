@@ -1,20 +1,20 @@
-"""Sklearn-based downstream evaluation for MHC benchmark.
+"""Downstream outcome-prediction evaluation for the MHC benchmark.
 
-This package provides a flexible evaluation framework using sklearn classifiers
-instead of PyTorch Lightning, while maintaining consistency with the existing
-data loading and splitting infrastructure.
+This package evaluates ``Method``-protocol models — linear/logistic probes
+(sklearn), gradient boosting, and neural encoders — on the benchmark prediction
+tasks, sharing the existing data-loading and splitting infrastructure.
 """
 
 # Lazy imports to avoid requiring sklearn at module load time
-__all__ = ["DownstreamEvalConfig", "DownstreamEvaluator"]
+__all__ = ["EvalConfig", "DownstreamEvaluator"]
 
 
 def __getattr__(name: str):
     """Lazy import to avoid sklearn dependency at module load."""
-    if name == "DownstreamEvalConfig":
-        from downstream_evaluation.config import DownstreamEvalConfig
+    if name == "EvalConfig":
+        from downstream_evaluation.config import EvalConfig
 
-        return DownstreamEvalConfig
+        return EvalConfig
     elif name == "DownstreamEvaluator":
         from downstream_evaluation.evaluation.evaluator import DownstreamEvaluator
 

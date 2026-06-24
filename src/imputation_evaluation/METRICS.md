@@ -241,9 +241,7 @@ with an additional **L1 log-space mean over scenarios in scope**.
 `overall` is the headline skill / rank surfaced on the live leaderboard
 (computed by the OpenMHC HF Space's `leaderboard_compute.py` from the
 substrate parquets at `MyHeartCounts/OpenMHC-leaderboard-data:imputation/`).
-The legacy per-channel `overall` (flat geomean over all 68 per-channel
-tasks) was deleted in C3 of the B.2-everywhere consolidation; the new
-`overall` is the 3-level form universally applied. The fairness CSV's
+The new `overall` is the 3-level form universally applied. The fairness CSV's
 `overall` row is a separate quantity — the cross-attribute macro of the
 per-attribute disparity-ratio skill scores.
 

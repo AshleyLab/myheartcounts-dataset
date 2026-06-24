@@ -1,257 +1,255 @@
-# Downstream Evaluation Pipeline
+# Downstream Prediction Evaluation
 
-Unified sklearn-based evaluation pipeline for health classification/regression tasks across multiple feature extraction methods and temporal granularities.
+Evaluate any wearable-sensor model on the 32 MyHeart Counts health-prediction tasks. One contract for every model — bundled baseline and external submission alike: `predict(data)` on per-participant arrays, with an optional `fit(data, labels, task_type)`.
 
-## Overview
+- [How it works](#how-it-works)
+- [Reproduce the paper results](#reproduce-the-paper-results)
+- [Reproducible runs via the CLI](#reproducible-runs-via-the-cli-mhc-downstream-eval)
+- [Evaluate your own model](#evaluate-your-own-model)
 
-The pipeline supports two evaluation pathways:
+## How it works
 
-1. **Feature store** (stat_simple, stat_full, ssl_encoder, multirocket, jets_encoder):
-   Extract features once -> store -> aggregate to user level -> sklearn classifier
-
-2. **Supervised sequence** (gru_d, brits):
-   Train per-task model on raw time series -> predict -> aggregate probabilities
-
-Both pathways support **weekly** (168h) and **daily** (24h) segment types.
-
-## Precomputed Artifacts
-
-The pipeline depends on these precomputed artifacts:
-
-| Artifact | Path | Build Command |
-|----------|------|---------------|
-| weekly_labels_lookup | `data/processed/weekly_labels_lookup.parquet` | `python scripts/labels/build_labels_lookup.py` |
-| daily_labels_lookup | `data/processed/daily_labels_lookup.parquet` | `python scripts/labels/build_labels_lookup.py --segment-type daily` |
-| weekly_hf | `data/processed/weekly_hf/` | `python -m data.processing.daily_hourly_hf_to_weekly_hf` |
-| daily_hourly_hf | `data/processed/daily_hourly_hf/` | `python -m data.processing.daily_hf_to_daily_hourly_hf` |
-| split_file | `data/splits/sharable_users_seed42_2026.json` | `python scripts/create_split.py` |
-| clip_dates | `data/labels/clip_dates.json` | Static (temporal filtering cutoffs) |
-
-Labels lookups are **index-aligned** with their respective HF datasets and must be rebuilt whenever the underlying dataset changes.
-
-## Directory Structure
+One engine evaluates every model on identical cohorts:
 
 ```
-src/downstream_evaluation/
-├── config.py                    # Dataclass-based configuration schema
-├── feature_store.py             # WeekFeatureStore: extract-once, reuse features
-├── README.md                    # This file
-├── data/
-│   ├── aggregation.py           # Segment-to-user pooling (mean, coverage-weighted)
-│   ├── data_loader.py           # HF dataset loading, label attachment, daily_hourly_hf prep
-│   └── splits.py                # User-based train/val/test splitting
-├── evaluation/
-│   ├── evaluator.py             # Main orchestrator
-│   ├── metrics.py               # AUROC, AUPRC, Accuracy, F1, MSE, MAE, Pearson/Spearman R, QWK
-│   ├── global_score.py          # Type-balanced GlobalScore aggregation
-│   └── proxy_gs.py              # Proxy GlobalScore for fast HPO
-├── feature_extractors/
-│   ├── base.py                  # FeatureExtractor Protocol
-│   ├── baseline_extractor.py    # Mean/std features (38-dim stat_simple, 1056-dim stat_full)
-│   ├── encoder_extractor.py     # SSL encoder embeddings (256-dim)
-│   ├── multirocket_extractor.py # MultiRocket features (~50K-dim)
-│   └── jets_triplet_extractor.py # JETS observation-level features
-├── supervised_models/
-│   ├── base.py                  # Supervised model protocol
-│   ├── data_prep.py             # Data preparation for sequence models
-│   ├── grud_model.py            # GRU-D (PyPOTS) single-task
-│   ├── brits_model.py           # BRITS (PyPOTS) single-task
-│   ├── multitask_grud_model.py  # GRU-D multi-task (shared encoder)
-│   └── multitask_brits_model.py # BRITS multi-task (shared encoder)
-├── models/
-│   └── registry.py              # Classifier factory with RobustStandardScaler
-└── io/
-    └── writer.py                # JSON/CSV output writer
+openmhc.evaluate_prediction(model, tasks)
+  └─ per task:
+       TaskDataProvider   who & what — cohort user_ids, labels, eligible days
+       DataLoader         the bytes — raw segments, one dataset read per run
+       model.fit(train data, labels, task_type)   # optional — skipped if undefined
+       model.predict(test data)  →  scored on the held-out cohort
 ```
 
-## Usage
+**Data layer** (`src/downstream_evaluation/data/`):
 
-### Config Structure
+- `**provider.py` — who and what.** `TaskDataProvider` reads the labels lookup (one parquet per granularity) and derives, per `(task, split)`: the cohort, their labels, and the dates of each user's eligible days.
+- `**loader.py` — the bytes.** `DataLoader` reads `daily_hourly_hf` once per run (lazily, on first access), indexes it by `(user_id, date)`, and serves every access pattern: `bind()` (a task cohort's eligible segments), `segment_store()` (the whole store, for global-fit models), `user_days()` (date-ascending days, for timeline builders), `as_daily_rows()` (raw-form rows, for window-index consumers).
+- `**splits.py`** reads the frozen train/validation/test user split.
 
-```
-configs/downstream_eval/
-├── base.yaml            # Shared settings (data paths, classifiers, aggregation)
-├── stat_simple.yaml     # Statistical baseline (mean/std, 38-dim)
-├── stat_full.yaml       # Statistical full features (1056-dim)
-├── ssl_encoder.yaml     # SSL encoder embeddings (256-dim)
-├── multirocket.yaml     # MultiRocket features (~50K-dim)
-├── jets_encoder.yaml    # JETS triplet encoder features
-├── gru_d.yaml           # GRU-D supervised sequence model
-├── brits.yaml           # BRITS supervised sequence model
-├── gru_d_multitask.yaml # GRU-D multi-task
-├── brits_multitask.yaml # BRITS multi-task
-└── temporal_windows.yaml # Temporal windowing experiments
-```
+Quality gating happens once, upstream, when `daily_hourly_hf` is built; eligibility is whatever the lookup file names. The loader selects those `(user, date)` rows and never re-filters — no model decides its own cohort. (`mae`/`xgboost` read at minute resolution through the loader's `participant_minute` path over the `daily_hf` store — the same single-read discipline, no separate extraction.)
 
-### Basic Usage
+**Scoring.** For each task the benchmark fits your model on the train cohort (when it defines `fit`) and scores its predictions on the held-out test cohort. Encoder-style models all run the *same* probe (`openmhc.LinearProbe`: PCA-50 + a linear head) inside `fit`/`predict`, so the comparison isolates representation quality; end-to-end models own their head. Primary metric per task type:
+
+
+| Task type  | Metric     | Example tasks                         |
+| ---------- | ---------- | ------------------------------------- |
+| Binary     | AUPRC      | Diabetes, Hypertension, BiologicalSex |
+| Ordinal    | Spearman ρ | BMI_categories, feel_worthwhile1-4    |
+| Regression | Pearson r  | age, BMI_values, WeightKilograms      |
+
+
+**Missing predictions.** A model may leave part of the cohort unscored — WBM, for one, only embeds participants with a full weekly window. When `predict` returns non-finite values for some participants, the harness scores those against the `linear` baseline (fit on the same train cohort) before metrics, so every participant counts exactly once. This needs the model to expose the segments and `fit` the baseline requires, so today WBM is the only bundled model that triggers it; the substituted fraction is reported as `PredictionResults.overall_fallback_rate` (per task in `.fallback_rate`).
+
+
+## Reproduce the paper results
+
+Three steps: data, baselines, paper pipeline.
+
+**1. Get the dataset** (see `DATASET.md`) and point `MHC_DATA_DIR` at its root.
+
+**2. Run the eight baselines.** One driver for every method; predictions are the paper pipeline's input, so set `PREDICTIONS_DIR`:
 
 ```bash
-# Statistical baseline (mean/std, 38-dim)
-python scripts/downstream_eval/run_downstream_eval.py \
-    --config configs/downstream_eval/base.yaml \
-    --config configs/downstream_eval/stat_simple.yaml
-
-# Statistical full features (1056-dim)
-python scripts/downstream_eval/run_downstream_eval.py \
-    --config configs/downstream_eval/base.yaml \
-    --config configs/downstream_eval/stat_full.yaml
-
-# SSL encoder features (256-dim, requires GPU + checkpoint)
-python scripts/downstream_eval/run_downstream_eval.py \
-    --config configs/downstream_eval/base.yaml \
-    --config configs/downstream_eval/ssl_encoder.yaml
-
-# MultiRocket features (~50K-dim)
-python scripts/downstream_eval/run_downstream_eval.py \
-    --config configs/downstream_eval/base.yaml \
-    --config configs/downstream_eval/multirocket.yaml
-
-# JETS triplet encoder features
-python scripts/downstream_eval/run_downstream_eval.py \
-    --config configs/downstream_eval/base.yaml \
-    --config configs/downstream_eval/jets_encoder.yaml
-
-# GRU-D supervised sequence model
-python scripts/downstream_eval/run_downstream_eval.py \
-    --config configs/downstream_eval/base.yaml \
-    --config configs/downstream_eval/gru_d.yaml
-
-# BRITS supervised sequence model
-python scripts/downstream_eval/run_downstream_eval.py \
-    --config configs/downstream_eval/base.yaml \
-    --config configs/downstream_eval/brits.yaml
+for M in linear multirocket gru_d xgboost mae toto chronos2 wbm; do
+  METHOD=$M MHC_DATA_DIR=path/to/mhc-data \
+  PREDICTIONS_DIR=results/eval/final/predictions \
+  OUT_CSV=results/eval/final/eval_$M.csv \
+  sbatch jobs/imperial/slurm/run_eval.slurm        # add --gres=gpu:1 for toto/chronos2/wbm/lsm2/gru_d
+done
 ```
 
-### Daily Segment Type
 
-Use `--data.segment_type daily` to evaluate on daily (24h) segments from
-`daily_hourly_hf` instead of weekly (168h) segments. This works for all
-feature store methods (stat_simple, stat_full, multirocket) and supervised
-sequence models (gru_d, brits).
+| METHOD          | Model                                           | Notes                          |
+| --------------- | ----------------------------------------------- | ------------------------------ |
+| linear          | per-channel mean/std (+ demographics)           | CPU                            |
+| multirocket     | random convolutional kernels                    | CPU                            |
+| gru_d           | end-to-end GRU-D (trains per run)               | GPU; see reproducibility below |
+| xgboost         | gradient-boosted trees on minute-level features | CPU; needs `daily_hf`          |
+| mae             | masked-autoencoder embeddings                   | GPU on cache miss; `daily_hf`  |
+| toto / chronos2 | time-series foundation-model embeddings         | GPU on cache miss              |
+| wbm             | self-supervised weekly encoder; linear fallback | GPU on cache miss              |
+
+
+**3. Run the paper pipeline** (bootstrap CIs, skill/rank/fairness aggregates) — one config drives every phase:
 
 ```bash
-# Daily evaluation
-python scripts/downstream_eval/run_downstream_eval.py \
-    --config configs/downstream_eval/base.yaml \
-    --config configs/downstream_eval/stat_simple.yaml \
-    --data.segment_type daily
-
-# Daily with specific tasks
-python scripts/downstream_eval/run_downstream_eval.py \
-    --config configs/downstream_eval/base.yaml \
-    --config configs/downstream_eval/stat_simple.yaml \
-    --data.segment_type daily \
-    --experiment.tasks "[Diabetes, BiologicalSex]"
+PYTHONPATH=src python scripts/paper_results/downstream/run_paper_pipeline.py \
+    --config configs/paper/downstream_paper.yaml
 ```
 
-When `segment_type=daily`, the pipeline:
-- Loads from `daily_hourly_hf_dir` instead of `weekly_hf_dir`
-- Transposes values/mask from (19, 24) channels-first to (24, 19) time-first
-- Restores NaN where mask==1 (daily_hourly_hf is zero-filled)
-- Uses `daily_labels_lookup.parquet` for labels
-- Skips the `min_valid_days_per_week` coverage filter (not applicable)
+`configs/paper/downstream_paper.yaml` records the methods, bootstrap count/seed, baseline, and the fairness knobs — the single provenance of the published numbers. Re-aggregate without re-bootstrapping via `--skip-phase1`.
 
-### CLI Overrides
+### Reference checkpoint (WBM on the Hub)
+
+The reported **WBM** model (Mamba2 contrastive encoder + the uniform PCA-50 probe;
+the harness scores participants without a weekly window via the linear baseline)
+loads a released checkpoint bundle via `from_release(...)` — a local dir or an `hf://`
+URI — exactly like the forecasting / imputation reference models:
+
+```python
+import openmhc
+from openmhc.encoders import WBM
+
+# pip install 'openmhc[hf]'   (+ mamba-ssm on a CUDA machine to run the encoder)
+enc = WBM.from_release("hf://MyHeartCounts/openmhc-wbm-dp")
+results = openmhc.evaluate_prediction(enc, version="full")
+```
+
+The released bundle lives under `MyHeartCounts/openmhc-wbm-dp` on the Hugging Face
+Hub. Stage it from the source W&B artifact with
+`tools/encoders/build_wbm_release.py`, then publish with
+`tools/publish_to_hf.py` (see the `openmhc_manifest.json` schema in
+`src/openmhc/encoders/_release.py`).
+
+## Reproducible runs via the CLI (`mhc-downstream-eval`)
+
+The bundled baselines also run from a composable [Hydra](https://hydra.cc) CLI — the prediction-track twin of `mhc-impute-eval` / `mhc-forecast-eval`. It builds the model and calls the same `openmhc.evaluate_prediction` engine as the snippets above; reach for it (over the `METHOD=… scripts/run_eval.py` env-var driver) when you want config provenance, parameter sweeps, or cluster dispatch — each run snapshots its fully-resolved config next to the results.
 
 ```bash
-# Run specific tasks only
-python scripts/downstream_eval/run_downstream_eval.py \
-    --config configs/downstream_eval/base.yaml \
-    --config configs/downstream_eval/stat_simple.yaml \
-    --experiment.tasks "[Diabetes, Hypertension, BiologicalSex]"
-
-# Specific time windows
-python scripts/downstream_eval/run_downstream_eval.py \
-    --config configs/downstream_eval/base.yaml \
-    --config configs/downstream_eval/stat_simple.yaml \
-    --experiment.time_windows "full,before_label,before_10w"
-
-# Resume from previous run (skip completed tasks)
-python scripts/downstream_eval/run_downstream_eval.py \
-    --config configs/downstream_eval/base.yaml \
-    --config configs/downstream_eval/stat_simple.yaml \
-    --experiment.resume true
-
-# W&B artifact for SSL checkpoint (auto-downloaded + cached)
-python scripts/downstream_eval/run_downstream_eval.py \
-    --config configs/downstream_eval/base.yaml \
-    --config configs/downstream_eval/ssl_encoder.yaml \
-    --features.ssl_encoder.checkpoint_path "wandb:MHC_Dataset/mhc-ssl/encoder:latest"
+pip install -e ".[hydra]"          # or, from the published package: pip install "openmhc[hydra]"
+mhc-downstream-eval method=xgboost
+# no install needed for a one-off:
+PYTHONPATH=src python -m downstream_evaluation.hydra.cli method=xgboost
 ```
 
-## Data Configuration
+**Configs.** Composable YAML under `[configs/downstream/](../../configs/downstream/)`, one group per axis; override any field on the command line:
 
-```yaml
-data:
-  segment_type: weekly            # "weekly" (168h) or "daily" (24h)
-  weekly_hf_dir: data/processed/weekly_hf
-  daily_hourly_hf_dir: data/processed/daily_hourly_hf
-  weekly_labels_lookup_path: data/processed/weekly_labels_lookup.parquet
-  daily_labels_lookup_path: data/processed/daily_labels_lookup.parquet
-  split_file: data/splits/sharable_users_seed42_2026.json
-  clip_dates_path: data/labels/clip_dates.json
-  min_valid_days_per_week: 5      # Filter weeks with < N valid days (0=off, skipped for daily)
+```
+configs/downstream/
+  eval.yaml               # defaults list + run-dir layout
+  data/default.yaml       # data_dir (null -> MHC_DATA_DIR)
+  method/<name>.yaml      # one per bundled model (8): type + build-on-miss knobs
+  evaluation/default.yaml # tasks: all | [age, Diabetes, ...]
+  output/default.yaml     # results_dir, predictions_dir
 ```
 
-The `active_labels_lookup_path` property automatically routes to the correct
-labels parquet based on `segment_type`.
+**Usage.**
 
-## Feature Types
+```bash
+mhc-downstream-eval method=linear                       # one method, all 32 tasks
+mhc-downstream-eval method=xgboost evaluation.tasks=[age,Diabetes] \
+    data.data_dir=/path/to/mhc-data output.predictions_dir=results/eval/predictions
+mhc-downstream-eval --multirun method=linear,lsm2,xgboost   # sweep (one run dir each)
+```
 
-| Feature Type | Config | Dimensions | Method |
-|-------------|--------|------------|--------|
-| stat_simple | `stat_simple.yaml` | 38 | Per-channel mean + std |
-| stat_full | `stat_full.yaml` | 1056 | 28 statistical features x (19 values + 19 masks) |
-| ssl_encoder | `ssl_encoder.yaml` | 256 | Pretrained encoder embeddings |
-| multirocket | `multirocket.yaml` | ~50,000 | Random convolutional kernels |
-| jets_encoder | `jets_encoder.yaml` | 256 | JETS triplet observation embeddings |
-| gru_d | `gru_d.yaml` | N/A | Supervised GRU-D (trains per task) |
-| brits | `brits.yaml` | N/A | Supervised BRITS (trains per task) |
+**Output.** Each run lands in `${output.results_dir}/<timestamp>_<method>/`:
 
-## Supported Tasks
+```
+eval.csv               # long-format per-(task, metric) results — same schema as results/eval/final/
+resolved_config.yaml   # the fully-resolved config (provenance)
+.hydra/                # Hydra's own config + overrides snapshot
+cli.log                # run log
+```
 
-33 tasks defined in `src/labels/label_types.json`:
+**Cluster dispatch (PBS).** Pick the queue by whether the method needs a GPU. CPU-only methods (`linear`, `multirocket`, `xgboost`) use `run_eval.pbs`:
 
-| Task Type | Metrics | Examples |
-|-----------|---------|----------|
-| Binary | AUROC, AUPRC | Diabetes, Hypertension, BiologicalSex |
-| Multiclass | Accuracy, Macro F1 | sleep_time_categories, happiness_categories |
-| Ordinal | Spearman R, QWK, MAE | feel_worthwhile1-4, BMI_categories |
-| Regression | MSE, MAE, Pearson R | age, BMI_values, WeightKilograms |
+```bash
+qsub -v METHOD=xgboost,MHC_DATA_DIR=$HOME/mhc-data jobs/imperial/pbs/run_eval.pbs
+```
 
-## Time Windows
+GPU methods use `run_eval_gpu.pbs` (`:ngpus=1`): `gru_d` (trains every run), and `toto`/`chronos2`/`wbm`/`mae` for embedding extraction on a cache miss (a warm cache runs them CPU-only). CPU jobs request `mem=64gb` — the hourly loader materializes the `daily_hourly_hf` cohort in RAM (~32 GB peak), so they do not fit an interactive login session.
 
-The pipeline supports temporal windowing relative to each user's label date:
+**Add a method.** Register a builder in `[hydra/registry.py](hydra/registry.py)` and drop a `configs/downstream/method/<name>.yaml` with `type: <name>`. The builder takes `(method_cfg, data_cfg)` and returns `(model, None)` — the same model object you would otherwise hand to `openmhc.evaluate_prediction`.
 
-| Window | Description |
-|--------|-------------|
-| `full` | All segments (ignore label date) |
-| `before_label` | All segments on or before label date |
-| `before_Nw` | Last N weeks before label date |
-| `after_Nw` | First N weeks after label date |
-| `around_Nw` | +/-N weeks around label date |
+## Evaluate your own model
 
-Configure via: `--experiment.time_windows "full,before_label,before_10w"`
+Implement `predict` (and, if your model trains, `fit`) and hand the model to the benchmark — no base class, no config files. `predict` is the only required method; `fit` is optional, so a zero-shot / pretrained model just leaves it out and is scored as-is. The one contract supports two styles; pick by **who owns the classification head**:
 
-## Aggregation
+- **Encoder-style** — your model produces a representation; the benchmark's uniform head (`openmhc.LinearProbe`) turns it into predictions. Your score reflects the *representation* and is directly comparable with the paper's encoder rows (mae, toto, chronos2, multirocket).
+- **End-to-end** — your model owns its head and returns predictions directly, scored as-is. Comparable with the paper's end-to-end rows (gru_d, xgboost).
 
-Segment-level features/predictions are pooled to user level before classification:
+**Encoder-style** (uniform probe inside `fit`/`predict`):
 
-- **mean**: Simple mean over all segments per user (default)
-- **cov_weighted_mean**: Coverage-weighted mean where each segment is weighted by
-  its coverage fraction (n_valid_hours / hours_per_segment)
+```python
+import numpy as np
+import openmhc
+from openmhc import DataSpec
 
-## Output
+class MyEncoderMethod:
+    data_spec = DataSpec("hourly", "day")    # your input shape — see "Input shapes" below
 
-Results CSV at `results/eval/eval_results_{feature_type}.csv` with columns for
-task, classifier, time window, sample counts, and all relevant metrics.
+    def _encode(self, data: np.ndarray) -> np.ndarray:
+        # data: (n_days, 24, 38) — one participant's eligible days.
+        #   channels 0-18 = raw sensor values (NaN at missing positions)
+        #   channels 19-37 = missingness mask (1 = missing, 0 = observed)
+        # Normalize however your model needs; return any vector of length >= 50.
+        x = np.nan_to_num(data).reshape(-1, 38)
+        return np.concatenate([x.mean(0), x.std(0)])      # -> (76,)
 
-## Dependencies
+    def fit(self, data, labels, task_type):
+        emb = np.stack([self._encode(x) for x in data])
+        self._probe = openmhc.LinearProbe(task_type).fit(emb, labels)
 
-Core: numpy, scikit-learn, pandas, datasets (HuggingFace), jsonargparse
+    def predict(self, data):
+        return self._probe.predict(np.stack([self._encode(x) for x in data]))
 
-Optional:
-- torch, pytorch_lightning (SSL encoder features)
-- sktime (MultiRocket features)
-- pypots (GRU-D, BRITS supervised models)
-- xgboost (XGBoost classifiers)
+results = openmhc.evaluate_prediction(MyEncoderMethod(), tasks="all", data_dir="path/to/mhc-data")
+
+print(results.summary())             # wide table: one row per task, one column per metric
+results.to_csv("my_results.csv")     # full long-format results
+```
+
+**End-to-end** (your own head — here a random forest, routed by task type):
+
+```python
+import numpy as np
+from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+from openmhc import DataSpec
+
+class MyEndToEndMethod:
+    data_spec = DataSpec("hourly", "day")
+
+    def _features(self, data):
+        return np.stack([np.nan_to_num(x).reshape(-1, 38).mean(0) for x in data])
+
+    def fit(self, data, labels, task_type):
+        cls = RandomForestRegressor if task_type == "regression" else RandomForestClassifier
+        self._model = cls(n_estimators=300, random_state=42).fit(self._features(data), labels)
+        self._task_type = task_type
+
+    def predict(self, data):
+        X = self._features(data)
+        if self._task_type == "binary":
+            return self._model.predict_proba(X)[:, 1]   # scores, not hard labels (AUPRC)
+        return self._model.predict(X)                    # ordinal/multiclass: levels; regression: values
+```
+
+**Input shapes.** Declare what each participant's data looks like with `data_spec`:
+
+
+| `data_spec`                       | each participant                  |
+| --------------------------------- | --------------------------------- |
+| `DataSpec("hourly", "day")`       | `(n_days, 24, 38)`                |
+| `DataSpec("hourly", "series", N)` | `(N, 38)` — one continuous window |
+| `DataSpec("minute", "day")`       | `(n_days, 1440, 38)`              |
+
+
+Channels 0-18 are sensor values (NaN at missing), 19-37 the missingness mask. Iterate `data` for one participant at a time — `minute` (and other large) specs stream, so don't index `data[i]` or stack the whole cohort.
+
+**Memory.** Why iterate instead of stacking? For `hourly` specs the whole cohort is small (a few GB), so `data` is just a list. For `minute` (and other large) specs the full cohort is hundreds of GB — far past RAM — so the benchmark *streams* it: `data` is a `CohortView` that hands you one participant at a time and never holds the whole cohort at once. Peak memory then stays at roughly one participant (plus whatever you accumulate), **independent of cohort size** — as long as you iterate and don't stack the raw `data`.
+
+**What you implement:**
+
+`predict(data)` *(required)* — return one prediction per participant, in `data` order. What to return depends on the task:
+
+
+| `task_type`              | return per participant                                                                     |
+| ------------------------ | ------------------------------------------------------------------------------------------ |
+| `binary`                 | score / probability of the positive class — a ranking, **not** 0/1 labels (AUPRC needs it) |
+| `multiclass` / `ordinal` | the class level                                                                            |
+| `regression`             | the value                                                                                  |
+
+
+`fit(data, labels, task_type)` *(optional)* — train on the cohort. Omit it for a zero-shot / pretrained model and the benchmark skips training:
+
+- `data` — iterate it, one participant's array at a time (a list; a streamed `CohortView` for large specs — see *Input shapes*).
+- `labels` — one per participant, aligned with the cohort.
+- `task_type` — `"binary"`, `"multiclass"`, `"ordinal"`, or `"regression"`.
+
+The benchmark owns the cohort and eligibility — who's included, and which of each participant's dates count (full history by default) — so your model only ever sees eligible data and can't get the cohort wrong. Encoder vs end-to-end may train, pretrain, or be training-free; the style only decides which paper rows you're comparable with.
+
+Run it with `openmhc.evaluate_prediction(model)` → a `PredictionResults` (`.summary()`, `.to_csv()`, `.to_json()`, `.to_dataframe()`). `tasks="all"` runs all 32 tasks (`openmhc.list_tasks()`); `data_dir` defaults to `$MHC_DATA_DIR`.
+
+## Requirements
+
+`numpy`, `scikit-learn`, `pandas`, `datasets`. The foundation-model baselines (`toto`, `chronos2`, `wbm`, `mae`) additionally need `torch` and a GPU for embedding extraction (cached after the first run).

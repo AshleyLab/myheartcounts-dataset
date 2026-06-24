@@ -9,7 +9,7 @@ base class.
 Example:
     >>> import openmhc
     >>> from openmhc.imputers import MeanImputer
-    >>> results = openmhc.evaluate_imputation(MeanImputer())
+    >>> results = openmhc.evaluate_imputation(MeanImputer(version="xs"), version="xs")
 
 Available reference methods:
 

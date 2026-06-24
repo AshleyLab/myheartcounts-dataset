@@ -1,32 +1,32 @@
-"""Submission helpers — turn evaluation results into paste-ready YAML.
+"""Submission helpers — render the leaderboard submission packet.
 
-The output matches the textareas in `.github/ISSUE_TEMPLATE/submission.yml`
-so submitters paste once instead of typing per-field.
+A submission is a pull request on the Hugging Face dataset repo
+``MyHeartCounts/OpenMHC-leaderboard-data`` that adds two files under the
+track's subdirectory:
 
-Skill scores follow the same maintainer-filled convention across all three
-tracks: submitters paste absolute per-channel metrics (MAE / AUC) and the
-maintainers compute the paired skill score, fair skill score, and average
-rank against the per-track baseline (LOCF for Track 2, Linear for Track 1,
-Seasonal Naive for Track 3) during ingestion. This keeps the estimand
-consistent: it's always the maintainer-side paired user-bootstrap formula
-implemented in ``imputation_evaluation/evaluation/bootstrap_skill_rank.py``
-(Track 2) and ``forecasting_evaluation/metrics/skill_score_summary.py``
-(Track 3).
+- ``<track>/<method>.parquet``   — the per-user substrate produced by the eval
+- ``<track>/<method>.meta.json`` — the display sidecar the leaderboard reads
+  (``display_name``, ``type``, ``submitter``, ``subtrack``)
+
+The maintainers recompute the paired skill score, fair skill score, and average
+rank from the substrate during ingestion (LOCF baseline for Track 2, Linear for
+Track 1, Seasonal Naive for Track 3). The reducer is the same paired
+user-bootstrap formula implemented in
+``imputation_evaluation/evaluation/bootstrap_skill_rank.py`` (Track 2) and
+``forecasting_evaluation/metrics/skill_score_summary.py`` (Track 3).
+
+These helpers render the ``meta.json`` block plus the PR file checklist so
+submitters fill it once instead of hand-writing the sidecar. The substrate
+parquet itself is produced by the evaluation run, not by these helpers.
 """
 
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
+import re
 
-import numpy as np
-
-if TYPE_CHECKING:
-    from openmhc._results import (
-        ForecastingResults,
-        ImputationResults,
-        PredictionResults,
-    )
+LEADERBOARD_REPO = "MyHeartCounts/OpenMHC-leaderboard-data"
+LEADERBOARD_REPO_URL = f"https://huggingface.co/datasets/{LEADERBOARD_REPO}"
 
 # ---------------------------------------------------------------------------
 # Public entry points
@@ -34,7 +34,6 @@ if TYPE_CHECKING:
 
 
 def imputation_to_submission_yaml(
-    results: ImputationResults,
     method_name: str,
     submitter_team: str,
     code_url: str,
@@ -44,64 +43,51 @@ def imputation_to_submission_yaml(
     feature_dim: str = "—",
     notes: str = "",
 ) -> str:
-    """Render a paste-ready submission body for a Track 2 imputation result.
+    """Render the Track 2 (imputation) leaderboard submission packet.
 
-    Skill score, fair skill score, average rank, and per-category subgroup
-    scores are emitted as ``—`` placeholders. The maintainers fill them in
-    from the absolute per-channel metrics in the ``raw_metrics`` block,
-    running the paired user-bootstrap reducer in
-    ``imputation_evaluation.evaluation.bootstrap_skill_rank``
-    (paired geomean of clipped per-user ratios, MAE for continuous,
-    ``max(1 − AUC_u, 0.005)`` for binary — parity with Track 3 forecasting).
+    Produces the ``<method>.meta.json`` sidecar and the pull-request file
+    checklist for ``MyHeartCounts/OpenMHC-leaderboard-data``. The per-user
+    substrate parquet itself comes from the evaluation run — pass ``output_dir=``
+    to ``evaluate_imputation`` to write ``per_user_errors.parquet`` — and the
+    maintainers compute the paired skill / fair-skill / rank from it vs. LOCF.
 
     Args:
-        results: ImputationResults from `evaluate_imputation`.
-        method_name: Short, citation-ready name (e.g. "MeanImputer").
-        submitter_team: Lab / company affiliation for attribution.
-        code_url: Public repo URL (required — needed for reproducibility).
-        paper_url: Paper / preprint / blog / slides URL. Optional; leave
-            empty for independent teams without a write-up.
-        method_category: One of the dropdown options in submission.yml.
-        foundation_variant: One of the dropdown options.
+        method_name: Short, citation-ready name (e.g. "MeanImputer"). Used as
+            the sidecar ``display_name``.
+        submitter_team: Lab / company affiliation; the sidecar ``submitter``.
+        code_url: Public repo URL — recorded in the PR description for
+            reproducibility.
+        paper_url: Paper / preprint / blog / slides URL. Optional; leave empty
+            for independent teams without a write-up.
+        method_category: The sidecar ``type`` (e.g. "Statistical / Classical
+            baseline").
+        foundation_variant: Foundation-model variant, for the PR description.
         feature_dim: Latent / embedding dim, or "—".
         notes: Free-form notes for reviewers.
 
     Returns:
-        Plain-text body matching the textareas in submission.yml. Paste into
-        the "Aggregate metrics", "Subgroup skill scores", and "Raw per-sub-task
-        metrics" fields, then fill the simple inputs (method name, etc.) at
-        the top of the form.
+        Plain-text packet: a copy-paste ``meta.json`` block plus the PR
+        instructions for the imputation track.
     """
-    raw = json.dumps(results.scenarios, indent=2, default=_json_default)
-
-    return _render_yaml_block(
+    return _render_packet(
         track="Track 2 — Imputation (Daily, single-day context)",
+        track_subdir="imputation",
+        subtrack="single-day",
+        subtrack_options="single-day | long-context",
+        substrate_hint="per-user substrate (e.g. per_user_errors.parquet from output_dir=)",
+        subdir_finalized=True,
         method_name=method_name,
-        submitter_team=submitter_team,
         method_category=method_category,
-        foundation_variant=foundation_variant,
-        feature_dim=feature_dim,
-        paper_url=paper_url,
+        submitter_team=submitter_team,
         code_url=code_url,
+        paper_url=paper_url,
+        feature_dim=feature_dim,
+        foundation_variant=foundation_variant,
         notes=notes,
-        aggregate_lines=[
-            "skill_score: —  # computed by maintainers vs LOCF baseline",
-            "fair_skill_score: —  # computed by maintainers from the disparity-ratio bootstrap",
-            "avg_rank: —  # computed by maintainers vs current leaderboard",
-        ],
-        subgroup_lines=[
-            "activity: —  # computed by maintainers",
-            "physiology: —",
-            "sleep: —",
-            "workouts: —",
-            "semantic: —  # paper-only category; ignore unless reporting it explicitly",
-        ],
-        raw_block=raw,
     )
 
 
 def prediction_to_submission_yaml(
-    results: PredictionResults,
     method_name: str,
     submitter_team: str,
     code_url: str,
@@ -112,44 +98,35 @@ def prediction_to_submission_yaml(
     feature_dim: str = "—",
     notes: str = "",
 ) -> str:
-    """Render a paste-ready submission body for a Track 1 outcome-prediction result.
+    """Render the Track 1 (outcome prediction) leaderboard submission packet.
 
-    Aggregate skill score and subgroup skill scores are emitted as "—"
-    placeholders for now — the public repo doesn't yet ship the Linear-
-    baseline per-task metrics needed to compute them. The maintainers fill
-    these in from raw_metrics during ingestion.
+    Same shape as :func:`imputation_to_submission_yaml`. The Track-1 substrate is
+    the per-user prediction-pair frame (``<method>.parquet`` from
+    ``evaluate_prediction(output_dir=...)``); maintainers recompute skill /
+    fair-skill / rank vs. the Linear baseline from it during ingestion.
 
-    Args, Returns: see :func:`imputation_to_submission_yaml`.
+    Args, Returns: see :func:`imputation_to_submission_yaml`. ``track`` selects
+    the Static vs. Longitudinal sub-track label.
     """
-    raw = json.dumps(results.records, indent=2, default=_json_default)
-    return _render_yaml_block(
+    return _render_packet(
         track=track,
+        track_subdir="downstream",
+        subtrack="static",
+        subtrack_options="static | longitudinal",
+        substrate_hint="per-user prediction pairs (<method>.parquet from output_dir=)",
+        subdir_finalized=True,
         method_name=method_name,
-        submitter_team=submitter_team,
         method_category=method_category,
-        foundation_variant=foundation_variant,
-        feature_dim=feature_dim,
-        paper_url=paper_url,
+        submitter_team=submitter_team,
         code_url=code_url,
+        paper_url=paper_url,
+        feature_dim=feature_dim,
+        foundation_variant=foundation_variant,
         notes=notes,
-        aggregate_lines=[
-            "skill_score: —  # computed by maintainers from raw_metrics",
-            "fair_skill_score: —",
-            "avg_rank: —",
-        ],
-        subgroup_lines=[
-            "demographics: —  # computed by maintainers",
-            "medical_conditions: —",
-            "body_biomarkers: —",
-            "mental_wellbeing: —",
-            "sleep_lifestyle: —",
-        ],
-        raw_block=raw,
     )
 
 
 def forecasting_to_submission_yaml(
-    results: ForecastingResults,
     method_name: str,
     submitter_team: str,
     code_url: str,
@@ -159,38 +136,30 @@ def forecasting_to_submission_yaml(
     feature_dim: str = "—",
     notes: str = "",
 ) -> str:
-    """Render a paste-ready submission body for a Track 3 forecasting result.
+    """Render the Track 3 (forecasting) leaderboard submission packet.
 
-    Skill scores against the Seasonal Naive baseline are left as ``—``
-    until the per-channel baseline file is shipped. Subgroup keys match
-    the submission template (``step``, ``flights``, ``hr``, ``energy``,
-    ``sleep``, ``workouts``).
+    Same shape as :func:`imputation_to_submission_yaml`. The Track 3 subdir
+    name and substrate format are still being finalized, so the rendered packet
+    carries a NOTE flagging that; maintainers compute skill / fair-skill / rank
+    vs. the Seasonal Naive baseline during ingestion.
+
+    Args, Returns: see :func:`imputation_to_submission_yaml`.
     """
-    raw = json.dumps(results.per_channel, indent=2, default=_json_default)
-    return _render_yaml_block(
+    return _render_packet(
         track="Track 3 — Forecasting",
+        track_subdir="forecasting",
+        subtrack="other",
+        subtrack_options="finalized in the per-track update",
+        substrate_hint="per-user substrate from the eval (format being finalized)",
+        subdir_finalized=False,
         method_name=method_name,
-        submitter_team=submitter_team,
         method_category=method_category,
-        foundation_variant=foundation_variant,
-        feature_dim=feature_dim,
-        paper_url=paper_url,
+        submitter_team=submitter_team,
         code_url=code_url,
+        paper_url=paper_url,
+        feature_dim=feature_dim,
+        foundation_variant=foundation_variant,
         notes=notes,
-        aggregate_lines=[
-            "skill_score: —  # computed by maintainers vs Seasonal Naive baseline",
-            "fair_skill_score: —",
-            "avg_rank: —",
-        ],
-        subgroup_lines=[
-            "step: —",
-            "flights: —",
-            "hr: —",
-            "energy: —",
-            "sleep: —",
-            "workouts: —",
-        ],
-        raw_block=raw,
     )
 
 
@@ -199,56 +168,67 @@ def forecasting_to_submission_yaml(
 # ---------------------------------------------------------------------------
 
 
-def _render_yaml_block(
+def _slug(name: str) -> str:
+    """Lowercase filename stem suggestion derived from a method name."""
+    s = re.sub(r"[^0-9a-z]+", "_", name.lower()).strip("_")
+    return s or "method"
+
+
+def _render_packet(
     *,
     track: str,
+    track_subdir: str,
+    subtrack: str,
+    subtrack_options: str,
+    substrate_hint: str,
+    subdir_finalized: bool,
     method_name: str,
-    submitter_team: str,
     method_category: str,
-    foundation_variant: str,
-    feature_dim: str,
-    paper_url: str,
+    submitter_team: str,
     code_url: str,
+    paper_url: str,
+    feature_dim: str,
+    foundation_variant: str,
     notes: str,
-    aggregate_lines: list[str],
-    subgroup_lines: list[str],
-    raw_block: str,
 ) -> str:
-    """Format a complete paste-ready submission body."""
+    """Format the meta.json sidecar block plus the PR file checklist."""
+    method = _slug(method_name)
+    meta = {
+        "display_name": method_name,
+        "type": method_category,
+        "submitter": submitter_team,
+        "subtrack": subtrack,
+    }
     parts = [
-        f"# Paste-ready submission body for: {method_name}",
+        f"# Leaderboard submission packet — {method_name}",
         f"# Track: {track}",
         "#",
-        "# Single-input fields (top of the form):",
-        f"#   method_name:       {method_name}",
-        f"#   submitter_team:    {submitter_team}",
-        f"#   track:             {track}",
-        f"#   method_category:   {method_category}",
+        "# Submit by opening a pull request on the leaderboard dataset:",
+        f"#   {LEADERBOARD_REPO_URL}",
+        "#",
+        f"# Add two files under {track_subdir}/ (pick your own <method> stem):",
+        f"#   {track_subdir}/{method}.parquet     # {substrate_hint}",
+        f"#   {track_subdir}/{method}.meta.json   # the block below",
+    ]
+    if not subdir_finalized:
+        parts += [
+            "#",
+            f"# NOTE: the {track_subdir}/ subdir name and substrate format for this",
+            "# track are being finalized — confirm against tools/leaderboard_docs/",
+            "# and tools/upload_leaderboard_substrate.py before submitting.",
+        ]
+    parts += [
+        "",
+        f"# --- {method}.meta.json ---",
+        json.dumps(meta, indent=2),
+        f"# subtrack options: {subtrack_options}",
+        "",
+        "# --- for the PR description (not uploaded) ---",
+        f"#   code_url:           {code_url}",
+        f"#   paper_url:          {paper_url or '(none)'}",
+        f"#   feature_dim:        {feature_dim}",
         f"#   foundation_variant: {foundation_variant}",
-        f"#   feature_dim:       {feature_dim}",
-        f"#   paper_url:         {paper_url or '(leave blank — no paper)'}",
-        f"#   code_url:          {code_url}",
-        "",
-        "# --- aggregate_metrics (textarea) ---",
-        *aggregate_lines,
-        "",
-        "# --- subgroup_metrics (textarea) ---",
-        *subgroup_lines,
-        "",
-        "# --- raw_metrics (optional textarea) ---",
-        raw_block,
     ]
     if notes:
-        parts.extend(["", "# --- notes ---", notes])
+        parts += ["", "# --- notes ---", notes]
     return "\n".join(parts)
-
-
-def _json_default(obj):
-    """JSON serializer for numpy scalars / arrays inside results."""
-    if isinstance(obj, np.integer):
-        return int(obj)
-    if isinstance(obj, np.floating):
-        return float(obj)
-    if isinstance(obj, np.ndarray):
-        return obj.tolist()
-    raise TypeError(f"Object of type {type(obj)} is not JSON serializable")

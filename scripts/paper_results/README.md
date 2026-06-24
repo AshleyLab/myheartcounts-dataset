@@ -1,11 +1,17 @@
 # Paper-results pipelines
 
 Per-track, single-entry orchestrators that turn per-method eval outputs into the
-paper leaderboard tables. One subdirectory per track; both follow the same phase
-pattern (per-method eval → discover/manifest → skill + rank [→ bootstrap CIs]).
+paper leaderboard tables. One subdirectory per track; all follow the same phase
+pattern (per-method eval → discover/manifest/bootstrap → skill + rank [+ fairness] [→ CIs]).
 
 ```
 scripts/paper_results/
+├── downstream/                  # Track 1: eval -> bootstrap -> skill + rank + fairness
+│   ├── run_paper_pipeline.py
+│   ├── bootstrap_downstream_draws.py
+│   ├── aggregate_downstream_paper_metrics.py
+│   ├── aggregate_fairness_skill_score.py
+│   └── build_leaderboard_json.py
 ├── forecasting/
 │   └── run_paper_pipeline.py     # Track 3: eval -> discover(+validate) -> skill + rank
 └── imputation/
@@ -13,6 +19,21 @@ scripts/paper_results/
     ├── bootstrap_imputation_draws.py
     └── aggregate_imputation_paper_metrics.py
 ```
+
+## Downstream (Track 1)
+`downstream/run_paper_pipeline.py --config configs/paper/downstream_paper.yaml`
+
+Config-driven (a provenance YAML, not a `--sweep-config`): one file records the methods,
+bootstrap count/seed, baseline, and fairness knobs.
+
+- **Phase 0 (eval)** — per method: `run_eval.py` (the same `evaluate_prediction` call an
+  external submitter makes) → `eval_<m>.csv` + per-(method, task) predictions. `--skip-eval`
+  to reuse frozen predictions (the published numbers come from logged SLURM eval jobs).
+- **Phase 1 (bootstrap)** — `bootstrap_downstream_draws.py`: paired user-level bootstrap
+  → `bootstrap_draws.parquet`.
+- **Phase 2 (aggregate)** — `aggregate_downstream_paper_metrics.py` (skill / rank / fairness)
+  + `aggregate_fairness_skill_score.py` (disparity-ratio Fairness Skill Score + BCa) →
+  sidecar CSVs; `build_leaderboard_json.py` renders the leaderboard.
 
 ## Forecasting (Track 3)
 `forecasting/run_paper_pipeline.py --sweep-config configs/paper/sweep_forecasting.yaml`

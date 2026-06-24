@@ -46,6 +46,7 @@ from forecasting_evaluation.metrics.fairness_skill_score_summary import (
     _build_error_table,
     load_user_demographics,
 )
+from forecasting_evaluation.metrics.per_user_errors import to_error_df
 
 logger = logging.getLogger(__name__)
 
@@ -116,6 +117,8 @@ def bootstrap_fair_skill_score(
     clip_upper: float = CLIP_UPPER,
     within_user_aggregation: str = "micro",
     bca: bool = True,
+    per_user_metrics: pd.DataFrame | None = None,
+    return_draws: bool = False,
 ) -> dict[str, pd.DataFrame]:
     """Paired user-bootstrap CIs + point estimate for the fair skill score.
 
@@ -147,6 +150,13 @@ def bootstrap_fair_skill_score(
             sits below the point and the percentile CI is biased low; BCa re-anchors
             the interval near the (reported) point. Per-channel scopes keep the
             percentile CI only.
+        per_user_metrics: optional canonical substrate frame
+            (:func:`per_user_errors.build_per_user_metrics`). When given, the
+            per-user error table is reconstructed from it (micro/user only)
+            instead of re-scanning the metric trees.
+        return_draws: when True, also include the raw per-draw long frame
+            ``fairness_draws`` (model, scope, draw, value) in the result — the
+            bootstrap reference shipped to the leaderboard dataset.
 
     Returns:
         ``{"fairness_skill_scores": ci_df, "fairness_skill_scores_point": point_df}``.
@@ -158,14 +168,24 @@ def bootstrap_fair_skill_score(
     attrs = tuple(attrs)
 
     # ---- Phase 0: build the per-user error table ONCE (the only disk IO) ----
-    error_df = _build_error_table(
-        models=models,
-        continuous_metrics=continuous_metrics,
-        binary_metrics=binary_metrics,
-        continuous_channel_indices=continuous_channel_indices,
-        binary_channel_indices=binary_channel_indices,
-        within_user_aggregation=within_user_aggregation,
-    )
+    # When the caller passes the canonical substrate, reconstruct the fairness
+    # error table from it (micro/user only) instead of re-scanning the trees.
+    if per_user_metrics is not None:
+        if within_user_aggregation != "micro":
+            raise ValueError(
+                "per_user_metrics substrate supports only within_user_aggregation="
+                f"'micro'; got {within_user_aggregation!r}."
+            )
+        error_df = to_error_df(per_user_metrics, user_col="user_id")
+    else:
+        error_df = _build_error_table(
+            models=models,
+            continuous_metrics=continuous_metrics,
+            binary_metrics=binary_metrics,
+            continuous_channel_indices=continuous_channel_indices,
+            binary_channel_indices=binary_channel_indices,
+            within_user_aggregation=within_user_aggregation,
+        )
     if error_df.empty:
         logger.warning("Fairness bootstrap: no error rows discovered; returning empty tables.")
         return {
@@ -260,7 +280,12 @@ def bootstrap_fair_skill_score(
             ci_level=ci_level,
             key_cols=["model", "scope"],
         )
-    return {
+    result = {
         "fairness_skill_scores": summary,
         "fairness_skill_scores_point": point_df,
     }
+    if return_draws:
+        result["fairness_draws"] = pd.DataFrame(
+            records, columns=["model", "scope", "draw", "value"]
+        )
+    return result

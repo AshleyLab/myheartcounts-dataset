@@ -115,6 +115,48 @@ def find_parquet(dir_path: Path, method: str) -> Path:
     )
 
 
+def validate_method_column(parquet_path: Path, method: str) -> None:
+    """Fail loudly unless the parquet's ``method`` column is exactly ``method``.
+
+    The leaderboard concatenates every ``imputation/*.parquet`` and groups by the
+    ``method`` column, so a substrate whose column disagrees with its upload name
+    is mislabeled or collides with another method. The column defaults to
+    ``"custom"`` when ``evaluate_imputation`` is run without ``method_name=``;
+    this guard turns that silent footgun into an upfront error.
+    """
+    import pandas as pd
+
+    values = sorted(pd.read_parquet(parquet_path, columns=["method"])["method"].astype(str).unique())
+    if values != [method]:
+        raise SystemExit(
+            f"{parquet_path} has method column {values}, expected ['{method}']. "
+            f"Re-run evaluate_imputation(..., method_name='{method}') so the parquet's "
+            f"`method` column matches the upload name; the leaderboard groups by that column."
+        )
+
+
+def resolve_fallback_rate(parquet_path: Path, explicit: float | None) -> tuple[float | None, str]:
+    """Resolve the ``overall_fallback_rate`` to record in the display sidecar.
+
+    Precedence (issue #39): an explicit ``--fallback-rate`` wins; otherwise read
+    it from the substrate's own ``<parquet>.meta.json`` provenance sidecar (which
+    ``evaluate_prediction``/``evaluate_*`` write next to the parquet). Returns
+    ``(rate, source)``; ``rate`` is ``None`` when neither supplies one, so the
+    leaderboard shows "n/a" rather than a fabricated number.
+    """
+    if explicit is not None:
+        return explicit, "--fallback-rate"
+    sidecar = Path(f"{parquet_path}.meta.json")
+    if sidecar.exists():
+        try:
+            val = json.loads(sidecar.read_text()).get("overall_fallback_rate")
+        except (json.JSONDecodeError, OSError):
+            val = None
+        if isinstance(val, (int, float)):
+            return float(val), sidecar.name
+    return None, ""
+
+
 def main() -> None:
     """Upload one method substrate parquet to the leaderboard dataset."""
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -167,6 +209,8 @@ def main() -> None:
     args = p.parse_args()
 
     src = find_parquet(args.dir, args.method)
+    if args.track in ("imputation", "downstream"):
+        validate_method_column(src, args.method)
     dest = f"{args.track}/{args.method}.parquet"
 
     api = HfApi()
