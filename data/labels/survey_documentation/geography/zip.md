@@ -1,6 +1,6 @@
 # zip
 
-> **Released with anonymization.** Values are rewritten before release: US 1-3 digit zips are kept verbatim (with HIPAA-listed low-population ZIP3s and any cohort with <5 users dropped), UK postcodes collapse to the country token `"UK"`, Hong Kong tokens collapse to `"HK"`, and free-text / unrecognized entries are dropped. See `data/labels/RELEASE_NOTES.md` § "Anonymized columns" for the full policy.
+> **Released with anonymization.** Values are rewritten before release: US 1-3 digit zips are kept verbatim (with HIPAA-listed low-population ZIP3s and any cohort with <5 users dropped), UK postcodes collapse to the country token `"UK"`, Hong Kong tokens collapse to `"HK"`, and free-text / unrecognized entries are dropped.
 
 **Benchmark column**: `field_zip`
 **Raw identifier**: `zip`

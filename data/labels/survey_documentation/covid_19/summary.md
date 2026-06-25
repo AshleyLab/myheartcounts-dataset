@@ -28,11 +28,12 @@ Items from the one-time COVID-19 survey and its recurrent (bi-weekly) counterpar
 | [daily_activities](daily_activities.md) | context | ordinal | Functional capacity during illness (4-level) |
 | [days_admitted](days_admitted.md) | context | continuous | Days hospitalised |
 
-### Household & exposure (2)
+### Household & exposure (3)
 
 | Variable | Role | Type | Summary |
 |----------|------|------|---------|
 | [exposure](exposure.md) | context | ordinal | COVID-19 exposure intensity (3-level) |
+| [building](building.md) | context | ordinal | People living in participant's building (4-level density) |
 | [healthcare_worker](healthcare_worker.md) | context | categorical | Healthcare worker position type |
 
 ### Protective behaviours (2)

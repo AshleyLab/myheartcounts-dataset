@@ -218,7 +218,7 @@ Each `_categories` target is post-hoc binning of a continuous parent — keep ei
 
 ### Same question, different survey visit (bi-weekly duplication)
 
-Many COVID items appear in both `cardio_covid_19_survey.json` (one-time) and `cardio_covid_19_recurrent_survey.json` (bi-weekly) — same variable, different cadence: `covid`, `covid_serologic`, `symptoms_*`, `severity`, `severity_covid`, `most_intense_care`, `daily_activities`, `days_admitted`, `icu_treated`, `ventilator`. The benchmark probably merges these, so each context variable represents both flavours.
+Many COVID items appear in both `cardio_covid_19_survey.json` (one-time) and `cardio_covid_19_recurrent_survey.json` (bi-weekly) — same variable, different cadence: `covid`, `covid_serologic`, `symptoms_*`, `severity`, `severity_covid`, `most_intense_care`, `daily_activities`, `days_admitted`. The benchmark probably merges these, so each context variable represents both flavours.
 
 ### Overlapping but not identical
 

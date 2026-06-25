@@ -47,4 +47,4 @@ _Generated 2026-04-28 from `data/labels/last_labels.json` (md5 `0f65e8fe…`) an
 ## Notes
 - The benchmark column is `field_FitzpatrickSkinType`. Earlier doc revisions used the misspelling "FrickSkinType" (since corrected in 2026-04-27).
 - Read via the HealthKit characteristic API on a one-shot basis (no longitudinal delivery since this is a user-reported trait).
-- Released bucketed: Type V (n=4) and Type VI (n=3) were uniquely identifying, so the released artifact ships `{light, medium, dark}` (ordinal). See `RELEASE_NOTES.md`.
+- Released bucketed: Type V (n=4) and Type VI (n=3) were uniquely identifying, so the released artifact ships `{light, medium, dark}` (ordinal).
