@@ -103,7 +103,7 @@ indicate the $95\%$ bootstrap confidence interval based on $1000$ resamples.
 }
 \label{tab:forecasting_grouped_model_summary}
 
-\newcommand{\est}[3]{%
+\providecommand{\est}[3]{%
   \ensuremath{#1^{\scriptscriptstyle +#2}_{\scriptscriptstyle -#3}}%
 }
 
