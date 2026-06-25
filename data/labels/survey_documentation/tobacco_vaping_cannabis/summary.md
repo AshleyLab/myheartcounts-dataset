@@ -15,10 +15,11 @@ The full tobacco-and-vaping survey: current use, past use, quit attempts, onset 
 | [durationQuitVaping](durationQuitVaping.md) | context | categorical | How long since last vaped (codes 1-3 ordered Days/Months/Years; 4=Never, 5=Don't know break ordering) |
 | [readinessQuitVaping](readinessQuitVaping.md) | context | continuous | Readiness to quit vaping (1–10) |
 
-### Cigarette smoking (5)
+### Cigarette smoking (6)
 
 | Variable | Role | Type | Summary |
 |----------|------|------|---------|
+| [smokingHistory](smokingHistory.md) | context | binary | Currently smoking cigarettes (yes/no screening) |
 | [currentSmoking](currentSmoking.md) | context | ordinal | Current cigarette frequency |
 | [onsetSmoking](onsetSmoking.md) | context | continuous | Age of first cigarette |
 | [everQuitSmoking](everQuitSmoking.md) | context | binary | Tried to quit in past 12 months |
@@ -36,7 +37,7 @@ The full tobacco-and-vaping survey: current use, past use, quit attempts, onset 
 | [durationQuitSmokeless](durationQuitSmokeless.md) | context | categorical | Duration since last smokeless use (same encoding as durationQuitVaping) |
 | [readinessQuitSmokeless](readinessQuitSmokeless.md) | context | continuous | Readiness to quit smokeless (1–10) |
 
-### Cannabis (4)
+### Cannabis (8)
 
 | Variable | Role | Type | Summary |
 |----------|------|------|---------|
@@ -44,6 +45,10 @@ The full tobacco-and-vaping survey: current use, past use, quit attempts, onset 
 | [currentCannabisSmoking](currentCannabisSmoking.md) | context | ordinal | Current cannabis smoking frequency |
 | [pastCannabisSmoking](pastCannabisSmoking.md) | context | ordinal | Duration of past cannabis use |
 | [lastCannabisSmoking](lastCannabisSmoking.md) | context | ordinal | Time since last cannabis use |
+| [cannabisVaping](cannabisVaping.md) | context | ordinal | Whether participant vapes cannabis |
+| [currentCannabisVaping](currentCannabisVaping.md) | context | ordinal | Current cannabis vaping frequency |
+| [pastCannabisVaping](pastCannabisVaping.md) | context | ordinal | Duration of past cannabis vaping |
+| [lastCannabisVaping](lastCannabisVaping.md) | context | ordinal | Time since last cannabis vape |
 
 ### Product multi-selects (2)
 

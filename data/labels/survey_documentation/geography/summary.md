@@ -1,6 +1,6 @@
 # Geography
 
-Where the participant is located. Both variables are user-entered free-text in the Wellbeing survey and are anonymised before release (UK postcodes collapse to `"UK"`, Hong Kong tokens collapse to `"HK"`, US zips are kept as 1–3-digit truncations with HIPAA-listed low-population codes dropped). See `data/labels/RELEASE_NOTES.md` § "Anonymized columns" for the full policy.
+Where the participant is located. Both variables are user-entered free-text in the Wellbeing survey and are anonymised before release (UK postcodes collapse to `"UK"`, Hong Kong tokens collapse to `"HK"`, US zips are kept as 1–3-digit truncations with HIPAA-listed low-population codes dropped).
 
 ## Variables (2 files)
 
