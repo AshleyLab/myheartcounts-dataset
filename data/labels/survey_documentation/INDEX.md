@@ -1,6 +1,6 @@
 # MHC Variable Index
 
-169 variables used by the MHC-benchmark project (41 targets + 128 contexts), mapped to their source definitions in the iOS codebase. These are exactly the canonical benchmark labels in `data/labels/label_types.json` — the `survey_documentation/` tree contains one `.md` per label and nothing else (169 variable docs).
+169 variables used by the MHC-benchmark project (41 targets + 128 contexts), mapped to their source definitions in the iOS codebase. These are exactly the canonical benchmark labels in `data/labels/label_types.json`: the `survey_documentation/` tree has one variable `.md` per label (169 docs), plus a `summary.md` landing page per category and this index.
 
 - **Filename convention**: `<category>/<raw_identifier>.md`. The `field_` prefix used in the benchmark dataset is stripped from filenames but recorded inside each file.
 - **Role**: target = model prediction target; context = model input feature
@@ -29,7 +29,7 @@ Variables are grouped into 16 semantic subdirectories. Each subdirectory contain
 | [mindset_measures](mindset_measures/summary.md) | 32 | illness mindset (20) + exercise process mindset (7) + adequacy of activity (5) |
 | [study_metadata](study_metadata/summary.md) | 6 | labwork, device ownership flags, phone_on_user |
 
-Each subdir's `summary.md` contains a one-line description and link for every file in that subdir. The flat tables below remain as a canonical master reference.
+Each subdir's `summary.md` links every variable in that subdir — those 16 landing pages are the complete per-category listing. The flat tables below are a convenience quick-reference (all 41 targets; a subset of the 128 contexts).
 
 ## Targets (41)
 
@@ -102,14 +102,17 @@ Each subdir's `summary.md` contains a one-line description and link for every fi
 | field_sugar_drinks | continuous | sugar_drinks | CardioHealth/Resources/JSONs/cardiosurveys/cardio_diet_survey.json | ~64 | Beverages with added sugar per week |
 | field_vegetable | continuous | vegetable | CardioHealth/Resources/JSONs/cardiosurveys/cardio_diet_survey.json | ~22 | Cups of vegetables per day |
 | field_fish | continuous | fish | CardioHealth/Resources/JSONs/cardiosurveys/cardio_diet_survey.json | ~36 | Servings of fish per week |
-| alcohol | ordinal | alcohol | CardioHealth/Resources/JSONs/cardiosurveys/cardio_diet_survey.json | ~113 | Alcohol consumption frequency (5-point) || Ethnicity_heartage | categorical | Ethnicity | CardioHealth/TasksAndSteps/HeartAgeControllers/HeartAgeRiskFactorCalculations/APHHeartAgeAndRiskFactors.m | ~73 | Ethnicity from Heart Age (African-American/Other) |
-| FitzpatrickSkinType | categorical | (skin type) | HealthKit `HKCharacteristicTypeIdentifierFitzpatrickSkinType` | n/a | Fitzpatrick skin type (raw I-VI categorical; released as bucketed `{light, medium, dark}` ordinal) || healthcare_worker | categorical | healthcare_worker | CardioHealth/Resources/JSONs/cardiosurveys/cardio_covid_19_survey.json | ~454 | Healthcare position type |
+| alcohol | ordinal | alcohol | CardioHealth/Resources/JSONs/cardiosurveys/cardio_diet_survey.json | ~113 | Alcohol consumption frequency (5-point) |
+| Ethnicity_heartage | categorical | Ethnicity | CardioHealth/TasksAndSteps/HeartAgeControllers/HeartAgeRiskFactorCalculations/APHHeartAgeAndRiskFactors.m | ~73 | Ethnicity from Heart Age (African-American/Other) |
+| FitzpatrickSkinType | categorical | (skin type) | HealthKit `HKCharacteristicTypeIdentifierFitzpatrickSkinType` | n/a | Fitzpatrick skin type (raw I-VI categorical; released as bucketed `{light, medium, dark}` ordinal) |
+| healthcare_worker | categorical | healthcare_worker | CardioHealth/Resources/JSONs/cardiosurveys/cardio_covid_19_survey.json | ~454 | Healthcare position type |
 | activity1_intensity | ordinal | activity1_intensity | CardioHealth/Resources/JSONs/cardiosurveys/cardio_daily_check.json | ~139 | Activity intensity (Light/Moderate/Vigorous) |
 | activity1_type | categorical | activity1_type | CardioHealth/Resources/JSONs/cardiosurveys/cardio_daily_check.json | ~74 | Activity type (Walking/Jogging/Cycling/etc) |
 | activity2_intensity | ordinal | activity2_intensity | CardioHealth/Resources/JSONs/cardiosurveys/cardio_daily_check.json | ~258 | Activity 2 intensity (Light/Moderate/Vigorous) |
 | activity2_type | categorical | activity2_type | CardioHealth/Resources/JSONs/cardiosurveys/cardio_daily_check.json | ~193 | Activity 2 type (Walking/Jogging/Cycling/etc) |
 | chestPain | binary | chestPain | CardioHealth/TasksAndSteps/APHDynamicParQQuizTask.m | ~42 | Chest pain during activity (PAR-Q) |
-| chestPainInLastMonth | binary | chestPainInLastMonth | CardioHealth/TasksAndSteps/APHDynamicParQQuizTask.m | ~43 | Chest pain in past month (PAR-Q) || currentCannabisSmoking | ordinal | currentCannabisSmoking | CardioHealth/Resources/JSONs/cardiosurveys/cardio_vaping_and_smoking_survey.json | ~855 | Cannabis smoking frequency |
+| chestPainInLastMonth | binary | chestPainInLastMonth | CardioHealth/TasksAndSteps/APHDynamicParQQuizTask.m | ~43 | Chest pain in past month (PAR-Q) |
+| currentCannabisSmoking | ordinal | currentCannabisSmoking | CardioHealth/Resources/JSONs/cardiosurveys/cardio_vaping_and_smoking_survey.json | ~855 | Cannabis smoking frequency |
 | currentSmokeless | ordinal | currentSmokeless | CardioHealth/Resources/JSONs/cardiosurveys/cardio_vaping_and_smoking_survey.json | ~472 | Smokeless tobacco use frequency |
 | currentSmoking | ordinal | currentSmoking | CardioHealth/Resources/JSONs/cardiosurveys/cardio_vaping_and_smoking_survey.json | ~240 | Cigarette smoking frequency |
 | currentVaping | ordinal | currentVaping | CardioHealth/Resources/JSONs/cardiosurveys/cardio_vaping_and_smoking_survey.json | ~8 | Vaping nicotine frequency |
@@ -124,7 +127,9 @@ Each subdir's `summary.md` contains a one-line description and link for every fi
 | everQuitSmokeless | binary | everQuitSmokeless | CardioHealth/Resources/JSONs/cardiosurveys/cardio_vaping_and_smoking_survey.json | ~595 | Tried to quit smokeless in past 12 months |
 | everQuitSmoking | binary | everQuitSmoking | CardioHealth/Resources/JSONs/cardiosurveys/cardio_vaping_and_smoking_survey.json | ~368 | Tried to quit smoking in past 12 months |
 | everQuitVaping | binary | everQuitVaping | CardioHealth/Resources/JSONs/cardiosurveys/cardio_vaping_and_smoking_survey.json | ~136 | Tried to quit vaping in past 12 months |
-| family_history | categorical | family_history | CardioHealth/Resources/JSONs/cardiosurveys/cardio_CVhealth_survey.json | ~10 | Family history of early heart disease || heartCondition | binary | heartCondition | CardioHealth/TasksAndSteps/APHDynamicParQQuizTask.m | ~41 | Heart condition (PAR-Q) || jointProblem | binary | jointProblem | CardioHealth/TasksAndSteps/APHDynamicParQQuizTask.m | ~45 | Bone/joint problem (PAR-Q) |
+| family_history | categorical | family_history | CardioHealth/Resources/JSONs/cardiosurveys/cardio_CVhealth_survey.json | ~10 | Family history of early heart disease |
+| heartCondition | binary | heartCondition | CardioHealth/TasksAndSteps/APHDynamicParQQuizTask.m | ~41 | Heart condition (PAR-Q) |
+| jointProblem | binary | jointProblem | CardioHealth/TasksAndSteps/APHDynamicParQQuizTask.m | ~45 | Bone/joint problem (PAR-Q) |
 | labwork | binary | labwork | CardioHealth/Resources/JSONs/cardiosurveys/cardio_day_one.json | ~69 | Will have lab work in next 7 days |
 | lastCannabisSmoking | ordinal | lastCannabisSmoking | CardioHealth/Resources/JSONs/cardiosurveys/cardio_vaping_and_smoking_survey.json | ~1001 | Last time smoked cannabis |
 | medications_to_treat | categorical | medications_to_treat | CardioHealth/Resources/JSONs/cardiosurveys/cardio_CVhealth_survey.json | ~44 | Medications for risk factors |
@@ -147,7 +152,8 @@ Each subdir's `summary.md` contains a one-line description and link for every fi
 | sleep_time3 | continuous | (derived) | Unknown | Unknown | Likely weekend sleep hours |
 | tobaccoProducts | categorical | tobaccoProducts | CardioHealth/Resources/JSONs/cardiosurveys/cardio_vaping_and_smoking_survey.json | ~699 | Tobacco products used in past week |
 | tobaccoProductsEver | categorical | tobaccoProductsEver | CardioHealth/Resources/JSONs/cardiosurveys/cardio_vaping_and_smoking_survey.json | ~755 | Tobacco products ever used |
-| days_admitted | continuous | days_admitted | CardioHealth/Resources/JSONs/cardiosurveys/cardio_covid_19_survey.json | ~319 | Days hospitalized for COVID || zip | categorical | zip | CardioHealth/Resources/JSONs/cardiosurveys/cardio_wellbeing_survey.json | ~177 | Postcode (UK) / zip (US) |
+| days_admitted | continuous | days_admitted | CardioHealth/Resources/JSONs/cardiosurveys/cardio_covid_19_survey.json | ~319 | Days hospitalized for COVID |
+| zip | categorical | zip | CardioHealth/Resources/JSONs/cardiosurveys/cardio_wellbeing_survey.json | ~177 | Postcode (UK) / zip (US) |
 | cannabisSmoking | ordinal | cannabisSmoking | CardioHealth/Resources/JSONs/cardiosurveys/cardio_vaping_and_smoking_survey.json | ~811 | Cannabis smoking history |
 | cannabis_onset_age | continuous | (derived) | Unknown | Unknown | Age of cannabis onset (may not be explicit) |
 | body_self_healing_in_many_different_circumstances | ordinal | body_self_healing_in_many_different_circumstances | CardioHealth/Resources/JSONs/cardiosurveys/cardio_illness_mindset_measure_inventory_survey.json | ~16 | Body self-healing belief (6-point scale) |
@@ -182,18 +188,11 @@ These have no single survey field — each is documented in its own `.md` file w
 - `WakeUpTime.md`, `GoSleepTime.md` — Not in survey JSONs; sourced from AppCore user-info profile items (`kAPCUserInfoItemTypeWakeUpTime`, `kAPCUserInfoItemTypeSleepTime` in `APHAppDelegate.m` lines 1435-1436).
 - `FitzpatrickSkinType.md` — Read via `HKCharacteristicTypeIdentifierFitzpatrickSkinType` (APHAppDelegate.m line 1330); not a survey question. Earlier doc revisions misspelled this as `FrickSkinType.md`.
 
-## Notes on count discrepancies (user's spec vs. reality)
-
-- **Chronic-illness mindset battery**: user said 21 items, survey JSON has 20 — all 20 documented.
-- **"Eating-reasons battery (13)"**: no eating-reasons survey exists. The closest match is the combined Exercise Process Mindset (7 items) + Adequacy of Activity Mindset (5 items) = 12 items, all documented. Flagged as a likely mislabel in individual files.
-- **COVID ordinals**: user said 11, actual survey has 13 distinct ordinal items — all 13 documented.
-- **Sleep times (3)**: `sleep_time` (activity-sleep survey, "hours needed to feel rested"), `sleep_time1` (activity-sleep, "weekday hours slept"), `sleep_time_daily` (daily_check survey, daily minutes slept) — 3 distinct items.
-
 ## Summary
 
 - **Targets**: 41 (canonical, from `label_types.json`).
 - **Contexts**: 128 (canonical, from `label_types.json`).
-- **Total files in `survey_documentation/`**: 169 variable docs + `INDEX.md` (this file) = 170. The tree documents exactly the 169 benchmark labels in `label_types.json` (one `.md` per label). Raw survey fields that are not released as labels — e.g. the `heart_disease` / `vascular` multi-selects that derived targets such as CAD and Afib are computed from — are referenced inline where relevant but are not separately documented.
+- **Total files in `survey_documentation/`**: 169 variable docs + 16 per-category `summary.md` + this `INDEX.md` = 186 `.md` files. The 169 variable docs are exactly the benchmark labels in `label_types.json` (one per label). Raw survey fields that are not released as labels — e.g. the `heart_disease` / `vascular` multi-selects that derived targets such as CAD and Afib are computed from — are referenced inline where relevant but are not separately documented.
 
 All survey identifiers are exact string matches from JSON survey definitions. Heart Age variables map to Objective-C constants in `APHHeartAgeAndRiskFactors.m` and `APHHeartAgeTaskViewController.m`. HealthKit variables map to `HKQuantityTypeIdentifier`/`HKCharacteristicTypeIdentifier` constants in `APHAppDelegate.m`. PAR-Q variables map to static NSString constants in `APHDynamicParQQuizTask.m`. The `field_` prefix from the benchmark dataset is stripped from all filenames but recorded in each file's frontmatter as the "Benchmark column".
 
