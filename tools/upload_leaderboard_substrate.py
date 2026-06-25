@@ -1,17 +1,29 @@
 """Upload one method's per-user substrate parquet to the OpenMHC leaderboard dataset.
 
 Creates the HF dataset repo if it doesn't exist (private by default), then
-uploads the method's substrate to ``<track>/<method>.parquet``. When any of
-``--name`` / ``--type`` / ``--submitter`` / ``--subtrack`` is given (or a
-fallback rate is available), also writes a ``<track>/<method>.meta.json`` display
-sidecar (name, type, submitter, subtrack) that the leaderboard reads to render
-the row. ``--fallback-rate`` records ``fallback_rate`` in that sidecar —
-the fraction of predictions the model left non-finite and the harness replaced
-with the track baseline (issue #39); when omitted it is read from the substrate's
-own ``<parquet>.meta.json`` provenance sidecar if present.
+uploads the method's substrate to ``<track>/<method>.parquet``. The sidecar
+``<track>/<method>.meta.json`` is updated when any of
+``--name`` / ``--type`` / ``--submitter`` / ``--subtrack`` /
+``--fallback-rate`` is provided, or when ``--results-json`` discovers a
+fallback rate to attach (see below). Existing sidecar fields are preserved —
+the tool fetches the current sidecar from HF (if any) and merges only the
+fields you provide.
 
-The ``method`` column is validated against the upload name for ``imputation`` and
-``downstream`` (both group by that column); other tracks skip the check.
+Sidecar schema (renderer reads these fields):
+
+| key | type | source |
+|---|---|---|
+| ``display_name`` | str | ``--name`` |
+| ``type`` | str | ``--type`` (``Statistical`` / ``Neural`` / etc.) |
+| ``submitter`` | str | ``--submitter`` |
+| ``subtrack`` | str | ``--subtrack`` (``single-day`` / ``long-context`` / ...) |
+| ``fallback_rate`` | float | ``--fallback-rate`` OR auto-extracted from ``--results-json`` |
+
+The ``fallback_rate`` is the worst-case ``overall_fallback_rate`` across all
+``(scenario, split)`` cells in the method's ``results.json`` (mirrors
+``openmhc._results.ImputationResults.overall_fallback_rate``). It surfaces
+the fraction of target cells the model could not predict and the harness
+had to substitute with a channel-aware baseline.
 
 Requires the ``[hf]`` extra (``pip install -e ".[hf]"``) for the
 ``huggingface_hub`` dependency. Authentication uses the standard
@@ -19,11 +31,20 @@ Requires the ``[hf]`` extra (``pip install -e ".[hf]"``) for the
 ``huggingface-cli login``).
 
 Usage:
+    # Canonical: point at runs/<method>/ and the tool auto-extracts fallback_rate
     python tools/upload_leaderboard_substrate.py \
-        --dir src/openmhc/data/baselines \
+        --dir paper-verification/per_user \
         --method locf \
         --track imputation \
+        --results-json /scratch/.../runs/locf/results.json \
         --name "LOCF (baseline)" --type Statistical --submitter "OpenMHC team"
+
+    # Re-uploading just the fallback rate (other sidecar fields preserved):
+    python tools/upload_leaderboard_substrate.py \
+        --dir paper-verification/per_user \
+        --method locf \
+        --track imputation \
+        --fallback-rate 0.0
 """
 
 from __future__ import annotations
@@ -33,9 +54,50 @@ import io
 import json
 from pathlib import Path
 
-from huggingface_hub import HfApi
+from huggingface_hub import HfApi, hf_hub_download
+from huggingface_hub.errors import EntryNotFoundError
 
 DEFAULT_REPO_ID = "MyHeartCounts/OpenMHC-leaderboard-data"
+
+
+def _worst_case_fallback_rate(results_json: Path) -> float | None:
+    """Return the worst-case ``overall_fallback_rate`` from a ``results.json``.
+
+    Handles both result shapes:
+
+    - **Forecasting / downstream** — a single top-level ``overall_fallback_rate``
+      scalar (the harness pools one rate over the whole run).
+    - **Imputation** — nested ``scenarios[*][*].overall_fallback_rate``; the
+      worst case is the max across every ``(scenario, split)`` cell (mirrors
+      :attr:`openmhc._results.ImputationResults.overall_fallback_rate`).
+
+    Returns ``None`` when the field is absent everywhere (legacy runs that
+    predate the fallback-tracking feature); ``0.0`` when present and every
+    measured cell reports 0 (the harness never had to substitute a fallback).
+    """
+    d = json.loads(results_json.read_text())
+    # Forecasting / downstream: a single top-level scalar. Imputation's
+    # results.json has scenario names at the top level (no such key), so this
+    # only fires for the flat shape.
+    top = d.get("overall_fallback_rate")
+    if isinstance(top, (int, float)):
+        return float(top)
+    # Imputation: max across nested scenarios[*][*].
+    scenarios = d.get("scenarios", d)
+    worst = 0.0
+    found = False
+    for split_map in scenarios.values():
+        if not isinstance(split_map, dict):
+            continue
+        for metrics in split_map.values():
+            if not isinstance(metrics, dict):
+                continue
+            r = metrics.get("overall_fallback_rate")
+            if isinstance(r, (int, float)):
+                found = True
+                if r > worst:
+                    worst = float(r)
+    return worst if found else None
 
 
 def find_parquet(dir_path: Path, method: str) -> Path:
@@ -86,28 +148,6 @@ def validate_method_column(parquet_path: Path, method: str) -> None:
         )
 
 
-def resolve_fallback_rate(parquet_path: Path, explicit: float | None) -> tuple[float | None, str]:
-    """Resolve the fallback rate to record under the display sidecar's ``fallback_rate`` key.
-
-    Precedence (issue #39): an explicit ``--fallback-rate`` wins; otherwise read
-    it from the substrate's own ``<parquet>.meta.json`` provenance sidecar (which
-    ``evaluate_prediction``/``evaluate_*`` write next to the parquet). Returns
-    ``(rate, source)``; ``rate`` is ``None`` when neither supplies one, so the
-    leaderboard shows "n/a" rather than a fabricated number.
-    """
-    if explicit is not None:
-        return explicit, "--fallback-rate"
-    sidecar = Path(f"{parquet_path}.meta.json")
-    if sidecar.exists():
-        try:
-            val = json.loads(sidecar.read_text()).get("overall_fallback_rate")
-        except (json.JSONDecodeError, OSError):
-            val = None
-        if isinstance(val, (int, float)):
-            return float(val), sidecar.name
-    return None, ""
-
-
 def main() -> None:
     """Upload one method substrate parquet to the leaderboard dataset."""
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -136,11 +176,25 @@ def main() -> None:
         type=float,
         default=None,
         help=(
-            "fallback_rate to record in the <method>.meta.json sidecar "
-            "(issue #39) — the fraction of scored predictions the model left "
-            "non-finite and the harness replaced with the track baseline. Read it "
-            "from Results.overall_fallback_rate. If omitted, the substrate's "
-            "<parquet>.meta.json provenance sidecar is used when present."
+            "Worst-case overall_fallback_rate across (scenario, split) for "
+            "this method (sidecar). 0.0 means the harness never had to "
+            "substitute a fallback for any predicted cell; >0 means the "
+            "model failed to predict that fraction of cells. Mirrors "
+            "openmhc._results.ImputationResults.overall_fallback_rate. "
+            "Takes precedence over --results-json."
+        ),
+    )
+    p.add_argument(
+        "--results-json",
+        type=Path,
+        default=None,
+        help=(
+            "Path to the method's results.json (typically "
+            "runs/<method>/results.json). When --fallback-rate is not "
+            "explicitly set, the worst-case overall_fallback_rate across "
+            "all (scenario, split) is auto-extracted from this file and "
+            "added to the sidecar. Pass a directory and the tool looks "
+            "for results.json inside it."
         ),
     )
     args = p.parse_args()
@@ -162,20 +216,54 @@ def main() -> None:
     print(f"Uploaded {src}  ->  {args.repo_id}:{dest}")
     print(f"  https://huggingface.co/datasets/{args.repo_id}/blob/main/{dest}")
 
-    fallback_rate, fb_source = resolve_fallback_rate(src, args.fallback_rate)
+    # Auto-extract fallback_rate from results.json if not given explicitly.
+    fallback_rate = args.fallback_rate
+    if fallback_rate is None and args.results_json is not None:
+        rj_path = args.results_json
+        if rj_path.is_dir():
+            rj_path = rj_path / "results.json"
+        if rj_path.exists():
+            fallback_rate = _worst_case_fallback_rate(rj_path)
+            if fallback_rate is not None:
+                print(
+                    f"[auto] fallback_rate={fallback_rate:.6f} extracted from {rj_path}"
+                )
+        else:
+            print(f"[auto] --results-json={rj_path} not found; skipping fallback_rate")
 
-    if args.name or args.mtype or args.submitter or args.subtrack or fallback_rate is not None:
-        meta = {
-            "display_name": args.name or args.method,
-            "type": args.mtype or "—",
-            "submitter": args.submitter or "—",
-            "subtrack": args.subtrack or "other",
-        }
-        if fallback_rate is not None:
-            # the leaderboard reads the scalar under the `fallback_rate` sidecar key
-            meta["fallback_rate"] = fallback_rate
-            print(f"  recording fallback_rate={fallback_rate:.4f} (from {fb_source})")
+    sidecar_provided = {
+        "display_name": args.name,
+        "type": args.mtype,
+        "submitter": args.submitter,
+        "subtrack": args.subtrack,
+        "fallback_rate": fallback_rate,
+    }
+    if any(v is not None for v in sidecar_provided.values()):
+        # Merge into existing sidecar (if any) so a single-field update like
+        # `--fallback-rate` doesn't clobber display_name/type/submitter/subtrack.
         meta_dest = f"{args.track}/{args.method}.meta.json"
+        try:
+            existing_path = hf_hub_download(
+                args.repo_id, meta_dest, repo_type="dataset", force_download=True
+            )
+            meta = json.loads(Path(existing_path).read_text())
+        except (EntryNotFoundError, FileNotFoundError):
+            # Brand-new method: build from defaults
+            meta = {
+                "display_name": args.method,
+                "type": "—",
+                "submitter": "—",
+                "subtrack": "other",
+            }
+        if args.track == "imputation":
+            # `overall_fallback_rate` was renamed to `fallback_rate` (PR #43);
+            # drop the legacy key so re-uploads don't carry both with divergent
+            # values. Downstream sidecars still use the long name, so this is
+            # gated to the imputation track.
+            meta.pop("overall_fallback_rate", None)
+        for key, val in sidecar_provided.items():
+            if val is not None:
+                meta[key] = val
         api.upload_file(
             path_or_fileobj=io.BytesIO(json.dumps(meta, indent=2).encode("utf-8")),
             path_in_repo=meta_dest,

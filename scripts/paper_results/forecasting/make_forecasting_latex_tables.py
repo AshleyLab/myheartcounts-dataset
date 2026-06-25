@@ -66,9 +66,9 @@ MODELS: dict[str, tuple[str, str]] = {
 
 GROUP_ORDER = ("stat", "neural", "foundation")
 GROUP_TITLE = {
-    "stat": r"\cellcolor[HTML]{EFEFEF}\textit{Statistical Methods}",
-    "neural": r"\cellcolor[HTML]{EFEFEF}\textit{Neural Models}",
-    "foundation": r"\cellcolor[HTML]{EFEFEF}\textit{Time-Series Foundation Models}",
+    "stat": "Statistical Methods",
+    "neural": "Neural Models",
+    "foundation": "Time-Series Foundation Models",
 }
 
 # Column spec: (header, csv, scope, center, lo, hi, scale100, lower_better, ref_zero, metric)
@@ -89,41 +89,49 @@ COLUMNS: list[tuple[str, str, str, str, str, str, bool, bool, bool, str | None]]
 
 NCOL = len(COLUMNS) + 1  # + method column
 
-HEADER = r"""\begin{table}[ht!]
-\renewcommand{\arraystretch}{1.05}
+HEADER = r"""\begin{table*}[t]
 \centering
-\captionsetup{width=\textwidth}
+\captionsetup{width=0.98\textwidth}
 \caption{
 \textbf{Forecasting Results.}
 We report Average Rank $R$, Aggregate Skill Score $S$
-(in \%; $0=\mathrm{\textsc{Seasonal Naive}}$ reference),
-Fairness-adjusted $S_{\text{fair}}$, and category-specific Skill Scores for the
-sensor categories \textit{Activity, Physiology, Sleep, Workout}.
-FT denotes fine-tuned. Sub/superscripts give the $95\%$ bootstrap confidence
-interval ($1000$ resamples); $S_{\text{fair}}$ uses the bias-corrected and
-accelerated (BCa) interval about its point estimate, all other columns the
-percentile interval about the bootstrap mean.
+(in \%; $0=\textsc{Seasonal Naive}$ reference),
+Fairness-adjusted Skill Score $S_{\mathrm{fair}}$, and category-specific
+Skill Scores for \textit{Activity}, \textit{Physiology}, \textit{Sleep},
+and \textit{Workout}. FT denotes fine-tuned. Subscripts and superscripts
+indicate the $95\%$ bootstrap confidence interval based on $1000$ resamples.
 }
 \label{tab:forecasting_grouped_model_summary}
+
+\providecommand{\est}[3]{%
+  \ensuremath{#1^{\scriptscriptstyle +#2}_{\scriptscriptstyle -#3}}%
+}
+
 \small
-\setlength{\tabcolsep}{1.5pt}
-\resizebox{\linewidth}{!}{%
-\begin{tabular}{l ccccccc}
-\toprule[1.5pt]
+\renewcommand{\arraystretch}{1.16}
+\setlength{\tabcolsep}{2.2pt}
+
+\begin{tabularx}{\textwidth}{
+    >{\raggedright\arraybackslash}X
+    *{7}{>{\centering\arraybackslash}m{1.35cm}}
+}
+\toprule[1.4pt]
+
 \textbf{Method}
-& $R \downarrow$
-& $S \uparrow$
-& $S_{\text{fair}} \uparrow$
-& Activity\,$\uparrow$
-& Physio.\,$\uparrow$
-& Sleep\,$\uparrow$
-& Workout\,$\uparrow$ \\
+& \mbox{$R\,\downarrow$}
+& \mbox{$S\,\uparrow$}
+& \mbox{$S_{\mathrm{fair}}\,\uparrow$}
+& \mbox{Activity~$\uparrow$}
+& \mbox{Physio.~$\uparrow$}
+& \mbox{Sleep~$\uparrow$}
+& \mbox{Workout~$\uparrow$} \\
+
+\midrule
 """
 
-FOOTER = r"""\bottomrule[1.5pt]
-\end{tabular}%
-}
-\end{table}
+FOOTER = r"""\bottomrule[1.4pt]
+\end{tabularx}
+\end{table*}
 """
 
 
@@ -194,7 +202,7 @@ def fmt_cell(
     n: int,
     is_best: bool,
 ) -> str:
-    """One LaTeX cell: optional color + ``$value^{+upper}_{-lower}$``."""
+    """One LaTeX cell: optional color + ``\\est{value}{upper}{lower}``."""
     if ref_zero and model == REFERENCE:
         return r"$0.0$"  # baseline reference: plain, no CI, no color
     if scale100:
@@ -205,10 +213,16 @@ def fmt_cell(
     down = f"{(center - lo) * s:.1f}" if scale100 else f"{(center - lo):.2f}"
     body = rf"\mathbf{{{num}}}" if is_best else num
     color = rf"\cellcolor{{customblue!{n}}}" if n > 0 else ""
-    return rf"{color}${body}^{{+{up}}}_{{-{down}}}$"
+    return rf"{color}\est{{{body}}}{{{up}}}{{{down}}}"
 
 
 def build_body(cols: list[dict[str, tuple[float, float, float]]]) -> str:
+    """Render the grouped data rows in the arXiv ``\\est``/``tabularx`` layout.
+
+    Each cell sits on its own line (leading ``& ``) and rows are blank-line
+    separated, matching the hand-written table so the diff is numbers/colors
+    only. Groups are separated by ``\\specialrule`` + a ``\\rowcolor`` title row.
+    """
     lines: list[str] = []
 
     # Per-column min/max over ALL models (single section, global gradient).
@@ -217,13 +231,16 @@ def build_body(cols: list[dict[str, tuple[float, float, float]]]) -> str:
         vals = [cols[ci][m][0] for m in MODELS if m in cols[ci]]
         bounds.append((min(vals), max(vals)) if vals else (0.0, 0.0))
 
-    for grp in GROUP_ORDER:
-        lines.append(r"\hline")
-        lines.append(rf"\multicolumn{{{NCOL}}}{{l}}{{{GROUP_TITLE[grp]}}} \\")
+    for gi, grp in enumerate(GROUP_ORDER):
+        if gi > 0:
+            lines.append(r"\specialrule{\lightrulewidth}{0pt}{0pt}")
+        lines.append(r"\rowcolor[HTML]{EFEFEF}")
+        lines.append(rf"\multicolumn{{{NCOL}}}{{l}}{{\textit{{{GROUP_TITLE[grp]}}}}} \\")
+        lines.append("")
         members = [m for m, (_, g) in MODELS.items() if g == grp]  # fixed dict order
         for m in members:
             label = MODELS[m][0]
-            cells = []
+            row = [label]
             for ci, col in enumerate(COLUMNS):
                 _h, _f, _sc, _ctr, _lo, _hi, scale100, lower, ref_zero, _metric = col
                 center, lo, hi = cols[ci][m]
@@ -231,8 +248,10 @@ def build_body(cols: list[dict[str, tuple[float, float, float]]]) -> str:
                 n = intensity(center, vmin, vmax, lower)
                 best_val = vmin if lower else vmax
                 is_best = (center == best_val) and (m != REFERENCE)
-                cells.append(fmt_cell(m, center, lo, hi, scale100, ref_zero, n, is_best))
-            lines.append(rf"{label} & " + " & ".join(cells) + r" \\")
+                row.append("& " + fmt_cell(m, center, lo, hi, scale100, ref_zero, n, is_best))
+            row[-1] = row[-1] + r" \\"
+            lines.append("\n".join(row))
+            lines.append("")
 
     return "\n".join(lines) + "\n"
 

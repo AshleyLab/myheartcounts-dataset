@@ -1,4 +1,7 @@
-"""LSM2 (Latent Sequence Model v2) — masked autoencoder ViT for 1D wearable data.
+"""LSM2 (Large Sensor Model 2) — masked autoencoder ViT for 1D wearable data.
+
+Adaptation of Google's LSM2 wearable foundation model: Xu et al., "LSM-2:
+Learning from Incomplete Wearable Sensor Data" (2025), https://arxiv.org/abs/2506.05321.
 
 The model code is vendored from the private MHC-benchmark repo. Two model
 classes are exposed:

@@ -19,6 +19,11 @@
 output_root: ${SCRATCH_RUN_ROOT}/openmhc-imputation-eval/paper
 runs_root:   ${SCRATCH_RUN_ROOT}/openmhc-imputation-eval/runs
 draws_path:  ${SCRATCH_RUN_ROOT}/openmhc-imputation-eval/paper/bootstrap_draws.parquet
+# Pooled per_user_errors.parquet (BCa LOO substrate; METRICS.md §S7). Phase 1
+# writes it here, Phase 2 fairness reads it from here. Omitting this key makes
+# run_paper_pipeline.py pass --no-per-user-errors to Phase 1, which then breaks
+# Phase 2 fairness (--bca defaults to true and needs this file).
+per_user_errors_path: ${SCRATCH_RUN_ROOT}/openmhc-imputation-eval/paper/per_user_errors.parquet
 manifest_path: ${SCRATCH_RUN_ROOT}/openmhc-imputation-eval/paper/bootstrap_method_dirs.json
 
 # Phase 0 (Hydra eval) — kept here for completeness so that a direct
@@ -92,3 +97,9 @@ methods:
     overrides: ["method.release_dir=${RELEASES}/lsm2"]
   - name: lsm2_weekly_sparse
     overrides: ["method.release_dir=${RELEASES}/lsm2_weekly_sparse"]
+  # Dense LSM-2 weekly (new on this branch). Re-uses Hydra method=lsm2 with
+  # n_days=7; the run dir name `lsm2_weekly` is the bookkeeping key. Phase 1+2
+  # read its pairs/ from runs_root/lsm2_weekly. No registry entry needed when
+  # the paper pipeline is invoked with --skip-eval.
+  - name: lsm2_weekly
+    overrides: ["method.release_dir=${RELEASES}/lsm2_weekly"]

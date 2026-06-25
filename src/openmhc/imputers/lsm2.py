@@ -1,4 +1,7 @@
-"""LSM2 (Latent Sequence Model v2) imputer wrappers.
+"""LSM2 (Large Sensor Model 2) imputer wrappers.
+
+Adaptation of Google's LSM2 wearable foundation model: Xu et al., "LSM-2:
+Learning from Incomplete Wearable Sensor Data" (2025), https://arxiv.org/abs/2506.05321.
 
 Loads a pre-trained Lightning ``.ckpt`` produced by training the
 :class:`openmhc.models.lsm2.modules.LSM2Module` or

@@ -1,4 +1,4 @@
-"""Uploader fallback-rate persistence (issue #39) + downstream method-column guard."""
+"""Uploader downstream method-column guard + fallback-rate extraction."""
 
 from __future__ import annotations
 
@@ -16,37 +16,6 @@ if str(_TOOLS) not in sys.path:
 import upload_leaderboard_substrate as uploader  # noqa: E402
 
 
-def test_resolve_fallback_rate_flag_wins(tmp_path):
-    pq = tmp_path / "m.parquet"
-    pq.write_bytes(b"")  # presence only; the flag short-circuits any sidecar read
-    Path(f"{pq}.meta.json").write_text(json.dumps({"overall_fallback_rate": 0.9}))
-    rate, source = uploader.resolve_fallback_rate(pq, 0.25)
-    assert rate == 0.25
-    assert source == "--fallback-rate"
-
-
-def test_resolve_fallback_rate_from_sidecar(tmp_path):
-    pq = tmp_path / "m.parquet"
-    Path(f"{pq}.meta.json").write_text(json.dumps({"overall_fallback_rate": 0.125}))
-    rate, source = uploader.resolve_fallback_rate(pq, None)
-    assert rate == 0.125
-    assert source == "m.parquet.meta.json"
-
-
-def test_resolve_fallback_rate_absent(tmp_path):
-    pq = tmp_path / "m.parquet"  # no sidecar, no flag → None → leaderboard shows n/a
-    rate, source = uploader.resolve_fallback_rate(pq, None)
-    assert rate is None
-    assert source == ""
-
-
-def test_resolve_fallback_rate_sidecar_without_key(tmp_path):
-    pq = tmp_path / "m.parquet"
-    Path(f"{pq}.meta.json").write_text(json.dumps({"method": "m"}))  # no rate key
-    rate, _ = uploader.resolve_fallback_rate(pq, None)
-    assert rate is None
-
-
 def test_validate_method_column_downstream_pass(tmp_path):
     pq = tmp_path / "linear.parquet"
     pd.DataFrame({"method": ["linear", "linear"], "y_true": [0, 1]}).to_parquet(pq)
@@ -59,3 +28,44 @@ def test_validate_method_column_mismatch_raises(tmp_path):
     pd.DataFrame({"method": ["custom"], "y_true": [0]}).to_parquet(pq)
     with pytest.raises(SystemExit):
         uploader.validate_method_column(pq, "linear")
+
+
+def _write_results(tmp_path, payload):
+    p = tmp_path / "results.json"
+    p.write_text(json.dumps(payload))
+    return p
+
+
+def test_worst_case_fallback_rate_forecasting_top_level(tmp_path):
+    # Forecasting / downstream shape: a single top-level scalar.
+    p = _write_results(
+        tmp_path,
+        {"per_channel": {"ch_0": {"mae": 1.0}}, "overall_fallback_rate": 0.0123},
+    )
+    assert uploader._worst_case_fallback_rate(p) == pytest.approx(0.0123)
+
+
+def test_worst_case_fallback_rate_forecasting_zero(tmp_path):
+    p = _write_results(tmp_path, {"per_channel": {}, "overall_fallback_rate": 0.0})
+    assert uploader._worst_case_fallback_rate(p) == 0.0
+
+
+def test_worst_case_fallback_rate_imputation_nested_max(tmp_path):
+    # Imputation shape: max across all scenarios[*][*].overall_fallback_rate cells.
+    p = _write_results(
+        tmp_path,
+        {
+            "random_noise": {"test": {"overall_fallback_rate": 0.01}},
+            "sleep_gap": {
+                "test": {"overall_fallback_rate": 0.05},
+                "val": {"overall_fallback_rate": 0.20},
+            },
+        },
+    )
+    assert uploader._worst_case_fallback_rate(p) == pytest.approx(0.20)
+
+
+def test_worst_case_fallback_rate_legacy_absent_returns_none(tmp_path):
+    # Legacy run with no fallback field anywhere -> None (not 0.0).
+    p = _write_results(tmp_path, {"per_channel": {"ch_0": {"mae": 1.0}}})
+    assert uploader._worst_case_fallback_rate(p) is None

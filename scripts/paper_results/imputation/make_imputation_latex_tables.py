@@ -134,8 +134,8 @@ HEADER = r"""\begin{table}[b!]
     \renewcommand{\arraystretch}{1.05}
     \centering
     \captionsetup{width=\textwidth}
-    \caption{\textbf{Imputation Results.} We report Average Rank $R$, Aggregate Skill Score $S$ (in \%; $0=\TN{LOCF}$ reference), Fairness-Adjusted Skill Score $S_{\text{fair}}$, and Channel-Specific Skill Scores for the following channels: \textit{Activity, Physiology, Sleep, Workout}. Finally, we also report performance on all \textit{Semantic} masking approaches (see Appendix \ref{sec:imputation}). Single-day imputation method results are in the upper section of the table; long-context imputation method results ($\geq 7\times 1440$ time steps) are below. %
-    Sub/superscripts give the $95\%$ bootstrap confidence interval ($1000$ resamples); $S_{\text{fair}}$ uses the bias-corrected and accelerated (BCa) interval about its point estimate, all other columns the percentile interval about the bootstrap mean.
+    \caption{\textbf{Imputation Results.} We report Average Rank $R$, Aggregate Skill Score $S$ (in \%; $0=\TN{LOCF}$ reference), Fairness Skill Score $S_{\text{fair}}$, and Channel-Specific Skill Scores for the following channels: \textit{Activity, Physiology, Sleep, Workout}. Finally, we also report performance on all \textit{Semantic} masking approaches (see Appendix \ref{sec:imputation}). Single-day imputation method results are in the upper section of the table; long-context imputation method results ($\geq 7\times 1440$ time steps) are below. %
+    Sub/superscripts give the $95\%$ bootstrap confidence interval ($1000$ resamples); $S_{\text{fair}}$ uses the bias-corrected and accelerated (BCa) interval about its point estimate, all other columns the percentile interval about the bootstrap mean. \kwz{CAPTION}
     }
     \label{tab:imputation_main_results}
     \small

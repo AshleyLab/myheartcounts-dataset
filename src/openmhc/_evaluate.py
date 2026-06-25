@@ -1139,6 +1139,10 @@ def evaluate_forecasting(
                     "continuous_metrics": list(_fc_spec.PAPER_CONTINUOUS_METRICS),
                     "binary_metrics": list(_fc_spec.PAPER_BINARY_METRICS),
                     "baseline": _fc_spec.PAPER_BASELINE,
+                    # Carry the invalid-prediction rate in the substrate meta too
+                    # (mirrors the downstream track), so the rate travels with the
+                    # parquet even when results.json isn't alongside it.
+                    "overall_fallback_rate": float(result.get("overall_fallback_rate", 0.0)),
                 },
             )
             if skill_df is not None:

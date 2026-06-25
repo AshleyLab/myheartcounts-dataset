@@ -25,7 +25,7 @@ Available reference methods:
   :class:`FEDformerImputer` — wrappers around pre-trained PyPOTS
   checkpoints. Requires ``pip install openmhc[pypots]``.
 - :class:`LSM2Imputer`, :class:`LSM2WeeklySparseImputer` — wrappers around
-  pre-trained LSM2 (Latent Sequence Model v2) Lightning checkpoints.
+  pre-trained LSM2 (Large Sensor Model 2) Lightning checkpoints.
   Requires ``pip install openmhc[lsm2]``.
 - :class:`BaseImputer` — optional base class with shared helpers.
 """

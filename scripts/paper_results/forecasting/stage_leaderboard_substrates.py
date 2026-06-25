@@ -22,6 +22,8 @@ import argparse
 import sys
 from pathlib import Path
 
+import yaml
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SRC_ROOT = REPO_ROOT / "src"
 if str(SRC_ROOT) not in sys.path:
@@ -45,11 +47,19 @@ METHOD_META: dict[str, tuple[str, str]] = {
     "mixlinear": ("MixLinear", "Deep Learning"),
     "segrnn": ("SegRNN", "Deep Learning"),
 }
-DEFAULT_SUBSTRATE = (
-    REPO_ROOT
-    / "results/forecasting_eval/simurgh/summary/forecasting_bca_20260618"
-    / "forecasting_per_user_errors.parquet"
-)
+def _canonical_output_root() -> Path:
+    """Canonical summary dir, read from the sweep config's ``output_root``.
+
+    Single source of truth: the canonical run is pinned only in
+    ``configs/paper/sweep_forecasting.yaml``, so staging always splits the
+    current canonical substrate and never a stale/old one.
+    """
+    out = Path(yaml.safe_load((REPO_ROOT / "configs/paper/sweep_forecasting.yaml").read_text())["output_root"])
+    return out if out.is_absolute() else REPO_ROOT / out
+
+
+DEFAULT_SUBSTRATE = _canonical_output_root() / "forecasting_per_user_errors.parquet"
+DEFAULT_RUNS_ROOT = REPO_ROOT / "results/forecasting_eval/simurgh"
 
 
 def main() -> int:
@@ -58,6 +68,13 @@ def main() -> int:
     p.add_argument("--substrate", type=Path, default=DEFAULT_SUBSTRATE)
     p.add_argument("--out", type=Path, default=DEFAULT_SUBSTRATE.parent / "leaderboard_substrates")
     p.add_argument("--submitter", default="OpenMHC team")
+    p.add_argument(
+        "--runs-root",
+        type=Path,
+        default=DEFAULT_RUNS_ROOT,
+        help="Per-model runs root; results.json at <runs-root>/<method>/hydra/results.json is "
+        "passed as --results-json so the uploader auto-fills the fallback_rate sidecar key.",
+    )
     args = p.parse_args()
 
     df, _ = read_per_user_metrics_parquet(args.substrate)
@@ -72,9 +89,11 @@ def main() -> int:
         dest = args.out / f"{method}.parquet"
         write_per_user_metrics_parquet(sub, dest)
         name, mtype = METHOD_META.get(method, (method, "—"))
+        results_json = args.runs_root / method / "hydra" / "results.json"
         cmds.append(
             f'python {upload} --dir {args.out} --method {method} --track forecasting '
-            f'--name "{name}" --type "{mtype}" --submitter "{args.submitter}"'
+            f'--name "{name}" --type "{mtype}" --submitter "{args.submitter}" '
+            f"--results-json {results_json}"
         )
         print(f"  {method}: {len(sub)} rows -> {dest}")
 

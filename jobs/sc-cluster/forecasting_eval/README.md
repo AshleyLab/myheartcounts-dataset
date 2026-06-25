@@ -67,6 +67,15 @@ sbatch jobs/sc-cluster/forecasting_eval/run_autoarima.sbatch
 sbatch --export=ALL,MHC_FORECAST_RUN_LABEL=<label> jobs/sc-cluster/forecasting_eval/skill_rank.sbatch
 ```
 
+**Publish to the HF leaderboard** (substrates + `fallback_rate` sidecars +
+bootstrap-CI reference) — the full recipe, including the bootstrap-draws refresh
+and that `fallback_rate` is auto-filled by default, lives in
+[`tools/leaderboard_docs/forecasting/README.md`](../../../tools/leaderboard_docs/forecasting/README.md)
+("Refreshing"). In short: `produce_forecasting_bootstrap_draws.sbatch` →
+`stage_leaderboard_substrates.py` (emits the per-method
+`upload_leaderboard_substrate.py … --results-json …` commands) →
+`upload_leaderboard_bootstrap.py --track forecasting`.
+
 ## Environment
 
 | Variable | Meaning | Default |

@@ -47,4 +47,4 @@ _Generated 2026-04-28 from `data/labels/last_labels.json` (md5 `0f65e8fe…`) an
 - **Ordinal type**: categories have a natural order (normal < elevated < stage 1 < stage 2).
 - Reflects AHA/ACC 2017 hypertension classification, not the older 140/90 threshold.
 - This is post-hoc binning; the iOS app does not compute this variable directly.
-- Cross-reference: see `SystolicBloodPressure.md` and `DiastolicBloodPressure.md` (if available) for raw input variables.
+- Cross-reference: see `SystolicBloodPressure.md` for the released raw input variable (diastolic BP is a derivation input but is not a released benchmark label).

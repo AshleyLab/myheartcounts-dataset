@@ -81,6 +81,14 @@ print(meta["seed"], meta["n_boot"], len(meta["methods"]))
 
 See [`SCHEMA.md`](SCHEMA.md) for the full column spec.
 
+## Sibling: 17-method variant
+
+`imputation/bootstrap_with_dense_weekly/` holds the same reducer applied
+to a 17-method pool that adds `lsm2_weekly` (dense 7-day LSM-2). Skill /
+fairness numbers per method are identical to this canonical variant
+(they're pairwise vs `locf`); only average-rank values shift because the
+comparison pool grew. See that dir's README for when to use which.
+
 ## Uploaded with
 
 `tools/upload_leaderboard_bootstrap.py` in the

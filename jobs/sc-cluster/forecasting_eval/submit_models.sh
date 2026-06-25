@@ -20,8 +20,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 cd "${REPO_DIR}"
 
-# Join the existing baseline run so all models aggregate together.
-RUN_LABEL="${MHC_FORECAST_RUN_LABEL:-forecasting_20260605_184121}"
+# To aggregate GPU models together with the CPU baselines, export the SAME
+# MHC_FORECAST_RUN_LABEL you used for submit_all.sh (or just use submit_pipeline.sh,
+# which fans out everything under one label). Standalone, this defaults to a FRESH
+# date label — never a pinned historical run — so a bare invocation can't silently
+# append to / overwrite an old (pre-fix) eval.
+RUN_LABEL="${MHC_FORECAST_RUN_LABEL:-forecasting_$(date +%Y%m%d_%H%M%S)}"
 export MHC_FORECAST_RUN_LABEL="${RUN_LABEL}"
 
 # Local release bundles.

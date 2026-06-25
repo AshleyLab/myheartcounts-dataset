@@ -1,6 +1,6 @@
 # MHC Variable Index
 
-169 variables used by the MHC-benchmark project (41 targets + 128 contexts), mapped to their source definitions in the iOS codebase. Counts in this file are the canonical benchmark labels in `data/labels/label_types.json`; the `survey_documentation/` tree contains additional reference docs for related concepts (e.g. `heart_disease`, `vascular`, `Gender`) — see footer for total file count.
+169 variables used by the MHC-benchmark project (41 targets + 128 contexts), mapped to their source definitions in the iOS codebase. These are exactly the canonical benchmark labels in `data/labels/label_types.json`: the `survey_documentation/` tree has one variable `.md` per label (169 docs), plus a `summary.md` landing page per category and this index.
 
 - **Filename convention**: `<category>/<raw_identifier>.md`. The `field_` prefix used in the benchmark dataset is stripped from filenames but recorded inside each file.
 - **Role**: target = model prediction target; context = model input feature
@@ -29,7 +29,7 @@ Variables are grouped into 16 semantic subdirectories. Each subdirectory contain
 | [mindset_measures](mindset_measures/summary.md) | 32 | illness mindset (20) + exercise process mindset (7) + adequacy of activity (5) |
 | [study_metadata](study_metadata/summary.md) | 6 | labwork, device ownership flags, phone_on_user |
 
-Each subdir's `summary.md` contains a one-line description and link for every file in that subdir. The flat tables below remain as a canonical master reference.
+Each subdir's `summary.md` links every variable in that subdir. The flat tables below are the canonical master reference — all 41 targets and all 128 contexts, one row each.
 
 ## Targets (41)
 
@@ -103,10 +103,8 @@ Each subdir's `summary.md` contains a one-line description and link for every fi
 | field_vegetable | continuous | vegetable | CardioHealth/Resources/JSONs/cardiosurveys/cardio_diet_survey.json | ~22 | Cups of vegetables per day |
 | field_fish | continuous | fish | CardioHealth/Resources/JSONs/cardiosurveys/cardio_diet_survey.json | ~36 | Servings of fish per week |
 | alcohol | ordinal | alcohol | CardioHealth/Resources/JSONs/cardiosurveys/cardio_diet_survey.json | ~113 | Alcohol consumption frequency (5-point) |
-| BloodType | categorical | blood_type | CardioHealth/Resources/JSONs/cardiosurveys/cardio_covid_19_survey.json | ~720 | Blood type (A/B/AB/O) |
 | Ethnicity_heartage | categorical | Ethnicity | CardioHealth/TasksAndSteps/HeartAgeControllers/HeartAgeRiskFactorCalculations/APHHeartAgeAndRiskFactors.m | ~73 | Ethnicity from Heart Age (African-American/Other) |
 | FitzpatrickSkinType | categorical | (skin type) | HealthKit `HKCharacteristicTypeIdentifierFitzpatrickSkinType` | n/a | Fitzpatrick skin type (raw I-VI categorical; released as bucketed `{light, medium, dark}` ordinal) |
-| Gender | categorical | Gender | CardioHealth/TasksAndSteps/HeartAgeControllers/HeartAgeRiskFactorCalculations/APHHeartAgeAndRiskFactors.m | ~74 | Gender (Male/Female) |
 | healthcare_worker | categorical | healthcare_worker | CardioHealth/Resources/JSONs/cardiosurveys/cardio_covid_19_survey.json | ~454 | Healthcare position type |
 | activity1_intensity | ordinal | activity1_intensity | CardioHealth/Resources/JSONs/cardiosurveys/cardio_daily_check.json | ~139 | Activity intensity (Light/Moderate/Vigorous) |
 | activity1_type | categorical | activity1_type | CardioHealth/Resources/JSONs/cardiosurveys/cardio_daily_check.json | ~74 | Activity type (Walking/Jogging/Cycling/etc) |
@@ -114,7 +112,6 @@ Each subdir's `summary.md` contains a one-line description and link for every fi
 | activity2_type | categorical | activity2_type | CardioHealth/Resources/JSONs/cardiosurveys/cardio_daily_check.json | ~193 | Activity 2 type (Walking/Jogging/Cycling/etc) |
 | chestPain | binary | chestPain | CardioHealth/TasksAndSteps/APHDynamicParQQuizTask.m | ~42 | Chest pain during activity (PAR-Q) |
 | chestPainInLastMonth | binary | chestPainInLastMonth | CardioHealth/TasksAndSteps/APHDynamicParQQuizTask.m | ~43 | Chest pain in past month (PAR-Q) |
-| covid_relatives | binary | relatives | CardioHealth/Resources/JSONs/cardiosurveys/cardio_covid_19_survey.json | ~790 | COVID-positive relatives (yes/no) |
 | currentCannabisSmoking | ordinal | currentCannabisSmoking | CardioHealth/Resources/JSONs/cardiosurveys/cardio_vaping_and_smoking_survey.json | ~855 | Cannabis smoking frequency |
 | currentSmokeless | ordinal | currentSmokeless | CardioHealth/Resources/JSONs/cardiosurveys/cardio_vaping_and_smoking_survey.json | ~472 | Smokeless tobacco use frequency |
 | currentSmoking | ordinal | currentSmoking | CardioHealth/Resources/JSONs/cardiosurveys/cardio_vaping_and_smoking_survey.json | ~240 | Cigarette smoking frequency |
@@ -131,14 +128,11 @@ Each subdir's `summary.md` contains a one-line description and link for every fi
 | everQuitSmoking | binary | everQuitSmoking | CardioHealth/Resources/JSONs/cardiosurveys/cardio_vaping_and_smoking_survey.json | ~368 | Tried to quit smoking in past 12 months |
 | everQuitVaping | binary | everQuitVaping | CardioHealth/Resources/JSONs/cardiosurveys/cardio_vaping_and_smoking_survey.json | ~136 | Tried to quit vaping in past 12 months |
 | family_history | categorical | family_history | CardioHealth/Resources/JSONs/cardiosurveys/cardio_CVhealth_survey.json | ~10 | Family history of early heart disease |
-| heart_disease | categorical | heart_disease | CardioHealth/Resources/JSONs/cardiosurveys/cardio_CVhealth_survey.json | ~83 | Heart disease diagnosis |
 | heartCondition | binary | heartCondition | CardioHealth/TasksAndSteps/APHDynamicParQQuizTask.m | ~41 | Heart condition (PAR-Q) |
-| icu_treated | binary | icu_treated | CardioHealth/Resources/JSONs/cardiosurveys/cardio_covid_19_survey.json | ~331 | Treated in ICU (yes/no) |
 | jointProblem | binary | jointProblem | CardioHealth/TasksAndSteps/APHDynamicParQQuizTask.m | ~45 | Bone/joint problem (PAR-Q) |
 | labwork | binary | labwork | CardioHealth/Resources/JSONs/cardiosurveys/cardio_day_one.json | ~69 | Will have lab work in next 7 days |
 | lastCannabisSmoking | ordinal | lastCannabisSmoking | CardioHealth/Resources/JSONs/cardiosurveys/cardio_vaping_and_smoking_survey.json | ~1001 | Last time smoked cannabis |
 | medications_to_treat | categorical | medications_to_treat | CardioHealth/Resources/JSONs/cardiosurveys/cardio_CVhealth_survey.json | ~44 | Medications for risk factors |
-| onsetCannabisSmoking | continuous | (derived) | Unknown | Unknown | Age of cannabis smoking onset (not in explicit JSON) |
 | onsetSmokeless | continuous | onsetSmokeless | CardioHealth/Resources/JSONs/cardiosurveys/cardio_vaping_and_smoking_survey.json | ~521 | Age first used smokeless tobacco |
 | onsetSmoking | continuous | onsetSmoking | CardioHealth/Resources/JSONs/cardiosurveys/cardio_vaping_and_smoking_survey.json | ~354 | Age smoked first cigarette |
 | onsetVaping | continuous | onsetVaping | CardioHealth/Resources/JSONs/cardiosurveys/cardio_vaping_and_smoking_survey.json | ~122 | Age first vaped |
@@ -153,15 +147,11 @@ Each subdir's `summary.md` contains a one-line description and link for every fi
 | readinessQuitVaping | continuous | readinessQuitVaping | CardioHealth/Resources/JSONs/cardiosurveys/cardio_vaping_and_smoking_survey.json | ~57 | Readiness to quit vaping (1-10) |
 | sleep_diagnosis2 | categorical | sleep_diagnosis2 | CardioHealth/Resources/JSONs/cardiosurveys/cardio_activitysleep_survey.json | ~200 | Type of sleep disorder |
 | sleep_time1 | continuous | sleep_time1 | CardioHealth/Resources/JSONs/cardiosurveys/cardio_activitysleep_survey.json | ~152 | Hours of sleep on weekdays |
-| sleep_time2 | continuous | sleep_time | CardioHealth/Resources/JSONs/cardiosurveys/cardio_activitysleep_survey.json | ~167 | Hours of sleep needed to be rested |
-| sleep_time3 | continuous | (derived) | Unknown | Unknown | Likely weekend sleep hours |
 | tobaccoProducts | categorical | tobaccoProducts | CardioHealth/Resources/JSONs/cardiosurveys/cardio_vaping_and_smoking_survey.json | ~699 | Tobacco products used in past week |
 | tobaccoProductsEver | categorical | tobaccoProductsEver | CardioHealth/Resources/JSONs/cardiosurveys/cardio_vaping_and_smoking_survey.json | ~755 | Tobacco products ever used |
 | days_admitted | continuous | days_admitted | CardioHealth/Resources/JSONs/cardiosurveys/cardio_covid_19_survey.json | ~319 | Days hospitalized for COVID |
-| ventilator | binary | ventilator | CardioHealth/Resources/JSONs/cardiosurveys/cardio_covid_19_survey.json | ~354 | Placed on ventilator (yes/no) |
 | zip | categorical | zip | CardioHealth/Resources/JSONs/cardiosurveys/cardio_wellbeing_survey.json | ~177 | Postcode (UK) / zip (US) |
 | cannabisSmoking | ordinal | cannabisSmoking | CardioHealth/Resources/JSONs/cardiosurveys/cardio_vaping_and_smoking_survey.json | ~811 | Cannabis smoking history |
-| cannabis_onset_age | continuous | (derived) | Unknown | Unknown | Age of cannabis onset (may not be explicit) |
 | body_self_healing_in_many_different_circumstances | ordinal | body_self_healing_in_many_different_circumstances | CardioHealth/Resources/JSONs/cardiosurveys/cardio_illness_mindset_measure_inventory_survey.json | ~16 | Body self-healing belief (6-point scale) |
 | chronic_illness_impact | ordinal | chronic_illness_impact | CardioHealth/Resources/JSONs/cardiosurveys/cardio_illness_mindset_measure_inventory_survey.json | ~61 | Chronic illness impact (6-point scale) |
 | chronic_illness_body_meaning | ordinal | chronic_illness_body_meaning | CardioHealth/Resources/JSONs/cardiosurveys/cardio_illness_mindset_measure_inventory_survey.json | ~106 | Body function meaning (6-point scale) |
@@ -182,6 +172,43 @@ Each subdir's `summary.md` contains a one-line description and link for every fi
 | chronic_illness_empowering | ordinal | chronic_illness_empowering | CardioHealth/Resources/JSONs/cardiosurveys/cardio_illness_mindset_measure_inventory_survey.json | ~781 | Fighting illness empowering (6-point scale) |
 | body_self_healing_from_most_conditions_and_diseases | ordinal | body_self_healing_from_most_conditions_and_diseases | CardioHealth/Resources/JSONs/cardiosurveys/cardio_illness_mindset_measure_inventory_survey.json | ~826 | Body healing from most conditions (6-point scale) |
 | chronic_illness_body_blame | ordinal | chronic_illness_body_blame | CardioHealth/Resources/JSONs/cardiosurveys/cardio_illness_mindset_measure_inventory_survey.json | ~871 | Body blame for illness (6-point scale) |
+| field_activity1_option | binary | activity1_option | CardioHealth/Resources/JSONs/cardiosurveys/cardio_daily_check.json | ~51 | Did you perform any physical activities yesterday that you think were not recorded… |
+| field_activity1_time | continuous | activity1_time | CardioHealth/Resources/JSONs/cardiosurveys/cardio_daily_check.json | ~123 | How long did you do the activity? |
+| field_activity2_option | binary | activity2_option | CardioHealth/Resources/JSONs/cardiosurveys/cardio_daily_check.json | ~170 | Did you perform any additional physical activities yesterday that you think were not… |
+| field_activity2_time | continuous | activity2_time | CardioHealth/Resources/JSONs/cardiosurveys/cardio_daily_check.json | ~243 | How long did you do the activity? |
+| field_antibiotics | multi_categorical | antibiotics | CardioHealth/Resources/JSONs/cardiosurveys/cardio_covid_19_survey.json | ~633 | Are you taking any of the following antibiotics or immune system modulators… |
+| field_beneficial | ordinal | beneficial | CardioHealth/Resources/JSONs/cardiosurveys/cardio_adequacy_of_activity_mindset_measure_survey.json | ~116-162 | How harmful/beneficial is your current level of physical activity for your health? |
+| field_building | ordinal | building | CardioHealth/Resources/JSONs/cardiosurveys/cardio_covid_19_survey.json | ~831 | How many people live in your building? |
+| field_cannabisVaping | ordinal | cannabisVaping | CardioHealth/Resources/JSONs/cardiosurveys/cardio_vaping_and_smoking_survey.json | ~1048 | Do you vape cannabis or cannabis containing products? |
+| field_conditions | multi_categorical | conditions | CardioHealth/Resources/JSONs/cardiosurveys/cardio_covid_19_survey.json | ~393 | What conditions do you have? (Select all that apply) |
+| field_convenient | ordinal | convenient | CardioHealth/Resources/JSONs/cardiosurveys/cardio_exercise_process_mindset_measure_survey.json | ~121-152 | EXERCISING is: (convenient) |
+| field_covid | ordinal | covid | CardioHealth/Resources/JSONs/cardiosurveys/cardio_covid_19_survey.json | ~15 | Have you ever had RNA testing for current COVID-19? |
+| field_covid_serologic | ordinal | covid_serologic | CardioHealth/Resources/JSONs/cardiosurveys/cardio_covid_19_survey.json | ~50 | Have you ever had serologic or antibody testing for COVID-19? |
+| field_currentCannabisVaping | ordinal | currentCannabisVaping | CardioHealth/Resources/JSONs/cardiosurveys/cardio_vaping_and_smoking_survey.json | ~1092 | How often do you vape cannabis? |
+| field_daily_activities | ordinal | daily_activities | CardioHealth/Resources/JSONs/cardiosurveys/cardio_covid_19_survey.json | ~284 | While symptomatic, could you complete your usual daily activities? |
+| field_disease | ordinal | disease | CardioHealth/Resources/JSONs/cardiosurveys/cardio_adequacy_of_activity_mindset_measure_survey.json | ~166-212 | How much does your current level of physical (in-)activity increase or decrease your… |
+| field_easy | ordinal | easy | CardioHealth/Resources/JSONs/cardiosurveys/cardio_exercise_process_mindset_measure_survey.json | ~16-47 | EXERCISING is: (easy) |
+| field_exposure | ordinal | exposure | CardioHealth/Resources/JSONs/cardiosurveys/cardio_covid_19_survey.json | ~760 | Have you been exposed to anyone that tested positive for COVID-19? |
+| field_face_covering | ordinal | face_covering | CardioHealth/Resources/JSONs/cardiosurveys/cardio_covid_19_survey.json | ~902 | Do you wear a face covering when you leave the house? |
+| field_fun | ordinal | fun | CardioHealth/Resources/JSONs/cardiosurveys/cardio_exercise_process_mindset_measure_survey.json | ~156-187 | EXERCISING is: (fun) |
+| field_indulgent | ordinal | indulgent | CardioHealth/Resources/JSONs/cardiosurveys/cardio_exercise_process_mindset_measure_survey.json | ~226-257 | EXERCISING is: (indulgent) |
+| field_lastCannabisVaping | ordinal | lastCannabisVaping | CardioHealth/Resources/JSONs/cardiosurveys/cardio_vaping_and_smoking_survey.json | ~1238 | When was the last time you vaped cannabis? |
+| field_most_intense_care | ordinal | most_intense_care | CardioHealth/Resources/JSONs/cardiosurveys/cardio_covid_19_survey.json | ~244 | What was the most intense care you received for your symptoms? |
+| field_muscles | ordinal | muscles | CardioHealth/Resources/JSONs/cardiosurveys/cardio_adequacy_of_activity_mindset_measure_survey.json | ~216-262 | How much is your current level of physical (in-)activity strengthening or weakening… |
+| field_pastCannabisVaping | ordinal | pastCannabisVaping | CardioHealth/Resources/JSONs/cardiosurveys/cardio_vaping_and_smoking_survey.json | ~1191 | For how long did you vape cannabis? |
+| field_pleasurable | ordinal | pleasurable | CardioHealth/Resources/JSONs/cardiosurveys/cardio_exercise_process_mindset_measure_survey.json | ~51-82 | EXERCISING is: (pleasurable) |
+| field_relaxing | ordinal | relaxing | CardioHealth/Resources/JSONs/cardiosurveys/cardio_exercise_process_mindset_measure_survey.json | ~86-117 | EXERCISING is: (relaxing) |
+| field_self_isolating | ordinal | self_isolating | CardioHealth/Resources/JSONs/cardiosurveys/cardio_covid_19_survey.json | ~866 | To what extent are you currently self-isolating? |
+| field_severity | ordinal | severity | CardioHealth/Resources/JSONs/cardiosurveys/cardio_covid_19_survey.json | ~379 | When you felt the worst in the past month, from 0 (most sick) - 10 (perfect health)… |
+| field_severity_covid | ordinal | severity-covid | CardioHealth/Resources/JSONs/cardiosurveys/cardio_covid_19_survey.json | ~365 | When you felt the worst with COVID-19, from 0 (most sick) - 10 (perfect health) how… |
+| field_sleep_time | continuous | sleep_time | CardioHealth/Resources/JSONs/cardiosurveys/cardio_activitysleep_survey.json | ~167 | How much sleep do you think you need every night to be rested? |
+| field_sleep_time_daily | continuous | sleep_time | CardioHealth/Resources/JSONs/cardiosurveys/cardio_daily_check.json | ~301 | How many hours of sleep did you get last night? |
+| field_smokingHistory | binary | smokingHistory | cardio_vaping_and_smoking_survey.json | ~n/a | Are you currently smoking cigarettes? |
+| field_social | ordinal | social | CardioHealth/Resources/JSONs/cardiosurveys/cardio_exercise_process_mindset_measure_survey.json | ~191-222 | EXERCISING is: (social) |
+| field_symptoms_past_week | multi_categorical | symptoms_past_week | CardioHealth/Resources/JSONs/cardiosurveys/cardio_covid_19_survey.json | ~n/a | Did you experience any of the following symptoms in the past week ? (Select all that… |
+| field_symptoms_week_preceding | multi_categorical | symptoms_week_preceding | CardioHealth/Resources/JSONs/cardiosurveys/cardio_covid_19_survey.json | ~80 | Did you experience any of the following symptoms in the week preceding your COVID… |
+| field_unhealthy | ordinal | unhealthy | CardioHealth/Resources/JSONs/cardiosurveys/cardio_adequacy_of_activity_mindset_measure_survey.json | ~16-62 | My current level of physical activity is unhealthy. |
+| field_weight | ordinal | weight | CardioHealth/Resources/JSONs/cardiosurveys/cardio_adequacy_of_activity_mindset_measure_survey.json | ~66-112 | My current level of physical activity is helping me achieve or maintain a healthy… |
 
 ## Derived / computed variables (documented, no direct survey field)
 
@@ -194,30 +221,17 @@ These have no single survey field — each is documented in its own `.md` file w
 - `WakeUpTime.md`, `GoSleepTime.md` — Not in survey JSONs; sourced from AppCore user-info profile items (`kAPCUserInfoItemTypeWakeUpTime`, `kAPCUserInfoItemTypeSleepTime` in `APHAppDelegate.m` lines 1435-1436).
 - `FitzpatrickSkinType.md` — Read via `HKCharacteristicTypeIdentifierFitzpatrickSkinType` (APHAppDelegate.m line 1330); not a survey question. Earlier doc revisions misspelled this as `FrickSkinType.md`.
 
-## Notes on count discrepancies (user's spec vs. reality)
-
-- **Chronic-illness mindset battery**: user said 21 items, survey JSON has 20 — all 20 documented.
-- **"Eating-reasons battery (13)"**: no eating-reasons survey exists. The closest match is the combined Exercise Process Mindset (7 items) + Adequacy of Activity Mindset (5 items) = 12 items, all documented. Flagged as a likely mislabel in individual files.
-- **COVID ordinals**: user said 11, actual survey has 13 distinct ordinal items — all 13 documented.
-- **Sleep times (3)**: `sleep_time` (activity-sleep survey, "hours needed to feel rested"), `sleep_time1` (activity-sleep, "weekday hours slept"), `sleep_time_daily` (daily_check survey, daily minutes slept) — 3 distinct items.
-
 ## Summary
 
 - **Targets**: 41 (canonical, from `label_types.json`).
 - **Contexts**: 128 (canonical, from `label_types.json`).
-- **Total files in `survey_documentation/`**: 179 variable docs + `INDEX.md` (this file) = 180. The doc tree includes reference markdown for variables that aren't direct benchmark labels (e.g. `Gender`, `BloodType`, `heart_disease`, `vascular`) — these document concepts referenced by derived labels (e.g. CAD, Afib are derived from `heart_disease` enumeration values).
+- **Total files in `survey_documentation/`**: 169 variable docs + 16 per-category `summary.md` + this `INDEX.md` = 186 `.md` files. The 169 variable docs are exactly the benchmark labels in `label_types.json` (one per label). Raw survey fields that are not released as labels — e.g. the `heart_disease` / `vascular` multi-selects that derived targets such as CAD and Afib are computed from — are referenced inline where relevant but are not separately documented.
 
 All survey identifiers are exact string matches from JSON survey definitions. Heart Age variables map to Objective-C constants in `APHHeartAgeAndRiskFactors.m` and `APHHeartAgeTaskViewController.m`. HealthKit variables map to `HKQuantityTypeIdentifier`/`HKCharacteristicTypeIdentifier` constants in `APHAppDelegate.m`. PAR-Q variables map to static NSString constants in `APHDynamicParQQuizTask.m`. The `field_` prefix from the benchmark dataset is stripped from all filenames but recorded in each file's frontmatter as the "Benchmark column".
 
 ## Redundancy / duplicate analysis
 
 Tiered from most to least redundant.
-
-### Hard duplicates (same underlying data)
-
-- **age ≡ Age_heartage** — both back the Heart Age form's age input (constant `kHeartAgeTestDataAge`); one has role=target, the other role=context.
-- **BiologicalSex ≡ Gender** — both back the same Heart Age constant `kHeartAgeTestDataGender`.
-- **CurrentAge ≈ age** — CurrentAge is the HealthKit-DOB pre-fill that the user confirms as `age`. Usually identical post-confirmation.
 
 ### Derived-from-parent (same info, lower resolution)
 
@@ -236,7 +250,7 @@ Each `_categories` target is post-hoc binning of a continuous parent — keep ei
 
 ### Same question, different survey visit (bi-weekly duplication)
 
-Many COVID items appear in both `cardio_covid_19_survey.json` (one-time) and `cardio_covid_19_recurrent_survey.json` (bi-weekly) — same variable, different cadence: `covid`, `covid_serologic`, `symptoms_*`, `severity`, `severity_covid`, `most_intense_care`, `daily_activities`, `days_admitted`, `icu_treated`, `ventilator`. The benchmark probably merges these, so each context variable represents both flavours.
+Many COVID items appear in both `cardio_covid_19_survey.json` (one-time) and `cardio_covid_19_recurrent_survey.json` (bi-weekly) — same variable, different cadence: `covid`, `covid_serologic`, `symptoms_*`, `severity`, `severity_covid`, `most_intense_care`, `daily_activities`, `days_admitted`. The benchmark probably merges these, so each context variable represents both flavours.
 
 ### Overlapping but not identical
 
