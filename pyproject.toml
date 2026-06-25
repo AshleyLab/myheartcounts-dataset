@@ -17,7 +17,6 @@ dependencies = [
   "h5py",
   "joblib",
   "matplotlib",
-  "mord",
   "numpy",
   "pandas",
   "polars",
@@ -44,6 +43,11 @@ pypots = [
 ]
 lsm2 = [
   "pytorch-lightning>=2.0",
+  # The published LSM2 checkpoint stores its hyperparameters through Lightning's
+  # CLI machinery, so rebuilding the module in ``load_from_checkpoint`` needs
+  # jsonargparse to deserialize them. Without it Lightning silently stubs out its
+  # argument parser and the load fails with ``object() takes no arguments``.
+  "jsonargparse[signatures]>=4.27",
 ]
 chronos = [
   # Chronos-2 forecaster wrapper. Chronos2Pipeline ships in the 2.x line;
@@ -60,8 +64,11 @@ toto_dep = [
   "jaxtyping==0.2.29",
   "rotary-embedding-torch==0.8.6",
   # gluonts is imported by toto/model/distribution.py (the forecasting head); our
-  # last-latent extraction bypasses it, so its version is not result-affecting.
-  "gluonts[torch]",
+  # last-latent extraction bypasses it, so its version is not result-affecting — but it
+  # IS dependency-affecting: left unpinned, the resolver backtracks to gluonts 0.13.x,
+  # which hard-pins pydantic 1.x / protobuf 3.x and breaks wandb. Pin the modern gluonts
+  # (the version toto-ts targets) so pydantic/protobuf stay wandb-compatible (2.x / 4.x).
+  "gluonts[torch]==0.16.2",
 ]
 toto = [
   # Toto forecaster wrapper (imported as `toto`).
@@ -80,8 +87,9 @@ wandb = [
 ]
 downstream = [
   # Prediction-track CPU feature extractors: MultiRocket (sktime -> numba) and
-  # the xgboost curve-analysis FPCA (scikit-fda). For reproducible numerics,
-  # install with the version freeze: ``pip install -e ".[downstream]" -c constraints.txt``.
+  # the xgboost curve-analysis FPCA (scikit-fda). For reproducible numerics, install with the
+  # version freeze (constraints.txt also pins the GPU stack, so it needs the cu126 torch index):
+  # ``pip install -e ".[downstream]" -c constraints.txt --extra-index-url https://download.pytorch.org/whl/cu126``.
   "scikit-fda",
   "sktime",
   "numba",

@@ -5,7 +5,7 @@ uploads the method's substrate to ``<track>/<method>.parquet``. When any of
 ``--name`` / ``--type`` / ``--submitter`` / ``--subtrack`` is given (or a
 fallback rate is available), also writes a ``<track>/<method>.meta.json`` display
 sidecar (name, type, submitter, subtrack) that the leaderboard reads to render
-the row. ``--fallback-rate`` records ``overall_fallback_rate`` in that sidecar —
+the row. ``--fallback-rate`` records ``fallback_rate`` in that sidecar —
 the fraction of predictions the model left non-finite and the harness replaced
 with the track baseline (issue #39); when omitted it is read from the substrate's
 own ``<parquet>.meta.json`` provenance sidecar if present.
@@ -87,7 +87,7 @@ def validate_method_column(parquet_path: Path, method: str) -> None:
 
 
 def resolve_fallback_rate(parquet_path: Path, explicit: float | None) -> tuple[float | None, str]:
-    """Resolve the ``overall_fallback_rate`` to record in the display sidecar.
+    """Resolve the fallback rate to record under the display sidecar's ``fallback_rate`` key.
 
     Precedence (issue #39): an explicit ``--fallback-rate`` wins; otherwise read
     it from the substrate's own ``<parquet>.meta.json`` provenance sidecar (which
@@ -136,7 +136,7 @@ def main() -> None:
         type=float,
         default=None,
         help=(
-            "overall_fallback_rate to record in the <method>.meta.json sidecar "
+            "fallback_rate to record in the <method>.meta.json sidecar "
             "(issue #39) — the fraction of scored predictions the model left "
             "non-finite and the harness replaced with the track baseline. Read it "
             "from Results.overall_fallback_rate. If omitted, the substrate's "
@@ -172,8 +172,9 @@ def main() -> None:
             "subtrack": args.subtrack or "other",
         }
         if fallback_rate is not None:
-            meta["overall_fallback_rate"] = fallback_rate
-            print(f"  recording overall_fallback_rate={fallback_rate:.4f} (from {fb_source})")
+            # the leaderboard reads the scalar under the `fallback_rate` sidecar key
+            meta["fallback_rate"] = fallback_rate
+            print(f"  recording fallback_rate={fallback_rate:.4f} (from {fb_source})")
         meta_dest = f"{args.track}/{args.method}.meta.json"
         api.upload_file(
             path_or_fileobj=io.BytesIO(json.dumps(meta, indent=2).encode("utf-8")),

@@ -86,7 +86,9 @@ def _load_chronos2_pipeline(checkpoint, device) -> Any:
 # ``github.com/ligeaaa/chronos-forecasting@d56b70c``, whose base is identical to
 # v2.3.0 in the extraction path (model.py/pipeline.py/base.py have zero diff vs the
 # fork base; only the TEST-mode-inert ``future_covariates`` change differs in
-# dataset.py), so this function yields byte-identical latents on the stock release.
+# dataset.py), so this function re-derives that extraction against the stock release.
+# It is a faithful port, not a verified bit-exact match to the retired fork's own run —
+# downstream features differ measurably from the earlier fork-based extraction.
 # Adapted from the fork verbatim: ``self`` -> ``pipeline`` and the fork's
 # ``_prepare_predict_step_kwargs`` helper inlined (stock 2.3.0 has no such helper).
 # Caller wraps this in ``torch.no_grad()``.

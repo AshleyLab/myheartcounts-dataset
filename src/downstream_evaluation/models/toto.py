@@ -132,7 +132,10 @@ def _load_toto_backbone(checkpoint, device, base_checkpoint, lora_alpha=None):
 # in stock Toto — they were added in the (now-retired) fork
 # ``github.com/ligeaaa/toto@25f885e``, whose base is byte-identical to v0.2.0 across
 # ``toto/model/`` (backbone/scaler/embedding/transformer all blob-identical), so this
-# yields identical latents on the stock release. Specialized to the no-kv-cache
+# re-derives that extraction against the stock release. It is a faithful port of the
+# documented algorithm, not a verified bit-exact match to the retired fork's own run —
+# downstream features differ measurably from the earlier fork-based extraction.
+# Specialized to the no-kv-cache
 # inference path ``_run_batch`` uses (kv_cache is never passed); loc/scale discarded.
 #
 # Derived from DataDog/toto (Apache-2.0):

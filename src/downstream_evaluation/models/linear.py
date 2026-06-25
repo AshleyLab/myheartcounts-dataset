@@ -77,14 +77,20 @@ class Linear:
     def _ensure_demo_lookup(self) -> None:
         if self._demo_lookup is not None:
             return
+        from pathlib import Path
+
         import pandas as pd
 
         from openmhc._evaluate import _DatasetPaths
 
+        from downstream_evaluation.data.provider import lookup_filename
         from downstream_evaluation.demo_covariates import build_demo_user_lookup_from_labels_df
 
         paths = _DatasetPaths.from_root(self._data_dir)
-        labels_df = pd.read_parquet(paths.daily_labels_lookup)
+        # Demographics are user-level, so the forward-window cap is irrelevant — read the
+        # full-history daily lookup (the forward-windowed base lookup is not shipped).
+        lookup_path = Path(paths.root) / "processed" / lookup_filename("daily", full_history=True)
+        labels_df = pd.read_parquet(lookup_path)
         self._demo_lookup = build_demo_user_lookup_from_labels_df(labels_df, _DEMO_COVARIATES)
 
     def _features(self, data) -> np.ndarray:

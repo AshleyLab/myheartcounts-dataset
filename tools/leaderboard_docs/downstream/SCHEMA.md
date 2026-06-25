@@ -31,6 +31,9 @@ and dtypes below must match exactly.
 > argument to `evaluate_prediction` (which sets the parquet column), *not* the
 > cosmetic `to_submission_yaml(method_name=...)` display name.
 
+> For the separate **bootstrap reference** frame (per-draw CIs, not the submission
+> file), see [`bootstrap/SCHEMA.md`](bootstrap/SCHEMA.md).
+
 ## `<method>.parquet`
 
 One row per `(method, task, task_type, subgroup_attr, subgroup_value, user_id)`.
@@ -54,7 +57,7 @@ compression.
 - **Missing-prediction fallback is already applied.** A participant the model
   could not produce a finite prediction for has been scored against the `linear`
   baseline before this file is written (the fraction substituted is reported in
-  `overall_fallback_rate` — see the sidecar). There are no NaN pairs.
+  `fallback_rate` — see the sidecar). There are no NaN pairs.
 - **Structurally-absent tasks are omitted, not NaN-filled.** A task with no
   eligible test cohort simply has no rows.
 
@@ -69,9 +72,8 @@ only from the `age_group` / `sex` rows, so a submission that ships only
 
 ## `<method>.meta.json`
 
-Tiny display sidecar the leaderboard reads to render the row. Produced by
-`to_submission_yaml(...)`; `overall_fallback_rate` is added by
-`tools/upload_leaderboard_substrate.py --fallback-rate` (issue #39):
+Tiny display sidecar the leaderboard reads to render the row, produced by
+`to_submission_yaml(...)`:
 
 ```jsonc
 {
@@ -79,7 +81,7 @@ Tiny display sidecar the leaderboard reads to render the row. Produced by
   "type": "Deep Learning",          // category label
   "submitter": "Stanford CS",       // lab / team
   "subtrack": "static",             // static | longitudinal
-  "overall_fallback_rate": 0.0      // fraction substituted with the Linear baseline (optional; "n/a" if absent)
+  "fallback_rate": 0.0              // fraction substituted with the Linear baseline (optional; "n/a" if absent)
 }
 ```
 

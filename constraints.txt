@@ -1,16 +1,21 @@
-# OpenMHC — reproducibility constraints for the CPU prediction-track methods
-# (linear, multirocket, xgboost). These are the numeric-stack versions that
-# produced the golden results; pinning them prevents silent run-to-run drift.
+# OpenMHC — full reproducibility freeze: the env that produced results/eval/final (8/8 methods).
+# Pinning these prevents silent drift. CPU methods reproduce bit-exact; GPU methods only to
+# tolerance (foundation-model forwards are nondeterministic even pinned).
 #
-#   pip install -e ".[downstream]" -c constraints.txt
+# Install (torch is pinned to +cu126, so every use of this file needs the cu126 index):
+#   IDX="--extra-index-url https://download.pytorch.org/whl/cu126"
+#   CPU methods (bit-exact):  pip install -e ".[downstream]" -c constraints.txt $IDX
+#   Full env (all 8 methods): pip install -e ".[all]"        -c constraints.txt $IDX
+#     then the two steps docs/install.md documents (their pins below are inert guards):
+#       toto: pip install --no-deps toto-ts==0.2.0 ; pip install -e ".[toto_dep]" -c constraints.txt $IDX
+#       wbm : source-build mamba-ssm + causal-conv1d (the PyPI sdist omits csrc/ — see install.md)
+#   (CPU-only and don't want the CUDA torch? drop torch from the resolve / use a CPU wheel.)
 #
-# Bit-exact ONLY on the validated platform/channel:
-#   linux x86_64 (manylinux2014) · CPython 3.10 · installer: pip (NOT conda)
-# A different OS/arch, or a conda/MKL build, links a different OpenBLAS and gives
-# last-bit (tolerance-level) drift, not bit-identity. OpenBLAS is bundled inside
-# the numpy/scipy PyPI wheels, so pinning those versions pins the BLAS by proxy:
-#   numpy 1.26.4 wheel -> OpenBLAS 0.3.23.dev ;  scipy 1.15.3 wheel -> OpenBLAS 0.3.28
+# CPU bit-exactness holds ONLY on: linux x86_64 (manylinux2014) · CPython 3.10 · pip (NOT conda).
+# OpenBLAS is bundled in the numpy/scipy wheels, so pinning those pins the BLAS by proxy
+# (numpy 1.26.4 -> OpenBLAS 0.3.23.dev ; scipy 1.15.3 -> 0.3.28). conda/MKL/other arch = tolerance.
 
+# ============ CPU stack (bit-exact, pure pip) ============
 # --- shared probe + linear algebra (all CPU methods) ---
 numpy==1.26.4
 scipy==1.15.3
@@ -20,6 +25,15 @@ pandas==2.2.3
 # --- xgboost: tree booster + curve-analysis FPCA + ARIMA features + feature I/O ---
 xgboost==3.2.0
 scikit-fda==0.10.1
+# scikit-fda only range-pins the libraries that do its actual FPCA numerics (compiled curve
+# registration + finite-difference operators that feed the xgboost features). Pin them too, or
+# a fresh install drifts them and the bit-exact result silently breaks.
+fdasrsf==2.6.10
+findiff==0.13.1
+multimethod==2.0.2
+dcor==0.7
+rdata==0.11.2
+lazy-loader==0.5
 statsmodels==0.14.6
 threadpoolctl==3.6.0
 polars==1.41.2
@@ -27,5 +41,33 @@ pyarrow==24.0.0
 
 # --- multirocket: sktime ROCKET kernels, numba-JIT (codegen-version sensitive) ---
 sktime==1.0.1
+scikit-base==1.0.2             # sktime estimator base layer under the ROCKET kernels
 numba==0.65.1
 llvmlite==0.47.0
+
+# ============ GPU stack (tolerance-level; torch needs the cu126 index above) ============
+torch==2.7.0+cu126
+pytorch-lightning==2.4.0       # lsm2
+jsonargparse==4.49.0           # lsm2 — deserializes the checkpoint hparams saved via Lightning's CLI
+chronos-forecasting==2.3.0     # chronos2
+toto-ts==0.2.0                 # toto — install --no-deps (its own torch==2.7.0 pin agrees)
+gluonts==0.16.2                # toto_dep — pin the modern gluonts; the unpinned extra
+                               # backtracks to 0.13.x (forces pydantic 1.x/protobuf 3.x → breaks wandb)
+mamba-ssm==2.2.4               # wbm — SOURCE-BUILT (PyPI sdist omits csrc/); pin is a guard
+causal-conv1d==1.4.0           # wbm — SOURCE-BUILT; pin is a guard
+
+# ---- GPU foundation-model transitive stack ----
+# The libraries chronos2/toto/grud/lsm2 actually run their forwards through. Left unpinned
+# they drift (transformers already moved 4.52->4.57 between a fresh install and the results
+# env). Locked to the versions that produced results/eval/final; toto-ts 0.2.0 is validated
+# against transformers 4.52.1. GPU numerics stay tolerance-level regardless (foundation-model
+# forwards are nondeterministic even when pinned).
+transformers==4.52.1           # chronos2 + toto model forwards
+einops==0.7.0                  # toto tensor ops
+tokenizers==0.21.4             # transformers companion (range-locked by transformers)
+fsspec==2023.10.0              # datasets / HF filesystem layer
+huggingface_hub==0.36.2        # checkpoint resolution (chronos2 / toto / lsm2)
+accelerate==1.14.0             # chronos2 device/dtype dispatch
+safetensors==0.8.0             # checkpoint weight deserialization
+pypots==1.5                    # grud (PyPOTS GRU-D)
+torchmetrics==1.9.0            # lsm2 Lightning checkpoint load
