@@ -69,8 +69,12 @@ def _load_chronos2_pipeline(checkpoint, device) -> Any:
     from chronos import Chronos2Pipeline  # noqa: PLC0415
 
     ckpt = _resolve_checkpoint(checkpoint)
-    logger.info("loading Chronos-2 %s device_map=%s", ckpt, device)
-    pipeline = Chronos2Pipeline.from_pretrained(str(ckpt), device_map=str(device))
+    # Use the resolved local path when it exists (a checkpoint directory); otherwise the
+    # reference was a bare Hub model-id that _resolve_checkpoint rewrote to a non-existent
+    # repo-relative path — pass the original reference through so from_pretrained fetches it.
+    target = str(ckpt) if ckpt.exists() else str(checkpoint)
+    logger.info("loading Chronos-2 %s device_map=%s", target, device)
+    pipeline = Chronos2Pipeline.from_pretrained(target, device_map=str(device))
     pipeline.model.eval()
     return pipeline
 

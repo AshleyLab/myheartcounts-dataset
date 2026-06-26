@@ -2,12 +2,13 @@
 # Pinning these prevents silent drift. CPU methods reproduce bit-exact; GPU methods only to
 # tolerance (foundation-model forwards are nondeterministic even pinned).
 #
-# Install (torch is pinned to +cu126, so every use of this file needs the cu126 index):
+# Install from the repo root (torch is pinned to +cu126, so every use needs the cu126 index):
 #   IDX="--extra-index-url https://download.pytorch.org/whl/cu126"
-#   CPU methods (bit-exact):  pip install -e ".[downstream]" -c constraints.txt $IDX
-#   Full env (all 8 methods): pip install -e ".[all]"        -c constraints.txt $IDX
+#   CON="-c scripts/paper_results/constraints.txt"
+#   CPU methods (bit-exact):  pip install -e ".[downstream]" $CON $IDX
+#   Full env (all 8 methods): pip install -e ".[all]"        $CON $IDX
 #     then the two steps docs/install.md documents (their pins below are inert guards):
-#       toto: pip install --no-deps toto-ts==0.2.0 ; pip install -e ".[toto_dep]" -c constraints.txt $IDX
+#       toto: pip install --no-deps toto-ts==0.2.0 ; pip install -e ".[toto_dep]" $CON $IDX
 #       wbm : source-build mamba-ssm + causal-conv1d (the PyPI sdist omits csrc/ — see install.md)
 #   (CPU-only and don't want the CUDA torch? drop torch from the resolve / use a CPU wheel.)
 #

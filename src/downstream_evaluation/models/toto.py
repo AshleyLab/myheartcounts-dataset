@@ -118,8 +118,13 @@ def _load_toto_backbone(checkpoint, device, base_checkpoint, lora_alpha=None):
         if missing:
             logger.warning("Toto load missing %d keys; first: %s", len(missing), missing[:5])
     else:
-        logger.info("loading Toto checkpoint %s", ckpt_path)
-        toto = Toto.from_pretrained(str(ckpt_path), map_location=str(device))
+        # ckpt_path is the resolved local path when it exists (a checkpoint directory). When it
+        # doesn't, the reference was a bare Hub model-id (e.g. "Datadog/Toto-Open-Base-1.0") that
+        # _resolve_checkpoint rewrote to a non-existent repo-relative path — pass the original
+        # reference through so from_pretrained fetches it from the Hub.
+        target = str(ckpt_path) if ckpt_path.exists() else str(checkpoint)
+        logger.info("loading Toto checkpoint %s", target)
+        toto = Toto.from_pretrained(target, map_location=str(device))
     toto = toto.to(device).eval()
     return toto.model.eval()
 
