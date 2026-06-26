@@ -17,10 +17,14 @@ import datasets as hf_ds
 import h5py
 import numpy as np
 import torch
-from pygrinder import fill_and_get_mask_torch
-from pypots.data.dataset.base import BaseDataset
 from torch.utils.data import BatchSampler, Sampler
 
+# NOTE: ``pypots`` (and its ``pygrinder`` dependency) are imported lazily — see
+# ``_build_pypots_forecasting_dataset_cls`` / ``__getattr__`` below and the lazy
+# import inside ``_fetch_data_from_manifest`` — so that importing this module
+# (which the evaluation path does for cache/manifest helpers) does not require
+# ``pypots``. Only the deep-learning forecasting path that actually builds a
+# ``PyPOTSForecastingDataset`` pulls it in.
 from data.transforms.nan_transforms import ZeroToNaNTransform
 from forecasting_evaluation.config import FeaturesConfig
 from forecasting_evaluation.data.standard_scaler import (
@@ -583,8 +587,15 @@ def resolve_runtime_row_groups(
     return resolved_row_groups
 
 
-class PyPOTSForecastingDataset(BaseDataset):
-    """Manifest-backed forecasting Dataset aligned with PyPOTS BaseDataset semantics."""
+class _PyPOTSForecastingDatasetImpl:
+    """Manifest-backed forecasting Dataset logic (PyPOTS-base-agnostic).
+
+    The PyPOTS ``BaseDataset`` is mixed in lazily by
+    :func:`_build_pypots_forecasting_dataset_cls` (and exposed as
+    ``PyPOTSForecastingDataset`` via module ``__getattr__``) so that importing
+    this module does not require ``pypots``. ``BaseDataset`` supplies
+    ``__getitem__``; all other behaviour is defined here.
+    """
 
     def __init__(
         self,
@@ -706,6 +717,8 @@ class PyPOTSForecastingDataset(BaseDataset):
         return len(self._sample_lookup)
 
     def _fetch_data_from_manifest(self, idx: int) -> tuple[torch.Tensor, ...]:
+        from pygrinder import fill_and_get_mask_torch
+
         group_idx, window_idx = self._sample_lookup[idx]
         row_group = self._row_groups[group_idx]
         window = row_group.windows[window_idx]
@@ -741,6 +754,33 @@ class PyPOTSForecastingDataset(BaseDataset):
             x_pred,
             x_pred_missing_mask,
         )
+
+
+_PYPOTS_FORECASTING_DATASET_CLS = None
+
+
+def _build_pypots_forecasting_dataset_cls() -> type:
+    """Build (and cache) the PyPOTS-``BaseDataset``-backed dataset class.
+
+    Imports ``pypots`` lazily so only the forecasting paths that actually
+    construct this dataset pull in the dependency.
+    """
+    global _PYPOTS_FORECASTING_DATASET_CLS
+    if _PYPOTS_FORECASTING_DATASET_CLS is None:
+        from pypots.data.dataset.base import BaseDataset
+
+        class PyPOTSForecastingDataset(_PyPOTSForecastingDatasetImpl, BaseDataset):
+            """Manifest-backed forecasting Dataset aligned with PyPOTS BaseDataset semantics."""
+
+        _PYPOTS_FORECASTING_DATASET_CLS = PyPOTSForecastingDataset
+    return _PYPOTS_FORECASTING_DATASET_CLS
+
+
+def __getattr__(name: str):
+    """Expose ``PyPOTSForecastingDataset`` lazily (PEP 562) without importing pypots eagerly."""
+    if name == "PyPOTSForecastingDataset":
+        return _build_pypots_forecasting_dataset_cls()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 class ForecastingRowGroupedBatchSampler(Sampler[list[int]]):
@@ -808,7 +848,7 @@ def build_pypots_forecasting_dataset(
     history_cf_source: str | Path | list[torch.Tensor] | None = None,
     row_groups: list[ForecastingRowGroup] | None = None,
     include_short_history: bool = True,
-) -> PyPOTSForecastingDataset:
+) -> _PyPOTSForecastingDatasetImpl:
     """Construct an online forecasting Dataset for one split."""
     if row_groups is None:
         if sample_index_file is None:
@@ -832,7 +872,7 @@ def build_pypots_forecasting_dataset(
             )
             for row in split_ds
         ]
-    return PyPOTSForecastingDataset(
+    return _build_pypots_forecasting_dataset_cls()(
         history_cf_source=history_cf_source,
         row_groups=row_groups,
         model_config=model_config,

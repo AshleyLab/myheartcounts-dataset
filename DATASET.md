@@ -66,11 +66,11 @@ $MHC_DATA_DIR/
 │   ├── daily_labels_lookup.parquet           # daily labels lookup — Track 1
 │   └── normalization_stats_hourly.json       # global z-score statistics
 ├── hourly_trajectory/            # Track 3 — hourly-resolution per-user trajectories
-└── forecasting_sample_index/     # Track 3
-    ├── sample_index_raw.json     # forecast-window sample index
+└── forecasting_sample_index/     # Track 3 (P = forecast horizon in hours: 24 or 48)
+    ├── sample_index_P_24_M_H_7_3_S_100.json   # used by evaluate_forecasting(forecasting_length=24)
+    ├── sample_index_P_48_M_H_7_3_S_100.json   # used by evaluate_forecasting(forecasting_length=48)
+    ├── sample_index_P_24_raw.json             # other variants also shipped: _raw, _M, _M_H_7_3
     ├── sample_index_P_48_raw.json
-    ├── sample_index_MH_7_3S_100.json
-    ├── sample_index_P_48_M_H_7_3_S_100.json
     └── day_remain_mask.json      # per-user retain mask
 ```
 

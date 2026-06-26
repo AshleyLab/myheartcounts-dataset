@@ -243,6 +243,8 @@ class PairWriter:
             writer.close()
             # Drop page cache so it doesn't count against the cgroup memory limit
             fpath = _channel_file(self.output_path, ch)
+            if not hasattr(os, "posix_fadvise"):
+                continue  # cache hint unavailable on this platform (e.g. macOS)
             try:
                 fd = os.open(str(fpath), os.O_RDONLY)
                 try:

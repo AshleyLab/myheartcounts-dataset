@@ -1,4 +1,4 @@
-"""Tests for scripts/paper_results/run_paper_pipeline.py.
+"""Tests for scripts/paper_results/imputation/run_paper_pipeline.py.
 
 Pins the Phase 0 → Phase 1 contract: the per-method Hydra command must set
 ``output.results_dir`` to the same per-method ``run_dir`` it pins
@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-_SCRIPT_DIR = Path(__file__).resolve().parent.parent / "scripts" / "paper_results"
+_SCRIPT_DIR = Path(__file__).resolve().parent.parent / "scripts" / "paper_results" / "imputation"
 if str(_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPT_DIR))
 

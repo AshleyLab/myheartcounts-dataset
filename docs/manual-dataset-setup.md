@@ -54,24 +54,22 @@ cp    "$CACHE/data/processed/"*.parquet       "$CACHE/processed/"
 
 ### Step 4 — Extract the HuggingFace Arrow datasets
 
-The XS archives unpack with an `_xs` suffix on the top-level directory that must be stripped.
+The XS archives unpack straight to their target directory names (`daily_hf`,
+`daily_hourly_hf`, `hourly_trajectory`, `minute_trajectory`), so no renaming is
+needed.
 
 ```bash
 # Daily 1440-min tensors (Track 2 — imputation)
 tar -xzf "$CACHE/archives/daily_hf_xs.tar.gz" -C "$CACHE/processed/"
-mv "$CACHE/processed/daily_hf_xs" "$CACHE/processed/daily_hf"
 
 # Daily 24-hour tensors (Track 1 — outcome prediction)
 tar -xzf "$CACHE/archives/daily_hourly_hf_xs.tar.gz" -C "$CACHE/processed/"
-mv "$CACHE/processed/daily_hourly_hf_xs" "$CACHE/processed/daily_hourly_hf"
 
 # Hourly per-user trajectories (Track 3 — forecasting)
 tar -xzf "$CACHE/archives/hourly_trajectory_xs.tar.gz" -C "$CACHE/"
-mv "$CACHE/hourly_trajectory_xs" "$CACHE/hourly_trajectory"
 
 # Per-minute per-user trajectories (Track 3 — optional high-res input)
 tar -xzf "$CACHE/archives/minute_trajectory_xs.tar.gz" -C "$CACHE/"
-mv "$CACHE/minute_trajectory_xs" "$CACHE/minute_trajectory"
 ```
 
 ### Step 5 — Extract the HDF5 archive
@@ -201,9 +199,10 @@ $CACHE/
 │   ├── normalization_stats_hourly.json
 │   ├── window_index_w7_s7_d5.parquet
 │   ├── daily_labels_lookup.parquet
-│   └── weekly_labels_lookup_stride7.parquet
+│   └── weekly_labels_lookup_stride7_windowed.parquet
 ├── forecasting_sample_index/                  # Track 3
-│   ├── sample_index_raw.json
+│   ├── sample_index_P_24_M_H_7_3_S_100.json   # used by evaluate_forecasting (horizon 24)
+│   ├── day_remain_mask.json
 │   └── ...
 ├── hourly_trajectory/                         # Track 3
 ├── minute_trajectory/                         # Track 3 — optional

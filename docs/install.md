@@ -64,16 +64,67 @@ Install only what you need — each extra is additive.
 
 | Extra | Pulls in | Needed for |
 |---|---|---|
-| *(none)* | core: numpy, pandas, datasets, scikit-learn, torch, xgboost, … | Track 1 (outcome prediction); the public `evaluate_*` API surface |
+| *(none)* | core: numpy, pandas, datasets, scikit-learn, torch, xgboost, … | the public `evaluate_*` API + your own `Method`/`Imputer`/`Forecaster`; the `linear` Track-1 baseline |
+| `downstream` | `scikit-fda`, `sktime`, `numba` | the built-in **MultiRocket** + **XGBoost** (FPCA curve-analysis) Track-1 baselines — without it they raise `ModuleNotFoundError` |
 | `pypots` | `pypots` (+ `pygrinder`, `tsdb`) | Tracks 2 & 3 deep-learning imputers/forecasters |
 | `lsm2` | `pytorch-lightning` | LSM2 / Lightning-based models |
 | `chronos` | `chronos-forecasting` | Track 3 `Chronos2Forecaster` (Chronos-2 foundation model) |
-| `toto` | `toto-ts` | Track 3 `TotoForecaster` (Toto foundation model) |
+| `toto` | `toto-ts` | Track 3 `TotoForecaster` (Toto foundation model) — **install in its own env**, see below |
+| *(none — source build)* | `mamba-ssm`, `causal-conv1d` (CUDA-compiled) | the `wbm` Mamba-2 week encoder — **not a pip extra** (there is no `.[wbm]`); needs a from-source CUDA build, see [Building wbm / mamba-ssm](#building-wbm--mamba-ssm-from-source) |
 | `hydra` | `hydra-core`, `omegaconf`, `hydra-submitit-launcher` | the `mhc-impute-eval` / `mhc-forecast-eval` (and `mhc-impute-train` / `mhc-forecast-train`) CLIs |
 | `hf` | `huggingface_hub` | Hub-backed checkpoint/artifact downloads |
 | `wandb` | `wandb` | W&B logging in the imputation pipeline |
-| `all` | every runtime extra above | the full benchmark (all tracks + CLIs) |
+| `all` | every runtime extra above **except `toto`** | the full benchmark (all tracks + CLIs) |
 | `dev` | jupyterlab, ipywidgets, pytest, ruff | development / running the notebooks |
+
+> [!IMPORTANT]
+> **`toto` is not part of `[all]` and needs its own environment.** `toto-ts==0.2.0`
+> hard-pins an old scientific stack (`numpy==1.26.4`, `datasets==2.17.1`, …) that
+> is incompatible with the modern versions the rest of `[all]` uses, so the two
+> cannot coexist. Install the Toto forecaster in a dedicated environment:
+>
+> ```bash
+> conda create -n openmhc-toto python=3.10 -y
+> conda activate openmhc-toto
+> pip install -e ".[toto]"
+> ```
+
+## Building `wbm` / mamba-ssm from source
+
+The `wbm` method's Mamba-2 week encoder depends on `mamba-ssm` + `causal-conv1d`, which are **CUDA-kernel** packages — not pure Python. They can't be a clean pip extra, for two reasons:
+
+- their **prebuilt wheels** are built against a recent glibc (≥ 2.32) and a fixed torch/CUDA/Python/ABI, so on many HPC systems (e.g. RHEL/Rocky 8 = glibc 2.28) they fail to load with `ImportError: ... GLIBC_2.32 not found`;
+- `mamba-ssm`'s package metadata **force-upgrades `torch`** and pulls heavy build backends, which corrupts your environment.
+
+So `wbm` is installed by **compiling the kernels from source**. This needs a **CUDA toolkit (`nvcc`) matching your torch CUDA build** and **gcc ≥ 11**.
+
+```bash
+# 1. Make nvcc (matching torch's CUDA, e.g. 12.x) and gcc >= 11 available. On an HPC
+#    cluster these are usually environment modules. Example (Imperial RDS):
+module load tools/prod GCC/12.3.0 CUDA/12.6.0
+export CUDA_HOME="$(dirname "$(dirname "$(which nvcc)")")"
+
+# 2. After `pip install -e ".[all]"` (so torch is already present), build from the GitHub
+#    SOURCES. Build from git, not PyPI: the PyPI sdists omit the C++/CUDA code under
+#    csrc/, so a `--no-binary` install from PyPI fails with "csrc/...cpp ... missing".
+#    --no-deps : don't let mamba-ssm's metadata upgrade torch / pull extras
+#    TORCH_CUDA_ARCH_LIST : YOUR GPU's compute capability
+#       (L40S 8.9 · A100 8.0 · H100 9.0 · V100 7.0 · RTX 30xx 8.6)
+MAX_JOBS=8 \
+MAMBA_FORCE_BUILD=TRUE CAUSAL_CONV1D_FORCE_BUILD=TRUE \
+TORCH_CUDA_ARCH_LIST=8.9 \
+  pip install --no-build-isolation --no-deps \
+    "causal-conv1d @ git+https://github.com/Dao-AILab/causal-conv1d.git@v1.4.0" \
+    "mamba-ssm @ git+https://github.com/state-spaces/mamba.git@v2.2.4"
+
+# 3. Verify (run on a GPU node):
+python -c "from mamba_ssm import Mamba2; print('mamba-ssm OK')"
+```
+
+Run the build on a node that has both `nvcc` **and** a GPU, so the kernels compile for the right architecture and the import check can load them.
+
+> [!NOTE]
+> If your platform matches a published wheel (recent glibc + your exact torch/CUDA/Python), you can instead install the matching `.whl` from the [state-spaces/mamba](https://github.com/state-spaces/mamba/releases) and [Dao-AILab/causal-conv1d](https://github.com/Dao-AILab/causal-conv1d/releases) releases — but the source build above is the portable path.
 
 ## Point the API at a dataset
 
