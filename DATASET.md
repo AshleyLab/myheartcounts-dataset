@@ -63,7 +63,8 @@ $MHC_DATA_DIR/
 │   ├── daily_hf/                 # daily ×1440min sensor tensors (HuggingFace Arrow) — Track 2
 │   ├── window_index_w7_s7_d5.parquet         # 7-day weekly window index — Track 1
 │   ├── weekly_labels_lookup_stride7_windowed.parquet  # weekly labels lookup (per-task forward window baked in) — Track 1
-│   ├── daily_labels_lookup.parquet           # daily labels lookup — Track 1
+│   ├── daily_labels_lookup.parquet           # daily labels lookup (windowed; forward-window cap baked in) — Track 1
+│   ├── daily_labels_lookup_full_history.parquet  # daily labels lookup (full history; no forward cap; from-raw/xgboost/lsm2) — Track 1
 │   └── normalization_stats_hourly.json       # global z-score statistics
 ├── hourly_trajectory/            # Track 3 — hourly-resolution per-user trajectories
 └── forecasting_sample_index/     # Track 3 (P = forecast horizon in hours: 24 or 48)
@@ -110,7 +111,7 @@ A (user, label) pair is "valid" if the user has sufficient wearable data in the 
 
 Submissions to the leaderboard use **C1** by default. Switch with the `data.label_validity_criterion` config.
 
-Validity is **baked into the shipped labels lookups** — a non-sentinel cell in `daily_labels_lookup.parquet` / `weekly_labels_lookup_stride7_windowed.parquet` already marks a valid `(user, day/week)` inside the task window — so no standalone validity file ships with the dataset.
+Validity is **baked into the shipped labels lookups** — a non-sentinel cell in `daily_labels_lookup.parquet` / `weekly_labels_lookup_stride7_windowed.parquet` already marks a valid `(user, day/week)` inside the task window, so the downstream eval reads validity straight from the lookups. (The standalone `label_validity.json` still ships under `labels/` and is consumed separately by the LabelsAPI's `get_labels(return_valid_only=True)`; `label_validity.parquet` is a convenience mirror and `validity_config.json` holds the validity-window thresholds.)
 
 ## Data Use Agreement
 The MHC dataset is shared under a Data Use Agreement (DUA) covering responsible-use terms for participant-derived health data. Downloading from the Hub triggers a click-through DUA acceptance.
