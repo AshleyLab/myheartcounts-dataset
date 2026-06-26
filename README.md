@@ -50,6 +50,10 @@ and core evaluation code; `.[all]` adds optional model wrappers, Hugging Face
 bundle downloads, Hydra CLIs, and W&B logging. Use `pip install -e ".[all,dev]"`
 for contributor tooling.
 
+The Toto forecaster (`.[toto]`) is the one exception to `.[all]`: it pins an old,
+incompatible dependency stack and must be installed in its own environment — see
+[docs/install.md](docs/install.md#extras).
+
 Install OpenMHC in an isolated environment. Some evaluation engines use generic
 top-level package names that can collide with private/internal benchmark repos if
 both are installed into the same Python environment.

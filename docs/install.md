@@ -1,6 +1,8 @@
 # Installation
 
-How to install `openmhc` and its evaluation dependencies in a clean, isolated environment. For getting the dataset itself, see [manual-dataset-setup.md](manual-dataset-setup.md).
+How to install `openmhc` and its evaluation dependencies in a clean, isolated
+environment. For getting the dataset itself, see
+[`manual-dataset-setup.md`](manual-dataset-setup.md).
 
 ## Prerequisites
 
@@ -8,50 +10,52 @@ How to install `openmhc` and its evaluation dependencies in a clean, isolated en
 - An **isolated environment** dedicated to `openmhc` (see the warning below).
 
 > [!WARNING]
-> **Install `openmhc` into its own environment.** The evaluation engines ship top-level packages — `forecasting_evaluation`, `imputation_evaluation`, `downstream_evaluation`, `forecasting_training`, `imputation_training`, `eval_hydra`, `labels`, `data`, `context`, `devices`, `utils` — whose names are **not unique** to this repo. The private `MHC-benchmark` repo defines the same names. If both are installed (editable) into one environment, whichever sits earlier on `sys.path` silently shadows the other, and imports resolve to the wrong copy (e.g. `ModuleNotFoundError: No module named 'forecasting_evaluation.runner'` even though the file exists). A dedicated environment avoids this entirely. The same applies to any stray `PYTHONPATH` that points at another such repo — keep it unset inside the environment.
+> **Install `openmhc` into its own environment.** The evaluation engines ship
+> top-level packages — `forecasting_evaluation`, `imputation_evaluation`,
+> `downstream_evaluation`, `forecasting_training`, `imputation_training`,
+> `eval_hydra`, `labels`, `data`, `context`, `devices`, `utils` — whose names
+> are **not unique** to this repo. The private `MHC-benchmark` repo defines the
+> same names. If both
+> are installed (editable) into one environment, whichever sits earlier on
+> `sys.path` silently shadows the other, and imports resolve to the wrong copy
+> (e.g. `ModuleNotFoundError: No module named 'forecasting_evaluation.runner'`
+> even though the file exists). A dedicated environment avoids this entirely.
+> The same applies to any stray `PYTHONPATH` that points at another such repo —
+> keep it unset inside the environment.
 
-## Canonical install (reproducible / pinned)
+## Canonical install (conda for Python, pip for the rest)
 
-Use **conda only to pin the Python interpreter**, then **pip with the version freeze** (`constraints.txt`) for every dependency. The freeze *is* the environment that produced the published results — installing against it is what makes a fresh machine reproduce our numbers (CPU methods bit-exact) rather than resolving to whatever PyPI serves that day. `constraints.txt` documents the platform caveats (bit-exactness holds on linux-x86_64 / CPython 3.10 / pip).
+The recommended pattern: use **conda only to pin the Python interpreter**, then
+use **pip for every actual dependency**. This keeps the dependency set defined
+in one place (`pyproject.toml`) and reproducible across machines.
 
 ```bash
 git clone https://github.com/AshleyLab/myheartcounts-dataset.git
 cd myheartcounts-dataset
 
-# 1. conda provisions only the interpreter
+# 1. conda provisions only the interpreter + base runtime
 conda create -n openmhc python=3.10 -y
 conda activate openmhc
 
-# torch is pinned to a CUDA build, so every pinned install needs the cu126 index:
-IDX="--extra-index-url https://download.pytorch.org/whl/cu126"
-
-# 2. openmhc + 6 of 8 methods (linear, multirocket, xgboost, gru_d, lsm2, chronos2), frozen.
-#    [all] intentionally excludes toto + wbm — they need the two extra steps below.
-pip install -e ".[all]" -c constraints.txt $IDX
-
-# 3. toto: toto-ts over-pins its transitive deps (torch/numpy/datasets), so install the
-#    wheel WITHOUT its deps, then supply only the runtime deps its forward needs.
-pip install --no-deps toto-ts==0.2.0
-pip install -e ".[toto_dep]" -c constraints.txt $IDX
-
-# 4. wbm: CUDA-kernel build from source — see "Building wbm / mamba-ssm" below.
+# 2. pip installs openmhc and all dependencies
+pip install -e ".[all]"        # all three tracks + Hydra CLIs + W&B logging
 ```
 
-That covers all 8 methods. For contributor tooling (jupyter, pytest, ruff) add the `dev` extra to step 2: `pip install -e ".[all,dev]" -c constraints.txt $IDX`.
+For contributor tooling (jupyter, pytest, ruff) add the `dev` extra:
 
-> [!NOTE]
-> **On an HPC cluster, export `HF_HUB_DISABLE_XET=1`** before any checkpoint pull — the Hugging Face Xet download backend can crash on cluster / parallel filesystems.
-
-For a **quick, unpinned** install (latest PyPI; *not* guaranteed to reproduce the published numbers), drop the `-c constraints.txt $IDX` suffix: `pip install -e ".[all]"`.
+```bash
+pip install -e ".[all,dev]"
+```
 
 ### Alternative: plain venv (no conda)
 
-If you'd rather not use conda, a standard-library virtual environment works the same way — it just needs a Python ≥ 3.10 to build from:
+If you'd rather not use conda, a standard-library virtual environment works the
+same way — it just needs a Python ≥ 3.10 to build from:
 
 ```bash
 python3.10 -m venv ~/envs/openmhc      # or any Python ≥ 3.10 on your PATH
 source ~/envs/openmhc/bin/activate
-# then the same pinned steps 2–4 as above (with -c constraints.txt $IDX)
+pip install -e ".[all]"
 ```
 
 ## Extras
@@ -60,24 +64,37 @@ Install only what you need — each extra is additive.
 
 | Extra | Pulls in | Needed for |
 |---|---|---|
-| *(none)* | core: numpy, pandas, datasets, scikit-learn, torch, xgboost, … | Track 1 (outcome prediction); the public evaluate_* API surface |
+| *(none)* | core: numpy, pandas, datasets, scikit-learn, torch, xgboost, … | the public `evaluate_*` API + your own `Method`/`Imputer`/`Forecaster`; the `linear` Track-1 baseline |
+| `downstream` | `scikit-fda`, `sktime`, `numba` | the built-in **MultiRocket** + **XGBoost** (FPCA curve-analysis) Track-1 baselines — without it they raise `ModuleNotFoundError` |
 | `pypots` | `pypots` (+ `pygrinder`, `tsdb`) | Tracks 2 & 3 deep-learning imputers/forecasters |
 | `lsm2` | `pytorch-lightning` | LSM2 / Lightning-based models |
 | `chronos` | `chronos-forecasting` | Track 3 `Chronos2Forecaster` (Chronos-2 foundation model) |
-| `toto` | `toto-ts` | Track 3 `TotoForecaster` (Toto foundation model) |
-| `wbm` | `mamba-ssm`, `causal-conv1d` (CUDA-compiled) | `wbm` Mamba-2 week encoder — **needs a from-source CUDA build**, see [Building wbm / mamba-ssm](#building-wbm--mamba-ssm-from-source) |
-| `hydra` | `hydra-core`, `omegaconf`, `hydra-submitit-launcher` | the `mhc-downstream-eval` / `mhc-impute-eval` / `mhc-forecast-eval` (+ `mhc-impute-train` / `mhc-forecast-train`) CLIs |
-| `hf` | `huggingface_hub` | Hub-backed checkpoint/artifact downloads — **required by `toto` and `chronos2`** (they fetch their checkpoints from the Hub); included in `all` |
+| `toto` | `toto-ts` | Track 3 `TotoForecaster` (Toto foundation model) — **install in its own env**, see below |
+| *(none — source build)* | `mamba-ssm`, `causal-conv1d` (CUDA-compiled) | the `wbm` Mamba-2 week encoder — **not a pip extra** (there is no `.[wbm]`); needs a from-source CUDA build, see [Building wbm / mamba-ssm](#building-wbm--mamba-ssm-from-source) |
+| `hydra` | `hydra-core`, `omegaconf`, `hydra-submitit-launcher` | the `mhc-impute-eval` / `mhc-forecast-eval` (and `mhc-impute-train` / `mhc-forecast-train`) CLIs |
+| `hf` | `huggingface_hub` | Hub-backed checkpoint/artifact downloads |
 | `wandb` | `wandb` | W&B logging in the imputation pipeline |
-| `all` | every runtime extra above | the full benchmark (all tracks + CLIs) |
+| `all` | every runtime extra above **except `toto`** | the full benchmark (all tracks + CLIs) |
 | `dev` | jupyterlab, ipywidgets, pytest, ruff | development / running the notebooks |
+
+> [!IMPORTANT]
+> **`toto` is not part of `[all]` and needs its own environment.** `toto-ts==0.2.0`
+> hard-pins an old scientific stack (`numpy==1.26.4`, `datasets==2.17.1`, …) that
+> is incompatible with the modern versions the rest of `[all]` uses, so the two
+> cannot coexist. Install the Toto forecaster in a dedicated environment:
+>
+> ```bash
+> conda create -n openmhc-toto python=3.10 -y
+> conda activate openmhc-toto
+> pip install -e ".[toto]"
+> ```
 
 ## Building `wbm` / mamba-ssm from source
 
 The `wbm` method's Mamba-2 week encoder depends on `mamba-ssm` + `causal-conv1d`, which are **CUDA-kernel** packages — not pure Python. They can't be a clean pip extra, for two reasons:
 
 - their **prebuilt wheels** are built against a recent glibc (≥ 2.32) and a fixed torch/CUDA/Python/ABI, so on many HPC systems (e.g. RHEL/Rocky 8 = glibc 2.28) they fail to load with `ImportError: ... GLIBC_2.32 not found`;
-- `mamba-ssm`'s package metadata **force-upgrades `torch`** and pulls heavy build backends, which corrupts the pinned environment.
+- `mamba-ssm`'s package metadata **force-upgrades `torch`** and pulls heavy build backends, which corrupts your environment.
 
 So `wbm` is installed by **compiling the kernels from source**. This needs a **CUDA toolkit (`nvcc`) matching your torch CUDA build** and **gcc ≥ 11**.
 
@@ -111,13 +128,16 @@ Run the build on a node that has both `nvcc` **and** a GPU, so the kernels compi
 
 ## Point the API at a dataset
 
-The eval API has **no default cache location** — you must set `MHC_DATA_DIR` (or pass `data_dir=` per call):
+The eval API has **no default cache location** — you must set `MHC_DATA_DIR`
+(or pass `data_dir=` per call):
 
 ```bash
 export MHC_DATA_DIR=/path/to/openmhc/data-full   # the dataset root
 ```
 
-Each root must contain a `dataset_version.json` marker. See [manual-dataset-setup.md](manual-dataset-setup.md) for the full layout and how to obtain / lay out the data.
+Each root must contain a `dataset_version.json` marker. See
+[`manual-dataset-setup.md`](manual-dataset-setup.md) for the full layout and how
+to obtain / lay out the data.
 
 ## Verify
 
@@ -150,7 +170,9 @@ print(res.summary())
 
 ## Sherlock (Stanford cluster) — venv, no conda
 
-On Sherlock, conda is discouraged and the system Python builds need specific shared libraries at runtime. Use the bundled helper instead of the canonical recipe above:
+On Sherlock, conda is discouraged and the system Python builds need specific
+shared libraries at runtime. Use the bundled helper instead of the canonical
+recipe above:
 
 ```bash
 # One-time: create the venv from Sherlock's python build
@@ -165,4 +187,6 @@ source scripts/dev/activate-openmhc.sh
 pip install -e ".[all]"
 ```
 
-See [scripts/dev/activate-openmhc.sh](../scripts/dev/activate-openmhc.sh) for details. The Track-2 cluster bootstrap (W&B artifact downloads, sanity checks) lives in [jobs/sherlock/imputation_eval/00_setup.sh](../jobs/sherlock/imputation_eval/00_setup.sh).
+See [`scripts/dev/activate-openmhc.sh`](../scripts/dev/activate-openmhc.sh) for
+details. The Track-2 cluster bootstrap (W&B artifact downloads, sanity checks)
+lives in [`jobs/sherlock/imputation_eval/00_setup.sh`](../jobs/sherlock/imputation_eval/00_setup.sh).
