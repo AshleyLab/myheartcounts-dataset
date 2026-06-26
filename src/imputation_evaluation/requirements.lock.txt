@@ -214,7 +214,7 @@ typing-inspection==0.4.2
 typing_extensions==4.5.0
 tzdata==2026.2
 uri-template==1.3.0
-urllib3==1.26.15
+urllib3==2.7.0
 wandb==0.23.0
 wcwidth==0.7.0
 webcolors==25.10.0
