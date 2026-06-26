@@ -198,7 +198,7 @@ terminado==0.18.1
 threadpoolctl==3.6.0
 tinycss2==1.4.0
 tokenizers==0.22.2
-torch==2.0.0
+torch==2.12.1
 torchmetrics==1.8.2
 tornado==6.5.7
 tqdm==4.67.3
