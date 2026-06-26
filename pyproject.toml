@@ -74,12 +74,20 @@ hydra = [
 wandb = [
   "wandb>=0.16",
 ]
+downstream = [
+  # Track-1 CPU feature extractors: MultiRocket (sktime -> numba) and the xgboost
+  # curve-analysis FPCA (scikit-fda). Without this extra the built-in xgboost /
+  # multirocket baselines raise ModuleNotFoundError. numba floored for numpy-2 support.
+  "scikit-fda",
+  "sktime",
+  "numba>=0.60",
+]
 # Every runtime feature in one shot (all tracks + Hydra CLIs + W&B logging).
 # Add ``dev`` for contributor tooling: ``pip install -e ".[all,dev]"``.
 # ``toto`` is deliberately excluded — it pins an old, incompatible stack and must
 # go in its own environment (see the ``toto`` extra above).
 all = [
-  "openmhc[pypots,lsm2,chronos,hf,hydra,wandb]",
+  "openmhc[pypots,lsm2,chronos,hf,hydra,wandb,downstream]",
 ]
 
 [project.scripts]
