@@ -12,7 +12,7 @@ ai4ts==0.0.3
 aioboto3==12.4.0
 aiobotocore==2.12.3
 aiohappyeyeballs==2.6.2
-aiohttp==3.14.0
+aiohttp==3.14.1
 aioitertools==0.13.0
 aiosignal==1.4.0
 annotated-types==0.7.0
