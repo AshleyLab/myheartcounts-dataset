@@ -40,6 +40,10 @@ from typing import Literal
 
 _DATAVERSE_BASE = "https://dataverse.harvard.edu"
 
+# Harvard Dataverse's zip-download service (rserve) rejects the default
+# ``Python-urllib/x.y`` User-Agent with HTTP 403, so send an explicit one.
+_USER_AGENT = "openmhc/0.1.0 (+https://github.com/AshleyLab/myheartcounts-dataset)"
+
 # DOIs per version. Set to None for versions that haven't been published yet.
 _VERSION_DOIS: dict[str, str | None] = {
     "xs": "doi:10.7910/DVN/ZYMJF6",
@@ -216,7 +220,9 @@ def download_dataset(
     target.mkdir(parents=True, exist_ok=True)
 
     token = api_token or os.getenv("DATAVERSE_API_TOKEN")
-    headers = {"X-Dataverse-key": token} if token else {}
+    headers = {"User-Agent": _USER_AGENT}
+    if token:
+        headers["X-Dataverse-key"] = token
     url = f"{_DATAVERSE_BASE}/api/access/dataset/:persistentId/?persistentId={doi}"
 
     print(f"Downloading {version!r} dataset ({doi}) → {target}")
@@ -294,37 +300,61 @@ def _extract_one(archive: Path, dest: Path) -> None:
 
 
 def _post_process_xs(dest: Path) -> None:
-    """Fix directory names and file placement after XS bundle extraction.
+    """Reorganize the extracted XS bundle into the canonical dataset layout.
 
-    The XS HuggingFace Arrow archives unpack with a version suffix
-    (``_tiny`` or ``_xs``) that must be stripped to match the canonical
-    paths the evaluation API expects.  Also moves ``normalization_stats.json``
-    from the bundle root into ``processed/``.
+    The Dataverse XS deposit lays files out with directory labels: large
+    HuggingFace Arrow / HDF5 archives under ``archives/`` and metadata under
+    ``data/`` (``data/processed``, ``data/labels``, ``data/splits``,
+    ``data/forecasting_sample_index``). After the outer zip and the nested
+    tarballs are extracted, this moves everything to the canonical paths the
+    evaluation API expects (``processed/daily_hf``, ``splits/``, ``labels/``,
+    ``forecasting_sample_index/``, ``hourly_trajectory/``, …) and removes the
+    now-empty staging directories.
     """
     processed = dest / "processed"
+    processed.mkdir(parents=True, exist_ok=True)
 
-    # Rename suffixed HF dataset directories to canonical names.
-    _rename_suffixed = [
-        (processed, "daily_hf"),
-        (processed, "daily_hourly_hf"),
-        (dest, "hourly_trajectory"),
-        (dest, "minute_trajectory"),
-    ]
-    for parent, canonical in _rename_suffixed:
-        target = parent / canonical
-        if target.exists():
-            continue
-        for suffix in ("_xs", "_tiny"):
-            candidate = parent / f"{canonical}{suffix}"
-            if candidate.exists():
-                candidate.rename(target)
-                break
+    archives = dest / "archives"
+    data = dest / "data"
 
-    # Move normalization_stats.json from bundle root into processed/.
+    # 1. Large archives: archives/<name> -> canonical location.
+    _archive_targets = {
+        "daily_hf": processed / "daily_hf",
+        "daily_hourly_hf": processed / "daily_hourly_hf",
+        "hourly_trajectory": dest / "hourly_trajectory",
+        "minute_trajectory": dest / "minute_trajectory",
+        "hdf5": dest / "hdf5",
+    }
+    for name, target in _archive_targets.items():
+        source = archives / name
+        if source.is_dir() and not target.exists():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            source.rename(target)
+
+    # 2. Metadata subtrees: data/<sub> -> root/<sub>.
+    for sub in ("splits", "labels", "forecasting_sample_index"):
+        source = data / sub
+        target = dest / sub
+        if source.is_dir() and not target.exists():
+            source.rename(target)
+
+    # 3. Loose processed metadata: data/processed/* -> processed/.
+    data_processed = data / "processed"
+    if data_processed.is_dir():
+        for item in data_processed.iterdir():
+            target = processed / item.name
+            if not target.exists():
+                item.rename(target)
+
+    # 4. Move normalization_stats.json from bundle root into processed/.
     root_stats = dest / "normalization_stats.json"
     if root_stats.exists() and not (processed / "normalization_stats.json").exists():
-        processed.mkdir(parents=True, exist_ok=True)
         root_stats.rename(processed / "normalization_stats.json")
+
+    # 5. Remove now-empty staging directories.
+    for staging in (archives, data / "processed", data):
+        if staging.is_dir() and not any(staging.iterdir()):
+            staging.rmdir()
 
 
 def _post_process_full(dest: Path) -> None:

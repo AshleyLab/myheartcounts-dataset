@@ -40,9 +40,10 @@ from imputation_evaluation.evaluation.bootstrap_skill_rank import (
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
-def _load_script_module(name: str) -> object:
-    """Import a scripts/paper_results/*.py file as a module."""
-    path = _REPO_ROOT / "scripts" / "paper_results" / f"{name}.py"
+def _load_script_module(relpath: str) -> object:
+    """Import a scripts/paper_results/<relpath>.py file as a module."""
+    path = _REPO_ROOT / "scripts" / "paper_results" / f"{relpath}.py"
+    name = Path(relpath).name
     spec = importlib.util.spec_from_file_location(name, path)
     assert spec is not None and spec.loader is not None, path
     module = importlib.util.module_from_spec(spec)
@@ -52,7 +53,7 @@ def _load_script_module(name: str) -> object:
 
 
 fairness_mod = _load_script_module("aggregate_fairness_skill_score")
-paper_metrics_mod = _load_script_module("aggregate_imputation_paper_metrics")
+paper_metrics_mod = _load_script_module("imputation/aggregate_imputation_paper_metrics")
 
 
 # --------------------------------------------------------------------------

@@ -12,22 +12,26 @@ license = { text = "MIT" }
 authors = [
   { name = "MyHeartCounts Datasets & Benchmarks team" },
 ]
+# Lower bounds keep pip's resolver from backtracking into ancient releases
+# (an unbounded graph here triggers `resolution-too-deep`). Floors are set at or
+# below the versions the optional `toto` stack pins (numpy 1.26 / datasets 2.17),
+# so the standalone `[toto]` extra still resolves in its own environment.
 dependencies = [
-  "datasets",
-  "h5py",
-  "joblib",
-  "matplotlib",
-  "mord",
-  "numpy",
-  "pandas",
-  "polars",
-  "pyarrow",
-  "scikit-learn",
-  "scipy",
-  "statsmodels",
-  "torch",
-  "tqdm",
-  "xgboost",
+  "datasets>=2.17",
+  "h5py>=3.10",
+  "joblib>=1.3",
+  "matplotlib>=3.8",
+  "mord>=0.7",  # 0.7 is the first release whose sdist builds under PEP 517 isolation
+  "numpy>=1.26",
+  "pandas>=2.1",
+  "polars>=1.0",
+  "pyarrow>=14",
+  "scikit-learn>=1.4",
+  "scipy>=1.11",
+  "statsmodels>=0.14",
+  "torch>=2.2",
+  "tqdm>=4.66",
+  "xgboost>=2.0",
 ]
 
 [project.optional-dependencies]
@@ -51,7 +55,12 @@ chronos = [
   "chronos-forecasting>=2.0",
 ]
 toto = [
-  # Toto forecaster wrapper (imported as `toto`).
+  # Toto forecaster wrapper (imported as `toto`). NOTE: toto-ts==0.2.0 hard-pins
+  # an old scientific stack (numpy==1.26.4, datasets==2.17.1, ...) that is
+  # incompatible with the modern versions the rest of `[all]` uses, so `toto` is
+  # intentionally NOT part of `[all]`. Install it in its own environment:
+  #   conda create -n openmhc-toto python=3.10 && conda activate openmhc-toto
+  #   pip install -e ".[toto]"
   "toto-ts>=0.2",
 ]
 hf = [
@@ -67,8 +76,10 @@ wandb = [
 ]
 # Every runtime feature in one shot (all tracks + Hydra CLIs + W&B logging).
 # Add ``dev`` for contributor tooling: ``pip install -e ".[all,dev]"``.
+# ``toto`` is deliberately excluded — it pins an old, incompatible stack and must
+# go in its own environment (see the ``toto`` extra above).
 all = [
-  "openmhc[pypots,lsm2,chronos,toto,hf,hydra,wandb]",
+  "openmhc[pypots,lsm2,chronos,hf,hydra,wandb]",
 ]
 
 [project.scripts]

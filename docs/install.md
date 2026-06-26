@@ -68,12 +68,24 @@ Install only what you need — each extra is additive.
 | `pypots` | `pypots` (+ `pygrinder`, `tsdb`) | Tracks 2 & 3 deep-learning imputers/forecasters |
 | `lsm2` | `pytorch-lightning` | LSM2 / Lightning-based models |
 | `chronos` | `chronos-forecasting` | Track 3 `Chronos2Forecaster` (Chronos-2 foundation model) |
-| `toto` | `toto-ts` | Track 3 `TotoForecaster` (Toto foundation model) |
+| `toto` | `toto-ts` | Track 3 `TotoForecaster` (Toto foundation model) — **install in its own env**, see below |
 | `hydra` | `hydra-core`, `omegaconf`, `hydra-submitit-launcher` | the `mhc-impute-eval` / `mhc-forecast-eval` (and `mhc-impute-train` / `mhc-forecast-train`) CLIs |
 | `hf` | `huggingface_hub` | Hub-backed checkpoint/artifact downloads |
 | `wandb` | `wandb` | W&B logging in the imputation pipeline |
-| `all` | every runtime extra above | the full benchmark (all tracks + CLIs) |
+| `all` | every runtime extra above **except `toto`** | the full benchmark (all tracks + CLIs) |
 | `dev` | jupyterlab, ipywidgets, pytest, ruff | development / running the notebooks |
+
+> [!IMPORTANT]
+> **`toto` is not part of `[all]` and needs its own environment.** `toto-ts==0.2.0`
+> hard-pins an old scientific stack (`numpy==1.26.4`, `datasets==2.17.1`, …) that
+> is incompatible with the modern versions the rest of `[all]` uses, so the two
+> cannot coexist. Install the Toto forecaster in a dedicated environment:
+>
+> ```bash
+> conda create -n openmhc-toto python=3.10 -y
+> conda activate openmhc-toto
+> pip install -e ".[toto]"
+> ```
 
 ## Point the API at a dataset
 
