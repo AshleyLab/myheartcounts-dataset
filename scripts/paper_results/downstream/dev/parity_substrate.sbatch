@@ -12,12 +12,12 @@
 # results/paper/bootstrap_draws.parquet within float32 tolerance (Gate C). CPU-only,
 # single-process pandas; Gate C runs the full bootstrap (~minutes). Submit:
 #   mkdir -p scratch/parity_logs
-#   sbatch scripts/paper_results/downstream/parity/parity_substrate.sbatch          # both gates
-#   sbatch scripts/paper_results/downstream/parity/parity_substrate.sbatch --skip-bootstrap  # Gate B only
+#   sbatch scripts/paper_results/downstream/dev/parity_substrate.sbatch          # both gates
+#   sbatch scripts/paper_results/downstream/dev/parity_substrate.sbatch --skip-bootstrap  # Gate B only
 
 set -euo pipefail
 
 export MHC_DATA_DIR="${MHC_DATA_DIR:?set MHC_DATA_DIR to the dataset root}"
 cd "$(git rev-parse --show-toplevel)"
 
-python scripts/paper_results/downstream/parity/parity_substrate.py "$@"
+python scripts/paper_results/downstream/dev/parity_substrate.py "$@"

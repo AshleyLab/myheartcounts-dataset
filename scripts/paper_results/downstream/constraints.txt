@@ -4,11 +4,11 @@
 #
 # Install from the repo root (torch is pinned to +cu126, so every use needs the cu126 index):
 #   IDX="--extra-index-url https://download.pytorch.org/whl/cu126"
-#   CON="-c scripts/paper_results/constraints.txt"
+#   CON="-c scripts/paper_results/downstream/constraints.txt"
 #   CPU methods (bit-exact):  pip install -e ".[downstream]" $CON $IDX
 #   Full env (all 8 methods): pip install -e ".[all]"        $CON $IDX
 #     then the two steps docs/install.md documents (their pins below are inert guards):
-#       toto: pip install --no-deps toto-ts==0.2.0 ; pip install -e ".[toto_dep]" $CON $IDX
+#       toto: install in its own env — pip install -e ".[toto]" $CON $IDX (its pins coexist under the freeze; see install.md)
 #       wbm : source-build mamba-ssm + causal-conv1d (the PyPI sdist omits csrc/ — see install.md)
 #   (CPU-only and don't want the CUDA torch? drop torch from the resolve / use a CPU wheel.)
 #
@@ -52,7 +52,7 @@ pytorch-lightning==2.4.0       # lsm2
 jsonargparse==4.49.0           # lsm2 — deserializes the checkpoint hparams saved via Lightning's CLI
 chronos-forecasting==2.3.0     # chronos2
 toto-ts==0.2.0                 # toto — install --no-deps (its own torch==2.7.0 pin agrees)
-gluonts==0.16.2                # toto_dep — pin the modern gluonts; the unpinned extra
+gluonts==0.16.2                # toto — pin the modern gluonts; unpinned it
                                # backtracks to 0.13.x (forces pydantic 1.x/protobuf 3.x → breaks wandb)
 mamba-ssm==2.2.4               # wbm — SOURCE-BUILT (PyPI sdist omits csrc/); pin is a guard
 causal-conv1d==1.4.0           # wbm — SOURCE-BUILT; pin is a guard

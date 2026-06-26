@@ -10,7 +10,7 @@
 # the saved eval predictions. CPU-only, single process (pooling parquets is light) —
 # all 8 methods in one task. Submit:
 #   mkdir -p scratch/parity_logs
-#   sbatch scripts/paper_results/downstream/parity/produce_per_method_per_user_pairs.sbatch
+#   sbatch scripts/paper_results/downstream/leaderboard/produce_per_method_per_user_pairs.sbatch
 
 set -euo pipefail
 
@@ -19,4 +19,4 @@ set -euo pipefail
 export MHC_DATA_DIR="${MHC_DATA_DIR:?set MHC_DATA_DIR to the dataset root}"
 cd "$(git rev-parse --show-toplevel)"
 
-python scripts/paper_results/downstream/parity/produce_per_method_per_user_pairs.py "$@"
+python scripts/paper_results/downstream/leaderboard/produce_per_method_per_user_pairs.py "$@"
