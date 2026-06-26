@@ -229,7 +229,7 @@ tinycss2==1.4.0
 tokenizers==0.21.4
 tomli==2.4.1
 toolz==0.12.1
-torch==2.7.0
+torch==2.12.1
 torchmetrics==1.9.0
 tornado==6.5.7
 toto-ts==0.2.0
