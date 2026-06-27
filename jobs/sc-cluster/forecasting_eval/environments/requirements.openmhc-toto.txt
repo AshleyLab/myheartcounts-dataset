@@ -185,7 +185,7 @@ Pygments==2.20.0
 pygrinder==0.7
 pyparsing==3.3.2
 pypots==1.5
-pytest==8.3.5
+pytest==9.0.3
 pytest-env==1.1.5
 python-dateutil==2.9.0.post0
 python-json-logger==4.1.0
