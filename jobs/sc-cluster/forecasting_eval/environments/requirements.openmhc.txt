@@ -194,7 +194,7 @@ torchmetrics==1.9.0
 tornado==6.5.7
 tqdm==4.67.3
 traitlets==5.15.1
-transformers==4.57.6
+transformers==5.0.0rc3
 triton==3.7.0
 tsdb==0.8
 typing-inspection==0.4.2
