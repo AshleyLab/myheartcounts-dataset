@@ -1,0 +1,11 @@
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    exclude-paths:
+      # Reproducibility pin files for published experiments. These capture the
+      # exact environments used for the paper runs and must not be auto-updated.
+      - "src/imputation_evaluation/requirements.lock.txt"
+      - "jobs/sc-cluster/forecasting_eval/environments/requirements.openmhc*.txt"
