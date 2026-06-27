@@ -17,7 +17,7 @@ standard `huggingface_hub` token discovery (`HF_TOKEN` env or
 - **Dataset** `MyHeartCounts/OpenMHC-leaderboard-data` (`repo_type="dataset"`,
   public) — the per-method substrate: `<track>/<method>.parquet` plus display
   sidecars `<track>/<method>.meta.json`
-  (`{display_name, type, submitter, subtrack[, overall_fallback_rate]}`). Track 2
+  (`{display_name, type, submitter, subtrack[, fallback_rate]}`). Track 2
   ships `imputation/<method>.parquet` (per-user errors); Track 1 ships
   `downstream/<method>.parquet` (per-user **prediction pairs** — its
   ranking/correlation metrics don't decompose per user, see
@@ -69,7 +69,7 @@ the reducer ignores `subgroup_attr == "all"` on its own.
    ```
 
    This writes both `<m>.parquet` and the `<m>.meta.json` sidecar.
-   `--fallback-rate` records `overall_fallback_rate` in the sidecar (issue #39);
+   `--fallback-rate` records `fallback_rate` in the sidecar (issue #39);
    omit it and the value is read from the substrate's `<m>.parquet.meta.json`
    provenance sidecar if present, else the row shows "n/a". The `method` column is
    validated against `<m>` for `imputation` and `downstream`.
@@ -81,7 +81,7 @@ the reducer ignores `subgroup_attr == "all"` on its own.
    > repo). The substrate is per-user *pairs*, so the Space's Track-1 recompute
    > must run the downstream bootstrap reducers
    > (`downstream_evaluation/evaluation/bootstrap_skill_rank.py`) on the pairs
-   > vs. the `linear` baseline, and surface the `overall_fallback_rate` column —
+   > vs. the `linear` baseline, and surface the `fallback_rate` column —
    > it can't reuse the imputation per-cell-mean path verbatim.
 
 Dataset visibility, if needed:

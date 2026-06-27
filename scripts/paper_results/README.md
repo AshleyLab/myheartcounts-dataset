@@ -11,7 +11,8 @@ scripts/paper_results/
 │   ├── bootstrap_downstream_draws.py
 │   ├── aggregate_downstream_paper_metrics.py
 │   ├── aggregate_fairness_skill_score.py
-│   └── build_leaderboard_json.py
+│   ├── leaderboard/             # substrate producer + build_leaderboard_json.py
+│   └── dev/                     # repro/parity gate + appendix metrics (not run-path)
 ├── forecasting/
 │   └── run_paper_pipeline.py     # Track 3: eval -> discover(+validate) -> skill + rank
 └── imputation/

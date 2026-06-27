@@ -59,6 +59,7 @@ def main() -> None:
     p.add_argument("--methods", nargs="+", required=True)
     p.add_argument("--n_bootstrap", type=int, default=1000)
     p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--baseline", default="linear", help="Skill / fairness baseline method (recorded in the meta sidecar).")
     p.add_argument("--output", type=Path, required=True, help="bootstrap_draws.parquet path")
     p.add_argument("--fairness_attributes", nargs="+", default=["age_group", "sex"])
     args = p.parse_args()
@@ -86,6 +87,7 @@ def main() -> None:
     meta = {
         "n_boot": args.n_bootstrap,
         "seed": args.seed,
+        "baseline": args.baseline,
         "methods": list(args.methods),
         "n_tasks": int(draws["task"].nunique()),
         "fairness_attributes": list(attributes) if attributes else [],

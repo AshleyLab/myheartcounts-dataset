@@ -58,6 +58,20 @@ source ~/envs/openmhc/bin/activate
 pip install -e ".[all]"
 ```
 
+### Pinned versions (Track 1 — Predictive Tasks)
+
+The default install above resolves to the latest compatible packages. To pin the
+exact package versions used to produce the Track-1 (predictive-task) results,
+install against the version freeze (its `torch` pin is a CUDA build, so add the
+cu126 index):
+
+```bash
+pip install -e ".[all]" -c scripts/paper_results/downstream/constraints.txt \
+  --extra-index-url https://download.pytorch.org/whl/cu126
+```
+
+See the freeze file's header for the per-method specifics (toto / wbm).
+
 ## Extras
 
 Install only what you need — each extra is additive.

@@ -276,11 +276,12 @@ A submission adds two files under the track's subdirectory:
 - `<track>/<method>.meta.json` — the display sidecar
   (`display_name`, `type`, `submitter`, `subtrack`).
 
-Track 2 (imputation) is live today. Track 1 (downstream) uses the `downstream/`
-subdir with the per-user prediction-pair substrate (see its SCHEMA below). The
-Track 3 subdirectory name and substrate format are still being finalized —
-`to_submission_yaml` flags that in the rendered packet; confirm against
-`tools/leaderboard_docs/` before submitting to Track 3.
+All three tracks are live, each under its own subdir with a per-user substrate:
+`downstream/` (Track 1 — per-user prediction *pairs* from `evaluate_prediction`),
+`imputation/` (Track 2 — per-user errors from `evaluate_imputation`), and
+`forecasting/` (Track 3 — per-user metric values from `evaluate_forecasting`). Each
+track's substrate columns and dtypes are documented in
+`tools/leaderboard_docs/<track>/SCHEMA.md`.
 
 `to_submission_yaml` renders the `meta.json` block plus the PR file checklist so
 you don't hand-write the sidecar:
@@ -297,8 +298,8 @@ print(packet)
 
 Note the two distinct `method_name` arguments: the one above is the **display
 label** rendered in `meta.json` and can be free-form (`"My Method"`). The one you
-pass to `evaluate_imputation` sets the parquet's `method` column and **must equal
-the `<method>` filename stem** the leaderboard groups by.
+pass to the `evaluate_*` call (`method_name=`) sets the parquet's `method` column
+and **must equal the `<method>` filename stem** the leaderboard groups by.
 
 Lay the two files out under the track subdirectory and open the PR with the
 Hugging Face Hub client (`pip install -e ".[hf]"`):
@@ -306,14 +307,16 @@ Hugging Face Hub client (`pip install -e ".[hf]"`):
 ```python
 from huggingface_hub import HfApi
 
-# my_submission/imputation/<method>.parquet
-# my_submission/imputation/<method>.meta.json
+# Lay the two files out under the track subdir — e.g. a Track-1 (downstream) submission:
+#   my_submission/downstream/<method>.parquet
+#   my_submission/downstream/<method>.meta.json
+# (Track 2 uses imputation/, Track 3 uses forecasting/.)
 HfApi().upload_folder(
     repo_id="MyHeartCounts/OpenMHC-leaderboard-data",
     repo_type="dataset",
     folder_path="my_submission",
     create_pr=True,
-    commit_message="Add <method> to the imputation leaderboard",
+    commit_message="Add <method> to the downstream leaderboard",
 )
 ```
 

@@ -643,6 +643,11 @@ def build_curve_analysis_features(
         ch_name = ch_info["name"]
         fpca = FPCA(n_components=n_components)
 
+        # skfda's FPCA delegates to sklearn PCA, which on a large matrix (>500x500) selects
+        # the RANDOMIZED SVD solver with no random_state — it draws from the global NumPy
+        # RNG, so the scores vary run-to-run. Seed that RNG before each fit so the
+        # components are reproducible across runs and machines.
+        np.random.seed(42)
         if ch_name in channel_basis:
             # Sparse channel: FPCA on FDataBasis (B-spline smoothed)
             fd = channel_basis[ch_name]
@@ -651,6 +656,20 @@ def build_curve_analysis_features(
             # Non-sparse channel: FPCA on FDataGrid (population-mean imputed)
             fd = FDataGrid(channel_matrices[ch_name], grid_points=grid_points)
             scores = fpca.fit_transform(fd)
+
+        # Canonicalize component signs. FPCA eigenfunctions are defined only up to sign,
+        # and skfda leaves the sign machine/library-version dependent, so the same data can
+        # yield ``+component`` on one host and ``-component`` on another. Flip each component
+        # (and its scores) so its largest-magnitude loading is positive — a deterministic
+        # rule that makes the fpca_* features reproducible across machines.
+        loadings = (
+            np.asarray(fpca.components_(grid_points)).reshape(n_components, -1)
+            if ch_name in channel_basis
+            else fpca.components_.data_matrix[:, :, 0]
+        )
+        for k in range(n_components):
+            if loadings[k][np.argmax(np.abs(loadings[k]))] < 0:
+                scores[:, k] *= -1
 
         # Variance explained
         total_var = fpca.explained_variance_.sum()
