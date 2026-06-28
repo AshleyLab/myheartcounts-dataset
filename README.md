@@ -239,8 +239,11 @@ and [docs/neural-forecasters.md](docs/neural-forecasters.md) for forecasting
 data contracts, model configs, offline metrics, release checkpoints, and
 cluster dispatch.
 
-A notebook walkthrough is available at
-[notebooks/quickstart.ipynb](notebooks/quickstart.ipynb).
+Notebook walkthroughs are available at
+[notebooks/quickstart_benchmark.ipynb](notebooks/quickstart_benchmark.ipynb)
+(end-to-end benchmark evaluation) and
+[notebooks/example_lsm2_representation_extraction.ipynb](notebooks/example_lsm2_representation_extraction.ipynb)
+(extracting learned representations from the pretrained LSM2 daily encoder).
 
 ## Public API
 
@@ -357,7 +360,8 @@ for the Track 1 / Track 2 per-method substrate columns and dtypes, and
 | `tools/` and `scripts/` | Release, leaderboard, parity, and paper-result utilities |
 | `data/labels/` | Bundled schema-only label metadata |
 | `data/imputation/masks/` | Bundled precomputed imputation masks for reproducible scoring |
-| `notebooks/quickstart.ipynb` | End-to-end example notebook |
+| `notebooks/quickstart_benchmark.ipynb` | End-to-end benchmark example notebook |
+| `notebooks/example_lsm2_representation_extraction.ipynb` | Extract representations from the pretrained LSM2 daily encoder |
 | `tools/leaderboard_docs/` | Docs mirrored into the HF leaderboard dataset repo |
 
 The participant data itself is not tracked in this repository. See
