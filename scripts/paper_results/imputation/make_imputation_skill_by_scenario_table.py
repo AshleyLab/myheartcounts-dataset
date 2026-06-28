@@ -29,6 +29,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import math
 import sys
 from pathlib import Path
 
@@ -107,6 +108,18 @@ FOOTER = r"""    \bottomrule[1.5pt]
 """
 
 
+def _require_finite_float(value, label: str) -> float:
+    if value is None:
+        raise ValueError(f"Missing {label}")
+    try:
+        out = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Non-numeric {label}: {value!r}") from exc
+    if not math.isfinite(out):
+        raise ValueError(f"Non-finite {label}: {value!r}")
+    return out
+
+
 def reduce_from_hf(repo_id: str, revision: str | None) -> dict[str, dict[tuple[str, str], tuple[float, float]]]:
     """Return {method: {(source, scope): (center, se)}} from the dense-weekly HF substrate."""
     import pandas as pd
@@ -161,10 +174,14 @@ def reduce_from_hf(repo_id: str, revision: str | None) -> dict[str, dict[tuple[s
         per_cell, attrs=list(SENSITIVE_ATTRS), baseline_method=REFERENCE,
         clip_lower=1e-2, clip_upper=100.0, scopes=BCA_HEADLINE_SCOPES,
     )
-    fair_se = {
-        r["method"]: (float(r["se"]) if r["se"] == r["se"] else 0.0)
-        for _, r in fairness[(fairness["scope"] == "overall") & (fairness["split"] == "test")].iterrows()
-    }
+
+    fair_se: dict[str, float] = {}
+    fair_rows = fairness[(fairness["scope"] == "overall") & (fairness["split"] == "test")]
+    for _, r in fair_rows.iterrows():
+        m = r["method"]
+        fair_se[m] = _require_finite_float(
+            r.get("se"), f"fairness SE for method={m!r}, scope='overall'"
+        )
 
     out: dict[str, dict[tuple[str, str], tuple[float, float]]] = {m: {} for m in METHODS}
 
@@ -175,17 +192,26 @@ def reduce_from_hf(repo_id: str, revision: str | None) -> dict[str, dict[tuple[s
             if m not in out:
                 continue
             c = r.get(center_col)
-            if c is None or (isinstance(c, float) and c != c):
+            if c is None:
+                continue
+            c = float(c)
+            if not math.isfinite(c):
                 continue
             se = r.get("se")
-            out[m][(source, str(r["scope"]))] = (float(c), float(se) if se == se else 0.0)
+            scope = str(r["scope"])
+            se = _require_finite_float(
+                se, f"{source} SE for method={m!r}, scope={scope!r}"
+            )
+            out[m][(source, scope)] = (c, se)
 
     _ingest(tables["skill_scores"], "skill", "mean")
     _ingest(tables["avg_rankings"], "rank", "mean")
     for m in METHODS:
         pt = points.get((m, "overall"))
         if pt is not None:
-            out[m][("fair", "overall")] = (float(pt), fair_se.get(m, 0.0))
+            if m not in fair_se:
+                raise ValueError(f"Missing fairness SE for method={m!r}, scope='overall'")
+            out[m][("fair", "overall")] = (float(pt), fair_se[m])
     return out
 
 
@@ -199,6 +225,8 @@ def intensity(value: float, vmin: float, vmax: float, lower_better: bool) -> int
 def fmt_cell(method, center, se, scale100, ref_zero, n, is_best) -> str:
     if ref_zero and method == REFERENCE:
         return r"$0.0$"
+    center = _require_finite_float(center, f"center for method={method!r}")
+    se = _require_finite_float(se, f"SE for method={method!r}")
     s = 100.0 if scale100 else 1.0
     num = f"{center * s:+.1f}" if scale100 else f"{center * s:.1f}"
     se_s = f"{se * s:.1f}"
@@ -228,7 +256,12 @@ def build_body(data) -> str:
             for m in members:
                 cells = []
                 for ci, (_h, src, scope, _ctr, scale100, lower, ref_zero) in enumerate(COLUMNS):
-                    center, se = data[m].get((src, scope), (float("nan"), 0.0))
+                    key = (src, scope)
+                    if key not in data[m]:
+                        raise ValueError(
+                            f"Missing table cell for method={m!r}, source={src!r}, scope={scope!r}"
+                        )
+                    center, se = data[m][key]
                     vmin, vmax = bounds[ci]
                     n = intensity(center, vmin, vmax, lower)
                     best_val = vmin if lower else vmax
