@@ -64,9 +64,11 @@ extras, virtualenv setup, Sherlock setup, and verification commands.
 ## Dataset Setup
 
 The dataset is hosted separately from this code repository. The `xs` release is
-available for quickstarts and smoke tests; the `full` release uses the same
-layout and API contract once available. Download each version into its own root
-directory and pass the version explicitly when evaluating:
+available for quickstarts and smoke tests on
+[Harvard Dataverse](https://dataverse.harvard.edu/dataset.xhtml?persistentId=doi:10.7910/DVN/ZYMJF6)
+(`doi:10.7910/DVN/ZYMJF6`); the `full` release uses the same layout and API
+contract once available. Download each version into its own root directory and
+pass the version explicitly when evaluating:
 
 ```python
 import openmhc
